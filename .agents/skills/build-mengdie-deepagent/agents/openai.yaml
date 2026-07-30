@@ -1,0 +1,4 @@
+interface:
+  display_name: "构建 MengDie Deep Agent"
+  short_description: "用 Deep Agent 原则指导 MengDie 架构、实现与验证"
+  default_prompt: "Use $build-mengdie-deepagent to design and implement a MengDie Code slice with explicit context, safety, recovery, and evaluation gates."
