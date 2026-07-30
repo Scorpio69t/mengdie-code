@@ -35,6 +35,9 @@ jobs:
       - name: 静态检查
         run: go vet ./...
 
+      - name: 漏洞检查
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
       - name: Race 测试
         run: go test -race -coverprofile=coverage.out ./...
 
@@ -60,4 +63,3 @@ jobs:
 
       - name: 运行测试
         run: go test ./...
-

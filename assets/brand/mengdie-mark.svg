@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">MengDie Code 梦蝶标志</title>
+  <desc id="description">一只由代码尖括号几何形状构成的蓝紫色蝴蝶</desc>
+  <g fill="#4f46e5">
+    <path d="M224 224 112 126c-16-14-40-13-54 2-7 8-10 17-10 28v88c0 15 7 29 19 38l99 77 44-44-98-76v-53l112 94z"/>
+    <path d="M288 224 400 126c16-14 40-13 54 2 7 8 10 17 10 28v88c0 15-7 29-19 38l-99 77-44-44 98-76v-53l-112 94z"/>
+    <rect x="238" y="194" width="36" height="244" rx="18"/>
+    <path d="m238 420 18 52 18-52z"/>
+  </g>
+  <g fill="#14b8ff">
+    <path d="m210 320-44 39-48 37v-54l43-37-43-35-57 48c-12 10-17 26-13 41l20 83c4 18 20 31 39 31 9 0 18-3 25-9l92-80v-77z"/>
+    <path d="m302 320 44 39 48 37v-54l-43-37 43-35 57 48c12 10 17 26 13 41l-20 83c-4 18-20 31-39 31-9 0-18-3-25-9l-92-80v-77z"/>
+  </g>
+  <g fill="none" stroke="#4f46e5" stroke-linecap="round" stroke-width="10">
+    <path d="M246 194c-8-38-27-66-57-83"/>
+    <path d="M266 194c8-38 27-66 57-83"/>
+  </g>
+  <g fill="#4f46e5">
+    <circle cx="186" cy="109" r="10"/>
+    <circle cx="326" cy="109" r="10"/>
+  </g>
+</svg>
