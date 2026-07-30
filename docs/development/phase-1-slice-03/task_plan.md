@@ -13,7 +13,7 @@
 - [x] Phase 5：实现 HTTP client、认证、取消、超时与“可见输出前”有限重试
 - [x] Phase 6：完成 httptest 契约矩阵、负向与泄密测试
 - [x] Phase 7：更新 Provider 协议、架构状态与中英文入口；保持 CLI 未接入事实可见
-- [ ] Phase 8：运行完整验证并发布草稿 PR
+- [x] Phase 8：运行完整验证并发布草稿 PR
 
 ## Key Questions
 
@@ -43,4 +43,4 @@
 
 ## Status
 
-**Currently in Phase 8** — 运行 race、漏洞、评测、CLI 诚实性与变更审查，发布草稿 PR。
+**Completed** — PR #8 已发布为草稿，本地与首轮 macOS/Windows/Ubuntu/质量 CI 全部通过，等待人工评审。

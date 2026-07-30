@@ -1,6 +1,6 @@
 # 第一阶段 Slice 03 实现报告
 
-> 状态：本地验证通过，待远端 CI 与人工评审
+> 状态：本地与远端验证通过，待人工评审
 
 ## 目标
 
@@ -37,7 +37,7 @@
 - Provider 包随机顺序连续运行 10 次：450 项通过（扩充累计响应测试前执行）；
 - 契约覆盖请求路径/header/body、中文 Unicode 文本、CRLF、多 data 行、usage 与 cache token、工具片段、限额、畸形 JSON、finish 一致性、能力门禁、429 `Retry-After`、重试上限、断流前后语义、401 脱敏、取消和 sink 失败关闭响应体。
 
-macOS、Windows 与 Ubuntu 使用同一纯 Go 协议实现；远端矩阵结果将在草稿 PR CI 后补充。
+草稿 PR #8 首轮 CI 全部通过：质量检查 57 秒、macOS 26 秒、Ubuntu 26 秒、Windows 1 分 15 秒。macOS、Windows 与 Ubuntu 使用同一纯 Go 协议实现。
 
 ## 明确不做
 
