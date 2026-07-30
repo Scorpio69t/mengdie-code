@@ -34,6 +34,7 @@
 - P1-01 首次编译发现 `internal/app/doctor.go` 有未使用的 `flag` import：已移除并重新运行全量检查。
 - App 重构后的状态文案破坏两项既有入口测试：恢复“Agent 功能尚未实现”，保持中文产品提示兼容。
 - 最终审阅发现 Markdown 尾随空格、冗余 TOML 尾部读取和会受用户配置影响的 cmd 测试：均已清理，行为测试移入可注入环境的 `internal/app`。
+- Git HTTPS 推送两次无法连接 `github.com:443`：改用 GitHub API 发布 44 个文件，首次 tree 构建暴露换行重编码 SHA 假设错误，随后完全采用 API 返回的 blob SHA 成功创建 PR #5。
 
 ## Status
 

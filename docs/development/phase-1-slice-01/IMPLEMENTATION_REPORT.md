@@ -2,6 +2,8 @@
 
 > 状态：本地完成，待远端 CI
 
+草稿 PR：[Scorpio69t/mengdie-code#5](https://github.com/Scorpio69t/mengdie-code/pull/5)
+
 ## 交付
 
 ### P1-00 · M0 评测入口
