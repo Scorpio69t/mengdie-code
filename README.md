@@ -77,6 +77,7 @@ mengdie memory forget <id>
 - [x] 产品定位与 v0.2 架构蓝图
 - [x] 中文优先的开源仓库基础设施
 - [x] 第一阶段 Slice 01：5 个 Coding baseline、配置与 App 骨架
+- [x] 第一阶段 Slice 02：版本化事件协议、终端/JSON Lines 输出与 Ctrl+C 状态机
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal
@@ -105,7 +106,7 @@ v0.1 坚持单进程、本地优先。daemon、Web、异步 Swarm、向量检索
 
 ## 本地查看
 
-当前开发预览已经包含 CLI/App 骨架、分层配置、最小 doctor 和 5 个可重复 Coding baseline，但还不包含 Agent Runtime：
+当前开发预览已经包含 CLI/App 骨架、分层配置、最小 doctor、5 个可重复 Coding baseline，以及供后续 Runtime 共用的事件与终端输出边界，但还不包含 Agent Runtime：
 
 ```bash
 git clone https://github.com/Scorpio69t/mengdie-code.git
@@ -113,8 +114,11 @@ cd mengdie-code
 go test ./...
 go run ./cmd/mengdie --version
 go run ./cmd/mengdie doctor --json
+go run ./cmd/mengdie exec --json "检查当前项目"
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 ```
+
+`exec --json` 当前会输出 `run.started` 与 `run.failed` 两条 JSON Lines 事件，并以退出码 1 结束，用于验证管道协议；它不会假装已经执行任务。事件只包含运行所需的公开元数据，不写入完整用户任务、密钥或隐藏推理。人类输出走 stderr，JSON Lines 走 stdout，便于稳定接入脚本。
 
 需要 Go 1.26 或更高版本。
 
@@ -139,4 +143,3 @@ go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 ## 开源协议
 
 MengDie Code 使用 [Apache License 2.0](./LICENSE) 开源。
-

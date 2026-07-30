@@ -51,6 +51,7 @@ This English README is the entry point for international readers. The detailed [
 - [x] Product positioning and v0.2 architecture blueprint
 - [x] Chinese-first open-source repository infrastructure
 - [x] Phase 1 Slice 01: five coding baselines plus config and app skeletons
+- [x] Phase 1 Slice 02: versioned events, terminal/JSON Lines renderers, and Ctrl+C state machine
 - [ ] M0: real-world coding, long-run, and memory-trust eval sets
 - [ ] M1: minimum Agent Runtime capable of completing real tasks ([Phase 1 detailed design, Chinese](./docs/design/phase-1/DETAILED_DESIGN.md))
 - [ ] M2: persistent events, resume, context compaction, and Patch Journal
@@ -61,7 +62,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the product architecture and the [P
 
 ## Local preview
 
-The current preview includes the CLI/app skeleton, layered configuration, a minimal doctor command, and five reproducible coding baselines. It does not include the Agent Runtime yet.
+The current preview includes the CLI/app skeleton, layered configuration, a minimal doctor command, five reproducible coding baselines, and the event/rendering boundary that the runtime will consume. It does not include the Agent Runtime yet.
 
 ```bash
 git clone https://github.com/Scorpio69t/mengdie-code.git
@@ -69,8 +70,11 @@ cd mengdie-code
 go test ./...
 go run ./cmd/mengdie --version
 go run ./cmd/mengdie doctor --json
+go run ./cmd/mengdie exec --json "inspect this project"
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 ```
+
+For now, `exec --json` emits `run.started` and `run.failed` JSON Lines and exits with code 1. This previews the pipeline contract without pretending that the task ran. Events exclude the full user task, credentials, and hidden reasoning. Human-readable events use stderr; JSON Lines use stdout.
 
 Go 1.26 or later is required.
 
@@ -89,4 +93,3 @@ MengDie means “Dreaming Butterfly,” inspired by Zhuangzi. The metaphor is si
 ## License
 
 MengDie Code is licensed under the [Apache License 2.0](./LICENSE).
-
