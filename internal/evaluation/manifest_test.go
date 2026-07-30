@@ -103,4 +103,3 @@ func TestLimitWriterTruncatesWithoutShortWrite(t *testing.T) {
 		t.Fatalf("String() = %q", got)
 	}
 }
-

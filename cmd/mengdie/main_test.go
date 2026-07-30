@@ -24,4 +24,3 @@ func TestRunVersion(t *testing.T) {
 		t.Fatalf("run() output = %q, want platform", got)
 	}
 }
-

@@ -10,4 +10,3 @@ func Average(values []int) float64 {
 	}
 	return float64(total / len(values))
 }
-

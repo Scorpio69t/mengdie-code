@@ -13,4 +13,3 @@ func TestSumToNegative(t *testing.T) {
 		t.Fatalf("SumTo(-1) = %d, want 0", got)
 	}
 }
-

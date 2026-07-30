@@ -194,4 +194,3 @@ func flagExitCode(err error) int {
 	}
 	return ExitInvalidInput
 }
-

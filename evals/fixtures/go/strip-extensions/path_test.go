@@ -13,4 +13,3 @@ func TestBaseNameWithoutExtension(t *testing.T) {
 		t.Fatalf("BaseName() = %q, want %q", got, "README")
 	}
 }
-

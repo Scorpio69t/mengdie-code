@@ -127,4 +127,3 @@ func fallback(value, fallbackValue string) string {
 	}
 	return value
 }
-

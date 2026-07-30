@@ -7,4 +7,3 @@ func SumTo(limit int) int {
 	}
 	return total
 }
-

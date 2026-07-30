@@ -126,4 +126,3 @@ func writeAppConfig(t *testing.T, root, content string) {
 		t.Fatal(err)
 	}
 }
-

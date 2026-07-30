@@ -182,4 +182,3 @@ func resolveFixture(root, relative string) (string, error) {
 	}
 	return path, nil
 }
-

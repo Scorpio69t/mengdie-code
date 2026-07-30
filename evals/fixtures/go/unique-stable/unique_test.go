@@ -12,4 +12,3 @@ func TestUniquePreservesFirstOccurrence(t *testing.T) {
 		t.Fatalf("Unique() = %#v, want %#v", got, want)
 	}
 }
-

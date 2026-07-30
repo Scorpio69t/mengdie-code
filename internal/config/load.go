@@ -221,4 +221,3 @@ func applyModel(profile *Profile, value string) {
 	}
 	profile.Model = value
 }
-

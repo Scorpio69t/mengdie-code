@@ -38,4 +38,3 @@ func TestFindRootFallsBackToStart(t *testing.T) {
 		t.Fatalf("FindRoot() = %q, want %q", got, start)
 	}
 }
-

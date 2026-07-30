@@ -13,4 +13,3 @@ func TestAverageEmpty(t *testing.T) {
 		t.Fatalf("Average(nil) = %v, want 0", got)
 	}
 }
-
