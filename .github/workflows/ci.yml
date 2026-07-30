@@ -41,6 +41,9 @@ jobs:
       - name: Race 测试
         run: go test -race -coverprofile=coverage.out ./...
 
+      - name: 运行 Coding baseline
+        run: go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json
+
   test:
     name: 测试 · ${{ matrix.os }}
     strategy:
@@ -63,3 +66,4 @@ jobs:
 
       - name: 运行测试
         run: go test ./...
+

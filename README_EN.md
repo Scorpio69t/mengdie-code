@@ -50,6 +50,7 @@ This English README is the entry point for international readers. The detailed [
 
 - [x] Product positioning and v0.2 architecture blueprint
 - [x] Chinese-first open-source repository infrastructure
+- [x] Phase 1 Slice 01: five coding baselines plus config and app skeletons
 - [ ] M0: real-world coding, long-run, and memory-trust eval sets
 - [ ] M1: minimum Agent Runtime capable of completing real tasks ([Phase 1 detailed design, Chinese](./docs/design/phase-1/DETAILED_DESIGN.md))
 - [ ] M2: persistent events, resume, context compaction, and Patch Journal
@@ -60,16 +61,20 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the product architecture and the [P
 
 ## Local preview
 
-The current command is only a compilable project placeholder for validating the repository and CI. It does not contain agent functionality yet.
+The current preview includes the CLI/app skeleton, layered configuration, a minimal doctor command, and five reproducible coding baselines. It does not include the Agent Runtime yet.
 
 ```bash
 git clone https://github.com/Scorpio69t/mengdie-code.git
 cd mengdie-code
 go test ./...
 go run ./cmd/mengdie --version
+go run ./cmd/mengdie doctor --json
+go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 ```
 
 Go 1.26 or later is required.
+
+A secret-free domestic-provider example is available at [`configs/examples/config.toml`](./configs/examples/config.toml). API keys are referenced by environment-variable name and must not be stored in project configuration.
 
 ## Contributing
 
@@ -84,3 +89,4 @@ MengDie means “Dreaming Butterfly,” inspired by Zhuangzi. The metaphor is si
 ## License
 
 MengDie Code is licensed under the [Apache License 2.0](./LICENSE).
+
