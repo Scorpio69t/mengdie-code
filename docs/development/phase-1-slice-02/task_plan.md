@@ -12,7 +12,7 @@
 - [x] Phase 4：实现人类 renderer、JSON Lines renderer 与输出脱敏/错误传播
 - [x] Phase 5：实现第一次取消、短窗口第二次退出的中断状态机和 scripted 测试
 - [x] Phase 6：接入 App 可运行预览，补齐中英文文档与端到端测试
-- [ ] Phase 7：运行完整校验并发布草稿 PR
+- [x] Phase 7：运行完整校验并发布草稿 PR
 
 ## Key Questions
 
@@ -32,7 +32,8 @@
 ## Errors Encountered
 
 - 收紧 `run.started` 隐私字段后，一处 renderer 测试夹具仍引用已删除的 `Task` 字段；已修正并重新通过定向与全量测试。
+- 首次增量 `git push` 因本地 upstream 仍指向 `origin/main` 被安全拒绝；改为显式推送 HEAD 到 `agent/phase1-slice02` 并重建 tracking，未触碰主干。
 
 ## Status
 
-**Currently in Phase 7** — 本地完整质量门禁通过，正在做最终 diff 审查并发布草稿 PR。
+**Complete** — 本地与远端质量门禁通过，草稿 PR #7 已发布，等待人工架构与协议评审。

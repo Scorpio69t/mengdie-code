@@ -1,6 +1,6 @@
 # 第一阶段 Slice 02 实现报告
 
-> 状态：本地验证通过，待远端 CI
+> 状态：本地与远端验证通过，待人工评审
 
 ## 目标
 
@@ -44,6 +44,8 @@
 - `mengdie-eval --manifest evals/coding/smoke.json`：5/5 baseline 通过；
 - `mengdie exec --cwd . --json "验证事件输出"`：恰好输出两条可解析事件，未包含任务正文，并按设计以退出码 1 结束；
 - 覆盖并发序号、无效 envelope、RunID、JSON Lines、未知 payload、防泄露、writer 失败、context 取消、双 Ctrl+C、窗口过期与 TTY/pipe 输出分流。
+
+远端 PR #7 首轮 CI：macOS、Windows、Ubuntu 与质量检查全部通过。
 
 ## 明确不做
 
