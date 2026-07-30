@@ -11,7 +11,7 @@
 - [x] Phase 3：实现 P1-00 评测 manifest、fixture runner 与机器可读结果
 - [x] Phase 4：实现 P1-01 命令分发、配置加载、项目根和版本信息
 - [x] Phase 5：补齐单元测试、双平台边界测试和开发文档
-- [ ] Phase 6：运行完整校验并发布草稿 PR
+- [x] Phase 6：运行完整校验并发布草稿 PR
 
 ## Key Questions
 
@@ -35,9 +35,9 @@
 - App 重构后的状态文案破坏两项既有入口测试：恢复“Agent 功能尚未实现”，保持中文产品提示兼容。
 - 最终审阅发现 Markdown 尾随空格、冗余 TOML 尾部读取和会受用户配置影响的 cmd 测试：均已清理，行为测试移入可注入环境的 `internal/app`。
 - Git HTTPS 推送两次无法连接 `github.com:443`：改用 GitHub API 发布 44 个文件，首次 tree 构建暴露换行重编码 SHA 假设错误，随后完全采用 API 返回的 blob SHA 成功创建 PR #5。
-- 首轮远端三平台测试全部通过，但质量检查发现 API 上传绕过 `.gitattributes`，新 Go 文件为 CRLF：已按原始字节重新发布为 LF，并核对远端 blob SHA 与本地一致，等待复检。
+- 首轮远端三平台测试全部通过，但质量检查发现 API 上传绕过 `.gitattributes`，新 Go 文件为 CRLF：已按原始字节重新发布为 LF，并核对远端 blob SHA 与本地一致，复检通过。
 - LF 复检通过后，`govulncheck` 识别到 Go 1.26 标准库的两个代码可达漏洞（GO-2026-4601、GO-2026-4602），均已在 Go 1.26.1 修复：将项目最低补丁版本提升到 1.26.1。
 
 ## Status
 
-**Currently in Phase 6** — 审阅完整差异、运行最终校验并发布草稿 PR。
+**已完成** — P1-00 与 P1-01 已实现，草稿 PR #5 已发布，远端 Linux、macOS、Windows 与质量检查全部通过，等待用户审核。

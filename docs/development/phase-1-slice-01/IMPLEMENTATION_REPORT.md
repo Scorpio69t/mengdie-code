@@ -1,6 +1,6 @@
 # 第一阶段 Slice 01 实现报告
 
-> 状态：本地完成，待远端 CI
+> 状态：完成，远端 CI 通过，等待审核
 
 草稿 PR：[Scorpio69t/mengdie-code#5](https://github.com/Scorpio69t/mengdie-code/pull/5)
 
@@ -41,7 +41,9 @@
 ## 远端验证
 
 - 首轮 Linux、macOS、Windows 单元测试全部通过；
-- 质量检查识别出 GitHub API 上传绕过 `.gitattributes` 的 CRLF 问题，源码已统一为 LF，等待复检。
+- 质量检查识别出的 CRLF 问题已修复，`gofmt` 门禁通过；
+- `go vet`、`govulncheck`、Race 测试和 Coding baseline 全部通过；
+- 项目最低 Go 补丁版本提升至 1.26.1，规避 GO-2026-4601 与 GO-2026-4602。
 
 ## 下一切片
 
