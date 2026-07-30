@@ -1,0 +1,9 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用讨论与问题交流
+    url: https://github.com/Scorpio69t/mengdie-code/discussions
+    about: 不确定是否是缺陷时，欢迎先到 Discussions 交流
+  - name: 私密安全报告
+    url: https://github.com/Scorpio69t/mengdie-code/security/advisories/new
+    about: 请不要公开披露尚未修复的安全漏洞
+

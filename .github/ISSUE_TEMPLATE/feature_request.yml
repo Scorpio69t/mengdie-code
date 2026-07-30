@@ -1,0 +1,51 @@
+name: 功能建议
+description: 描述真实痛点和希望达成的结果
+title: "[建议] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        早期阶段我们更关注真实用户问题，而不是功能数量。请先描述场景，再讨论方案。
+  - type: checkboxes
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 我搜索过现有 Issue 和架构文档
+          required: true
+        - label: 这个建议来自真实或明确可描述的使用场景
+          required: true
+  - type: textarea
+    attributes:
+      label: 使用场景与痛点
+      description: 你在什么情况下遇到了什么问题？目前如何绕过？
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 期望结果
+      description: 从用户角度描述成功后的体验，不必先给技术方案。
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 可选方案
+      description: 如果已有想法，请说明权衡、风险和如何验收。
+  - type: dropdown
+    attributes:
+      label: 相关方向
+      options:
+        - Agent Runtime
+        - 安全与权限
+        - Provider 与国内模型
+        - 可信记忆
+        - 复盘机制
+        - CLI / TUI
+        - Windows 与跨平台
+        - 评估与测试
+        - 文档与社区
+        - 其他
+    validations:
+      required: true
+

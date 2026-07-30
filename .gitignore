@@ -1,0 +1,35 @@
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Build artifacts
+/bin/
+/dist/
+/build/
+
+# Local runtime data
+.mengdie/
+*.db
+*.db-shm
+*.db-wal
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+

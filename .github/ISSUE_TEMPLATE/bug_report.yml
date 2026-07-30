@@ -1,0 +1,56 @@
+name: 缺陷报告
+description: 报告可复现的错误或异常行为
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你帮助改进 MengDie Code。安全漏洞请不要在这里公开，参见 SECURITY.md。
+  - type: checkboxes
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 我搜索过现有 Issue，没有发现相同问题
+          required: true
+        - label: 这不是需要私密报告的安全漏洞
+          required: true
+  - type: input
+    attributes:
+      label: 版本或提交
+      description: 例如版本号或 `git rev-parse HEAD`
+      placeholder: 0.0.0-dev / commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: 操作系统
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - 其他
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 问题描述
+      description: 实际发生了什么？你原本期待什么？
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 运行 ...
+        2. 输入 ...
+        3. 观察到 ...
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 日志与补充信息
+      description: 请先删除密钥、路径中的敏感信息和私有代码。
+      render: shell
+
