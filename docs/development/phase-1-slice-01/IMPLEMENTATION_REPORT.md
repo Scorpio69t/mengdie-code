@@ -38,7 +38,11 @@
 - Coding baseline：5/5 符合预期；
 - `mengdie doctor --cwd . --json`：输出有效且无秘密值。
 
+## 远端验证
+
+- 首轮 Linux、macOS、Windows 单元测试全部通过；
+- 质量检查识别出 GitHub API 上传绕过 `.gitattributes` 的 CRLF 问题，源码已统一为 LF，等待复检。
+
 ## 下一切片
 
 进入 P1-02：定义事件类型、人类输出与 JSON Lines renderer，并为 Ctrl+C 状态机建立 scripted I/O 测试；随后再接 P1-03 OpenAI-compatible Provider。
-
