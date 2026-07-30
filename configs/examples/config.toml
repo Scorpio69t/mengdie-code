@@ -1,0 +1,32 @@
+# MengDie Code 配置示例。
+# 复制到用户配置目录，或复制为项目中的 .mengdie/config.toml。
+# 项目配置禁止保存密钥；这里只引用环境变量名。
+
+default_profile = "deepseek"
+
+[profiles.deepseek]
+provider = "openai-compatible"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+model = "deepseek-chat"
+cheap_model = "deepseek-chat"
+request_timeout = "120s"
+max_context_tokens = 64000
+
+[profiles.kimi]
+provider = "openai-compatible"
+base_url = "https://api.moonshot.cn/v1"
+api_key_env = "MOONSHOT_API_KEY"
+model = "kimi-k2"
+request_timeout = "120s"
+max_context_tokens = 128000
+
+[approval]
+mode = "suggest"
+read_project_files = true
+allow_commands = ["go test", "go vet", "git status", "git diff"]
+
+[context]
+max_tool_output_bytes = 65536
+max_turns = 32
+

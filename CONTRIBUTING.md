@@ -43,6 +43,12 @@ go vet ./...
 go test ./...
 ```
 
+修改评测 manifest、runner 或 fixture 时还应运行：
+
+```bash
+go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json
+```
+
 提交前请确保：
 
 - `go test ./...` 通过；

@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "id": "coding-smoke-v1",
+  "description": "MengDie Code 第一批可重复运行的 Go 修复基线",
+  "fixture_root": "../fixtures",
+  "tasks": [
+    {
+      "id": "go-sum-boundary",
+      "title": "修复求和边界",
+      "prompt": "修复 SumTo 的边界错误，使其包含上界，并保持负数输入返回 0。",
+      "fixture": "go/sum-boundary",
+      "tags": ["go", "bugfix", "boundary"],
+      "verify": {
+        "command": ["go", "test", "./..."],
+        "timeout": "30s"
+      },
+      "baseline": {"expected_exit_code": 1}
+    },
+    {
+      "id": "go-normalize-name",
+      "title": "规范化用户名称",
+      "prompt": "修复 NormalizeName，使其移除首尾空白并转换为小写。",
+      "fixture": "go/normalize-name",
+      "tags": ["go", "bugfix", "string"],
+      "verify": {
+        "command": ["go", "test", "./..."],
+        "timeout": "30s"
+      },
+      "baseline": {"expected_exit_code": 1}
+    },
+    {
+      "id": "go-unique-stable",
+      "title": "稳定去重",
+      "prompt": "实现 Unique，使其去除重复字符串并保持首次出现顺序。",
+      "fixture": "go/unique-stable",
+      "tags": ["go", "implementation", "collection"],
+      "verify": {
+        "command": ["go", "test", "./..."],
+        "timeout": "30s"
+      },
+      "baseline": {"expected_exit_code": 1}
+    },
+    {
+      "id": "go-strip-extensions",
+      "title": "移除复合扩展名",
+      "prompt": "修复 BaseName，使 archive.tar.gz 返回 archive，同时正确处理无扩展名文件。",
+      "fixture": "go/strip-extensions",
+      "tags": ["go", "bugfix", "path"],
+      "verify": {
+        "command": ["go", "test", "./..."],
+        "timeout": "30s"
+      },
+      "baseline": {"expected_exit_code": 1}
+    },
+    {
+      "id": "go-average-precision",
+      "title": "修复平均值精度",
+      "prompt": "修复 Average 的整数除法精度问题，并保持空切片返回 0。",
+      "fixture": "go/average-precision",
+      "tags": ["go", "bugfix", "numeric"],
+      "verify": {
+        "command": ["go", "test", "./..."],
+        "timeout": "30s"
+      },
+      "baseline": {"expected_exit_code": 1}
+    }
+  ]
+}
+
