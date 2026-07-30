@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🦋 MengDie Code / 梦蝶 Code
+<img src="./assets/brand/mengdie-mark.svg" alt="由代码尖括号构成的梦蝶 Code 蝴蝶标志" width="144">
+
+# MengDie Code / 梦蝶 Code
 
 **不是记得更多，而是记得更对。**
 
@@ -82,6 +84,8 @@ mengdie memory forget <id>
 
 完整产品架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；准备进入实现评审的 M1 方案见 [第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)。
 
+工程依赖的选择、升级和供应链标准见 [依赖与现代化工程准则](./docs/DEPENDENCIES.md)，Logo 与 CLI 启动体验见 [品牌规范](./docs/BRAND.md)。
+
 ## 架构概览
 
 ```mermaid
@@ -130,4 +134,3 @@ go run ./cmd/mengdie --version
 ## 开源协议
 
 MengDie Code 使用 [Apache License 2.0](./LICENSE) 开源。
-

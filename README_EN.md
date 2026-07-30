@@ -1,6 +1,8 @@
 <div align="center">
 
-# 🦋 MengDie Code
+<img src="./assets/brand/mengdie-mark.svg" alt="MengDie Code butterfly mark formed from code angle brackets" width="144">
+
+# MengDie Code
 
 **Remember correctly, not merely more.**
 
@@ -54,7 +56,7 @@ This English README is the entry point for international readers. The detailed [
 - [ ] M3: auditable, trustworthy memory
 - [ ] M4: proposal-first reflection
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the product architecture and the [Phase 1 detailed design](./docs/design/phase-1/DETAILED_DESIGN.md) for the implementation-ready M1 proposal. Both are currently maintained in Chinese.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the product architecture and the [Phase 1 detailed design](./docs/design/phase-1/DETAILED_DESIGN.md) for the implementation-ready M1 proposal. Both are currently maintained in Chinese. Dependency governance is documented in the Chinese-first [modern engineering guidelines](./docs/DEPENDENCIES.md), and the shared CLI/Web identity is covered by the [brand guide](./docs/BRAND.md).
 
 ## Local preview
 
@@ -82,4 +84,3 @@ MengDie means “Dreaming Butterfly,” inspired by Zhuangzi. The metaphor is si
 ## License
 
 MengDie Code is licensed under the [Apache License 2.0](./LICENSE).
-
