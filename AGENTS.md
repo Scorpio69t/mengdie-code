@@ -12,6 +12,12 @@ MengDie Code 是中文优先、记忆可验证、会复盘，并重点适配 mac
 - 优先完成可测试的小闭环，不提前稳定无调用方的公共接口。
 - 第三方依赖遵循 `docs/DEPENDENCIES.md`：成熟度、维护状态、跨平台、许可证和供应链成本必须共同评估。
 
+## Deep Agent 指导技能
+
+- 进行架构设计、里程碑规划、Agent 能力实现或相关代码审查前，必须使用 `.agents/skills/build-mengdie-deepagent/SKILL.md`。
+- 按该技能要求完整阅读 `references/principles.md` 与 `references/decision-gates.md`，把上下文、安全、恢复和评测门禁落实到当前切片。
+- 技能用于吸收 Deep Agent 的 Harness 原则，不代表照搬 LangChain、LangGraph 或 Python API；已审核的 MengDie Code 产品范围和 Go 架构优先。
+
 ## 语言
 
 - 用户文档、Issue 模板和产品文案默认中文优先。
