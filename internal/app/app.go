@@ -6,7 +6,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -14,15 +13,19 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/Scorpio69t/mengdie-code/internal/brand"
 	"github.com/Scorpio69t/mengdie-code/internal/config"
+	"github.com/Scorpio69t/mengdie-code/internal/events"
+	"github.com/Scorpio69t/mengdie-code/internal/ui/terminal"
 )
 
 const (
 	ExitOK           = 0
 	ExitRunError     = 1
 	ExitInvalidInput = 2
+	ExitUserCanceled = 5
 )
 
 // BuildInfo contains values injected by the release build.
@@ -39,6 +42,8 @@ type App struct {
 	stderr        io.Writer
 	lookupEnv     func(string) (string, bool)
 	userConfigDir string
+	now           func() time.Time
+	newRunID      func() (string, error)
 }
 
 // New constructs the production application service.
@@ -48,6 +53,8 @@ func New(build BuildInfo, stdout, stderr io.Writer) *App {
 		stdout:    stdout,
 		stderr:    stderr,
 		lookupEnv: os.LookupEnv,
+		now:       time.Now,
+		newRunID:  events.NewRunID,
 	}
 }
 
@@ -100,32 +107,62 @@ func (a *App) runInteractive(_ context.Context, args []string, interactive bool)
 			return ExitRunError
 		}
 	}
-	fmt.Fprintln(a.stdout, "当前阶段：P1-00 / P1-01 开发预览，Agent 功能尚未实现。")
+	fmt.Fprintln(a.stdout, "当前阶段：P1-00 / P1-01 / P1-02 开发预览，Agent 功能尚未实现。")
 	fmt.Fprintln(a.stdout, "可运行 mengdie doctor 检查当前配置。")
 	return ExitOK
 }
 
-func (a *App) runExec(_ context.Context, args []string) int {
+func (a *App) runExec(ctx context.Context, args []string) int {
 	flags, common := a.newCommonFlagSet("mengdie exec")
 	jsonOutput := flags.Bool("json", false, "输出 JSON Lines 事件")
 	if err := flags.Parse(args); err != nil {
 		return flagExitCode(err)
 	}
-	if strings.TrimSpace(strings.Join(flags.Args(), " ")) == "" {
+	task := strings.TrimSpace(strings.Join(flags.Args(), " "))
+	if task == "" {
 		fmt.Fprintln(a.stderr, "mengdie exec 需要任务描述")
 		return ExitInvalidInput
 	}
-	if _, err := a.loadConfig(common); err != nil {
+	loaded, err := a.loadConfig(common)
+	if err != nil {
 		fmt.Fprintf(a.stderr, "配置错误：%v\n", err)
 		return ExitInvalidInput
 	}
+	runID, err := a.newRunID()
+	if err != nil {
+		fmt.Fprintf(a.stderr, "创建 Run 失败：%v\n", err)
+		return ExitRunError
+	}
+	var sink events.Sink
 	if *jsonOutput {
-		_ = json.NewEncoder(a.stdout).Encode(map[string]string{
-			"kind":  "run.unavailable",
-			"error": "Agent Runtime 尚未实现",
-		})
+		sink, err = terminal.NewJSONRenderer(a.stdout)
 	} else {
-		fmt.Fprintln(a.stderr, "Agent Runtime 尚未实现；当前切片只提供评测、配置与诊断骨架。")
+		sink, err = terminal.NewHumanRenderer(a.stderr)
+	}
+	if err != nil {
+		fmt.Fprintf(a.stderr, "初始化输出失败：%v\n", err)
+		return ExitRunError
+	}
+	emitter, err := events.NewEmitter(runID, sink, a.now)
+	if err != nil {
+		fmt.Fprintf(a.stderr, "初始化事件流失败：%v\n", err)
+		return ExitRunError
+	}
+	profile := loaded.Profile()
+	if _, err := emitter.Emit(ctx, events.KindRunStarted, events.RunStarted{
+		Model:    modelLabel(profile),
+		CWD:      loaded.ProjectRoot,
+		Security: approvalLabel(loaded.Config.Approval.Mode),
+	}); err != nil {
+		fmt.Fprintf(a.stderr, "输出事件失败：%v\n", err)
+		return emitExitCode(err)
+	}
+	if _, err := emitter.Emit(ctx, events.KindRunFailed, events.RunFailed{
+		Category: "runtime_unavailable",
+		Message:  "Agent Runtime 尚未实现；P1-02 仅提供事件与终端输出骨架",
+	}); err != nil {
+		fmt.Fprintf(a.stderr, "输出事件失败：%v\n", err)
+		return emitExitCode(err)
 	}
 	return ExitRunError
 }
@@ -193,4 +230,11 @@ func flagExitCode(err error) int {
 		return ExitOK
 	}
 	return ExitInvalidInput
+}
+
+func emitExitCode(err error) int {
+	if errors.Is(err, context.Canceled) {
+		return ExitUserCanceled
+	}
+	return ExitRunError
 }

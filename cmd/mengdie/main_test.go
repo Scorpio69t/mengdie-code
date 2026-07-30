@@ -5,9 +5,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/Scorpio69t/mengdie-code/internal/app"
 )
 
 func TestRunVersion(t *testing.T) {
@@ -22,5 +25,16 @@ func TestRunVersion(t *testing.T) {
 	}
 	if got := output.String(); !strings.Contains(got, runtime.GOOS+"/"+runtime.GOARCH) {
 		t.Fatalf("run() output = %q, want platform", got)
+	}
+}
+
+func TestRunContextPropagatesCancellation(t *testing.T) {
+	var output bytes.Buffer
+	var errors bytes.Buffer
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if code := runContext(cancelled, []string{"exec", "test"}, &output, &errors, false); code != app.ExitUserCanceled {
+		t.Fatalf("runContext() code = %d, want %d", code, app.ExitUserCanceled)
 	}
 }

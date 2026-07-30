@@ -11,8 +11,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Scorpio69t/mengdie-code/internal/brand"
+	"github.com/Scorpio69t/mengdie-code/internal/events"
 )
 
 func TestDoctorJSONDoesNotRevealCredential(t *testing.T) {
@@ -88,8 +90,52 @@ func TestExecReportsUnavailableWithoutPretendingSuccess(t *testing.T) {
 	if code != ExitRunError {
 		t.Fatalf("Run() code = %d, want %d", code, ExitRunError)
 	}
-	if !strings.Contains(stdout.String(), `"kind":"run.unavailable"`) {
-		t.Fatalf("exec output = %q", stdout.String())
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("exec output has %d lines: %q", len(lines), stdout.String())
+	}
+	wantKinds := []events.Kind{events.KindRunStarted, events.KindRunFailed}
+	for i, line := range lines {
+		var event events.Event
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatalf("decode line %d: %v", i, err)
+		}
+		if event.RunID != "run-test" || event.Seq != uint64(i+1) || event.Kind != wantKinds[i] {
+			t.Fatalf("event %d = %+v", i, event)
+		}
+	}
+}
+
+func TestExecHumanOutputUsesEventRenderer(t *testing.T) {
+	root := t.TempDir()
+	application, stdout, stderr := newTestApp(t, nil)
+
+	code := application.Run(context.Background(), []string{"exec", "--cwd", root, "修复测试"}, true)
+	if code != ExitRunError {
+		t.Fatalf("Run() code = %d, want %d", code, ExitRunError)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+	for _, want := range []string{"开始任务", "任务失败 [runtime_unavailable]", "Agent Runtime 尚未实现"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr does not contain %q: %s", want, stderr.String())
+		}
+	}
+}
+
+func TestExecCanceledContextUsesStableExitCodeAndDoesNotExposeTask(t *testing.T) {
+	root := t.TempDir()
+	application, stdout, stderr := newTestApp(t, nil)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	code := application.Run(cancelled, []string{"exec", "--cwd", root, "private prompt"}, false)
+	if code != ExitUserCanceled {
+		t.Fatalf("Run() code = %d, want %d", code, ExitUserCanceled)
+	}
+	if strings.Contains(stdout.String(), "private prompt") || strings.Contains(stderr.String(), "private prompt") {
+		t.Fatalf("canceled exec exposed task: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }
 
@@ -109,6 +155,10 @@ func newTestApp(t *testing.T, environment map[string]string) (*App, *bytes.Buffe
 	stderr := &bytes.Buffer{}
 	application := New(BuildInfo{Version: "test", Commit: "abc123", Date: "2026-07-30"}, stdout, stderr)
 	application.userConfigDir = t.TempDir()
+	application.now = func() time.Time {
+		return time.Date(2026, 7, 30, 9, 0, 0, 0, time.UTC)
+	}
+	application.newRunID = func() (string, error) { return "run-test", nil }
 	application.lookupEnv = func(key string) (string, bool) {
 		value, ok := environment[key]
 		return value, ok
