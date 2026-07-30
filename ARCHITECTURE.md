@@ -26,7 +26,7 @@ MengDie Code 是一个面向国内开发者的本地 Coding Agent：兼容主流
 | Agent 做出错误假设 | 不知道它为什么这样认为，错误还可能跨会话传播 | `memory why`、证据链、冲突与失效标记 |
 | 修改代码后效果变差 | diff 零散、用户仓库被自动提交、难以精确撤销 | Patch Journal 与按回合 `rewind` |
 | 使用国内模型 | 配置分散、兼容性不明、费用不可见 | 国内 Provider 开箱即用、能力检测、真实用量展示 |
-| Windows 本地开发 | 主流 Coding CLI 的 Windows 支持常为实验状态 | Windows 作为一等平台，不虚假承诺不具备的沙箱能力 |
+| macOS / Windows 本地开发 | MacBook 与 Windows 是国内开发者最常见的两类本地开发环境，终端、凭据、路径和进程模型差异明显 | 两个平台都作为一等平台设计和测试，不用 Linux 行为简单外推 |
 
 ### 1.3 产品承诺
 
@@ -54,7 +54,7 @@ MengDie Code 是一个面向国内开发者的本地 Coding Agent：兼容主流
 |---|---|---|
 | **可信记忆** | 来源、作用域、有效期、冲突、确认状态、`why/forget/export` | 重复纠正率下降；错误召回可追踪 |
 | **证据驱动复盘** | 从成功/失败轨迹提炼提案，不自动篡改正式规则 | 提案接受率；产生的后续收益 |
-| **国内与 Windows 体验** | 国内模型、中文、单二进制、Windows 一等支持 | 安装成功率；首次任务完成时间 |
+| **国内与双平台体验** | 国内模型、中文、单二进制、macOS 与 Windows 一等支持 | 双平台安装成功率；首次任务完成时间 |
 
 > 产品的北极星指标不是“存了多少记忆”，而是：**同一仓库中的后续任务，用户需要重复纠正的次数是否持续下降。**
 
@@ -391,7 +391,7 @@ v0.1 提供所有平台共有的基础防线：
 - 超时、输出上限和进程树终止；
 - 全程审计与 Patch Journal。
 
-Linux 可选集成 bwrap，Docker 可作为后续执行后端。Windows 首版如尚无可靠 OS 级隔离，UI 必须明确显示“本地受控执行”而不是“强沙箱”，避免给用户虚假安全感。
+macOS 与 Windows 都是 Tier 1 平台：macOS 重点适配 Apple Silicon、Terminal.app/iTerm2、zsh、Keychain 与 Homebrew；Windows 重点适配 Windows Terminal、PowerShell 7、盘符/UNC/重解析点、Job Object 与安装升级体验。Linux 保持完整 CLI 支持，并可选探索 bwrap；Docker 可作为后续执行后端。任何平台如尚无可靠 OS 级隔离，UI 都必须明确显示“本地受控执行”而不是“强沙箱”，避免给用户虚假安全感。
 
 ### 7.4 Patch Journal 与 rewind
 
@@ -807,6 +807,8 @@ mengdie/
 
 ### M1 · 能日用（第 2–4 周）
 
+详细接口、平台策略、工作包和验收方案见 [`docs/design/phase-1/DETAILED_DESIGN.md`](./docs/design/phase-1/DETAILED_DESIGN.md)。
+
 交付：
 
 - OpenAI-compatible Provider；
@@ -926,3 +928,4 @@ mengdie/
 10. [Voyager](https://arxiv.org/abs/2305.16291) — 可复用技能与程序性经验。
 
 > 竞争产品能力变化很快。文档不再使用“某产品没有记忆”“业界无人做到”等绝对陈述；每次发布前以官方资料重新核验。
+

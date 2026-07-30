@@ -2,7 +2,7 @@
 
 ## 项目定位
 
-MengDie Code 是中文优先、记忆可验证、会复盘的本地 Coding Agent。开始修改前先阅读 `README.md` 和 `ARCHITECTURE.md`。
+MengDie Code 是中文优先、记忆可验证、会复盘，并重点适配 macOS 与 Windows 的本地 Coding Agent。开始修改前先阅读 `README.md` 和 `ARCHITECTURE.md`。
 
 ## 当前范围
 

@@ -4,7 +4,7 @@
 
 **Remember correctly, not merely more.**
 
-A local coding agent for Chinese developers, built around verifiable memory, evidence-driven reflection, China-friendly model providers, and first-class Windows support.
+A local coding agent for Chinese developers, built around verifiable memory, evidence-driven reflection, China-friendly model providers, and first-class macOS and Windows support.
 
 [中文](./README.md) · **English**
 
@@ -25,7 +25,7 @@ Modern coding agents can read files, edit code, and run commands, but several da
 - long tasks lose goals and rationale after context compaction;
 - incorrect memories are difficult to trace and correct;
 - failed edits can be hard to rewind without polluting Git history;
-- Chinese model providers, network conditions, and Windows developers are rarely first-class priorities.
+- Chinese model providers, network conditions, and the many Chinese developers using MacBooks or Windows are rarely treated as one coherent first-class audience.
 
 MengDie Code aims to be a local coding agent where **memories have provenance, conclusions have evidence, changes are reversible, and reflection remains reviewable**.
 
@@ -34,7 +34,8 @@ MengDie Code aims to be a local coding agent where **memories have provenance, c
 - **Verifiable memory** — provenance, scope, authority, validity, conflicts, and explicit `why/forget/export` controls.
 - **Evidence-driven reflection** — offline analysis creates proposals by default; it does not silently rewrite code or project rules.
 - **China-friendly providers** — DeepSeek, Kimi, Zhipu, and configurable OpenAI-compatible endpoints are early priorities.
-- **First-class Windows support** — cross-platform behavior and security levels are described honestly.
+- **First-class macOS and Windows support** — native terminal, shell, credential, path, process, and distribution behavior are designed and tested for both platforms.
+- **Linux support** — Linux remains fully buildable and usable, while the first product-experience pass focuses on macOS and Windows.
 - **Local-first Go binary** — a small distribution surface before any daemon or web frontend.
 
 ## Chinese-first open source
@@ -48,12 +49,12 @@ This English README is the entry point for international readers. The detailed [
 - [x] Product positioning and v0.2 architecture blueprint
 - [x] Chinese-first open-source repository infrastructure
 - [ ] M0: real-world coding, long-run, and memory-trust eval sets
-- [ ] M1: minimum Agent Runtime capable of completing real tasks
+- [ ] M1: minimum Agent Runtime capable of completing real tasks ([Phase 1 detailed design, Chinese](./docs/design/phase-1/DETAILED_DESIGN.md))
 - [ ] M2: persistent events, resume, context compaction, and Patch Journal
 - [ ] M3: auditable, trustworthy memory
 - [ ] M4: proposal-first reflection
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the complete design and milestone acceptance criteria.
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the product architecture and the [Phase 1 detailed design](./docs/design/phase-1/DETAILED_DESIGN.md) for the implementation-ready M1 proposal. Both are currently maintained in Chinese.
 
 ## Local preview
 
@@ -70,7 +71,7 @@ Go 1.26 or later is required.
 
 ## Contributing
 
-The most valuable early contributions are real coding-agent pain points, architecture review, reproducible evaluation scenarios, Chinese-provider compatibility, Windows execution safety, documentation, and focused milestone work.
+The most valuable early contributions are real coding-agent pain points, architecture review, reproducible evaluation scenarios, Chinese-provider compatibility, macOS and Windows execution safety, documentation, and focused milestone work.
 
 Please read the Chinese-first [contribution guide](./CONTRIBUTING.md) and [code of conduct](./CODE_OF_CONDUCT.md). English contributions are welcome. Report security issues according to [SECURITY.md](./SECURITY.md).
 

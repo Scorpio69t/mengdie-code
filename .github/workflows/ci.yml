@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Go 检查
+  quality:
+    name: 质量检查
     runs-on: ubuntu-latest
     steps:
       - name: 检出代码
@@ -35,5 +35,29 @@ jobs:
       - name: 静态检查
         run: go vet ./...
 
-      - name: 运行测试
+      - name: Race 测试
         run: go test -race -coverprofile=coverage.out ./...
+
+  test:
+    name: 测试 · ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+          - ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 运行测试
+        run: go test ./...
+
