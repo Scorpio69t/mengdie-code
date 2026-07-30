@@ -52,6 +52,7 @@ This English README is the entry point for international readers. The detailed [
 - [x] Chinese-first open-source repository infrastructure
 - [x] Phase 1 Slice 01: five coding baselines plus config and app skeletons
 - [x] Phase 1 Slice 02: versioned events, terminal/JSON Lines renderers, and Ctrl+C state machine
+- [x] Phase 1 Slice 03: OpenAI-compatible HTTP/SSE, streamed tool-call assembly, and bounded retry ([protocol, Chinese](./docs/development/phase-1-slice-03/PROVIDER_PROTOCOL.md))
 - [ ] M0: real-world coding, long-run, and memory-trust eval sets
 - [ ] M1: minimum Agent Runtime capable of completing real tasks ([Phase 1 detailed design, Chinese](./docs/design/phase-1/DETAILED_DESIGN.md))
 - [ ] M2: persistent events, resume, context compaction, and Patch Journal
@@ -62,7 +63,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the product architecture and the [P
 
 ## Local preview
 
-The current preview includes the CLI/app skeleton, layered configuration, a minimal doctor command, five reproducible coding baselines, and the event/rendering boundary that the runtime will consume. It does not include the Agent Runtime yet.
+The current preview includes the CLI/app skeleton, layered configuration, a minimal doctor command, five reproducible coding baselines, the event/rendering boundary, and an offline-tested Provider protocol layer. The Provider is not wired into `mengdie exec` yet; the Agent Runtime and real-model smoke tests remain follow-up work.
 
 ```bash
 git clone https://github.com/Scorpio69t/mengdie-code.git
