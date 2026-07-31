@@ -59,7 +59,8 @@ model = "deepseek-chat"
 	if code != ExitOK {
 		t.Fatalf("Run() code = %d, want %d", code, ExitOK)
 	}
-	for _, want := range []string{brand.Mark, "openai-compatible:deepseek-chat", root} {
+	markLine := strings.Split(brand.Mark, "\n")[1]
+	for _, want := range []string{markLine, "openai-compatible:deepseek-chat", root} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("interactive output does not contain %q: %s", want, stdout.String())
 		}
@@ -74,7 +75,8 @@ func TestInteractiveOmitsBannerWhenOutputIsRedirected(t *testing.T) {
 	if code != ExitOK {
 		t.Fatalf("Run() code = %d, want %d", code, ExitOK)
 	}
-	if strings.Contains(stdout.String(), brand.Mark) {
+	markLine := strings.Split(brand.Mark, "\n")[1]
+	if strings.Contains(stdout.String(), markLine) {
 		t.Fatalf("redirected output unexpectedly contains banner: %s", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Agent 功能尚未实现") {

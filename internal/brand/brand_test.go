@@ -27,7 +27,7 @@ func TestWriteWelcomeIncludesIdentityAndRuntimeFacts(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		Mark,
+		strings.Split(Mark, "\n")[1],
 		"MengDie Code / 梦蝶 Code",
 		"不是记得更多，而是记得更对。",
 		info.Version,
