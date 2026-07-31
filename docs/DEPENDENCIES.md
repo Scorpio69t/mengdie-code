@@ -48,6 +48,7 @@ MengDie Code 不用“依赖越多”证明现代化。现代化意味着：
 
 - `go.mod` 只保留直接使用的依赖，提交前运行 `go mod tidy`。
 - CI 运行 `go vet ./...`、`go test -race ./...` 和 `govulncheck ./...`。
+- Go 最低补丁版本跟随当前受支持分支的安全修复；P1-03 引入真实 TLS/HTTP 调用后，基线提升为 Go 1.26.5，以覆盖 `crypto/tls`、`crypto/x509`、`net/http`、`net/textproto` 与 Windows `net` 的已知修复。
 - Dependabot 每周检查 Go Modules 与 GitHub Actions，次版本和补丁版本合并为批量 PR；升级仍需通过完整回归。
 - 发布时生成 SBOM、校验和与依赖许可证清单。
 - 大版本升级单独提交，不与业务功能混合，保留明确回滚点。

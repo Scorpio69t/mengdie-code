@@ -78,13 +78,14 @@ mengdie memory forget <id>
 - [x] 中文优先的开源仓库基础设施
 - [x] 第一阶段 Slice 01：5 个 Coding baseline、配置与 App 骨架
 - [x] 第一阶段 Slice 02：版本化事件协议、终端/JSON Lines 输出与 Ctrl+C 状态机
+- [x] 第一阶段 Slice 03：OpenAI-compatible HTTP/SSE、工具调用组装与有限重试（[协议说明](./docs/development/phase-1-slice-03/PROVIDER_PROTOCOL.md)）
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal
 - [ ] M3：可审计的可信记忆
 - [ ] M4：默认只生成提案的复盘机制
 
-完整产品架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；准备进入实现评审的 M1 方案见 [第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)。
+完整产品架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；M1 实施基线见 [第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)。当前 Provider 已完成离线协议层，尚未接入 `mengdie exec`；真实模型 smoke 与 CLI 闭环仍在后续工作包中。
 
 工程依赖的选择、升级和供应链标准见 [依赖与现代化工程准则](./docs/DEPENDENCIES.md)，Logo 与 CLI 启动体验见 [品牌规范](./docs/BRAND.md)。
 

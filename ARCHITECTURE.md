@@ -342,6 +342,8 @@ Provider Adapter 负责：
 - 启动时执行 capability probe，并缓存结果；
 - 将“模型不支持工具调用”等错误在任务开始前暴露，而不是运行中失败。
 
+P1-03 先交付最小可验证子集：`ToolCalling`、`ParallelTools`、`UsageInStream`、`StrictToolSchema` 与配置声明的 `MaxContextTokens`。它只保留 Agent 执行所需的规范化文本、工具调用和 usage，不传播隐藏 reasoning 内容；capability probe、原始诊断事件和更多多模态能力在 P1-10 或后续里程碑按实际兼容数据增加。协议细节见 [P1-03 Provider 协议](./docs/development/phase-1-slice-03/PROVIDER_PROTOCOL.md)。
+
 ### 6.2 首发支持顺序
 
 1. OpenAI-compatible 最小协议：覆盖 DeepSeek、Kimi、智谱等可配置端点。
@@ -928,4 +930,3 @@ mengdie/
 10. [Voyager](https://arxiv.org/abs/2305.16291) — 可复用技能与程序性经验。
 
 > 竞争产品能力变化很快。文档不再使用“某产品没有记忆”“业界无人做到”等绝对陈述；每次发布前以官方资料重新核验。
-
