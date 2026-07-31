@@ -56,7 +56,10 @@ func checkWindowsComponents(cleaned string) error {
 		if strings.ContainsRune(component, ':') {
 			return fmt.Errorf("path guard: %w: %q", ErrADS, cleaned)
 		}
-		name := component
+		// Windows strips trailing spaces and dots from file names, so
+		// "NUL ", "con." and "NUL. " all land on the device. Trim them
+		// before the reserved-name comparison.
+		name := strings.TrimRight(component, " .")
 		if i := strings.IndexByte(name, '.'); i >= 0 {
 			name = name[:i]
 		}

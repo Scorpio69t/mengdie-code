@@ -165,6 +165,29 @@ func TestResolveFollowsSymlinkInsideRoot(t *testing.T) {
 	}
 }
 
+func TestResolveMarksSensitiveSymlinkName(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "real", "file.txt"), "content")
+	// A symlink named ".git" pointing inside the root: the resolved path
+	// hides the sensitive component, so the pre-resolution path must be
+	// checked as well.
+	if err := os.Symlink(filepath.Join(root, "real"), filepath.Join(root, ".git")); err != nil {
+		t.Skipf("cannot create symlink on this host: %v", err)
+	}
+	guard := newGuard(t, root)
+
+	read, err := guard.Resolve(filepath.Join(".git", "file.txt"), AccessRead)
+	if err != nil {
+		t.Fatalf("read Resolve() error = %v", err)
+	}
+	if !read.Sensitive {
+		t.Fatal("access through .git symlink not marked sensitive")
+	}
+	if _, err := guard.Resolve(filepath.Join(".git", "file.txt"), AccessWrite); !errors.Is(err, ErrProtectedWrite) {
+		t.Fatalf("write Resolve() error = %v, want ErrProtectedWrite", err)
+	}
+}
+
 func TestWindowsFlavorSyntax(t *testing.T) {
 	// Pure syntax checks are host-independent; they must work on every CI OS.
 	for name, test := range map[string]struct {
@@ -196,6 +219,9 @@ func TestWindowsFlavorComponents(t *testing.T) {
 		"reserved NUL":            {`D:\project\NUL`, ErrDevicePath},
 		"reserved with extension": {`D:\project\con.txt`, ErrDevicePath},
 		"reserved lowercase":      {`d:\project\com1`, ErrDevicePath},
+		"reserved trailing space": {`D:\project\NUL `, ErrDevicePath},
+		"reserved trailing dot":   {`D:\project\con.`, ErrDevicePath},
+		"reserved dot and space":  {`D:\project\NUL. `, ErrDevicePath},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := checkWindowsComponents(test.path); !errors.Is(err, test.want) {
@@ -209,6 +235,7 @@ func TestWindowsFlavorComponents(t *testing.T) {
 		`d:\PROJECT\file.txt`,
 		`C:\project\nullable.go`,
 		`C:\project\console.go`,
+		`C:\project\ordinary. `,
 	} {
 		if err := checkWindowsComponents(path); err != nil {
 			t.Fatalf("checkWindowsComponents(%q) error = %v", path, err)

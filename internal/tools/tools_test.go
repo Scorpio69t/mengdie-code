@@ -60,12 +60,13 @@ func TestPrepareCallProducesValidCall(t *testing.T) {
 
 func TestPreparedCallValidate(t *testing.T) {
 	base := func() *PreparedCall {
+		arg := json.RawMessage(`{}`)
 		return &PreparedCall{
 			ID:           "id",
 			ToolName:     "tool",
-			CanonicalArg: json.RawMessage(`{}`),
+			CanonicalArg: arg,
 			Effects:      []Effect{EffectRead},
-			Digest:       "digest",
+			Digest:       ComputeDigest("tool", arg),
 		}
 	}
 
@@ -83,6 +84,7 @@ func TestPreparedCallValidate(t *testing.T) {
 		"unknown effect":   func(c *PreparedCall) { c.Effects = []Effect{"fly"} },
 		"duplicate effect": func(c *PreparedCall) { c.Effects = []Effect{EffectRead, EffectRead} },
 		"empty digest":     func(c *PreparedCall) { c.Digest = "" },
+		"digest mismatch":  func(c *PreparedCall) { c.Digest = ComputeDigest("other_tool", c.CanonicalArg) },
 		"bad precondition": func(c *PreparedCall) { c.Preconditions = []Precondition{{Kind: "magic"}} },
 		"hashless precondition": func(c *PreparedCall) {
 			c.Preconditions = []Precondition{{Kind: PreconditionFileSHA256, Path: "a.txt"}}

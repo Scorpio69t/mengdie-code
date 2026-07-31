@@ -180,5 +180,8 @@ func (c *PreparedCall) Validate() error {
 	if c.Digest == "" {
 		return errors.New("prepared call: empty digest")
 	}
+	if c.Digest != ComputeDigest(c.ToolName, c.CanonicalArg) {
+		return errors.New("prepared call: digest does not match tool name and canonical argument")
+	}
 	return nil
 }

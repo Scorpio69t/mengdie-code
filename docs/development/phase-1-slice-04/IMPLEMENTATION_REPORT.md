@@ -14,7 +14,7 @@
   - 包含性判断使用 `filepath.Rel` + 平台大小写语义（Windows 折叠），禁止字符串前缀比较，覆盖 `project-evil` 旁路；
   - 硬拒绝：项目根外路径、`.git`/`.mengdie`/`.ssh`/`.aws`/`.gnupg` 与凭据文件（`.env*`、`*.pem`、`*.key`、`id_*`、`.netrc` 等）的写入；
   - 敏感路径读取放行但标记 `Sensitive`，交给 P1-06 Policy 决定 ask/deny；
-  - Windows 语义与宿主 OS 解耦（flavor 参数化）：拒绝 `\\?\`、`\\.\`、UNC、盘符相对路径、ADS（`file.txt:secret`）和保留设备名（CON/NUL/COM1–9/LPT1–9 等），任一平台均可测试；
+  - Windows 语义与宿主 OS 解耦（flavor 参数化）：拒绝 `\\?\`、`\\.\`、UNC、盘符相对路径、ADS（`file.txt:secret`）和保留设备名（CON/NUL/COM1–9/LPT1–9 等，含尾随空格与点号变体）；纯语法检查任一平台可测，大小写折叠包含性需 Windows 宿主验证；
   - 稳定哨兵错误：`ErrOutsideRoot`、`ErrProtectedWrite`、`ErrUNCPath`、`ErrDevicePath`、`ErrADS`、`ErrDriveRelative`、`ErrEmptyPath`。
 - 新增 `internal/tools`：
   - `Tool` 两阶段协议：`Prepare`（无副作用，产出规范化参数、Preview、前置条件与 digest）与 `Execute`（携带一次性 Capability）；
@@ -48,4 +48,5 @@
 
 - macOS 大小写语义按"不假设不敏感"处理（区分大小写比较），大小写不敏感卷上的极端混淆路径留给平台 smoke；
 - symlink 测试在无法创建符号链接的环境跳过（Windows 无开发者模式时），GitHub Windows runner 与本机均可真实执行；
-- `Canonicalize` 保持数字字面量形式（`1e2` 与 `100` 不互认），模型参数按字节一致处理，语义化数字规范化留待真实需要时评估。
+- `Canonicalize` 保持数字字面量形式（`1e2` 与 `100` 不互认），模型参数按字节一致处理，语义化数字规范化留待真实需要时评估；
+- `Canonicalize` 不做 Unicode 规范化（NFC/NFD 形态的 digest 不同），方向为 fail-safe，如未来出现真实混用再评估。

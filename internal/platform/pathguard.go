@@ -154,7 +154,10 @@ func (g *PathGuard) Resolve(path string, mode AccessMode) (ResolvedPath, error) 
 		return ResolvedPath{}, fmt.Errorf("path guard: %w: %q", ErrOutsideRoot, path)
 	}
 
-	sensitive := g.isSensitive(resolved)
+	// Check both the symlink-resolved path and the pre-resolution path: a
+	// symlink named e.g. ".git" pointing inside the root must still mark
+	// accesses through it as sensitive.
+	sensitive := g.isSensitive(resolved) || g.isSensitive(p)
 	if sensitive && mode == AccessWrite {
 		return ResolvedPath{}, fmt.Errorf("path guard: %w: %q", ErrProtectedWrite, path)
 	}
@@ -201,7 +204,7 @@ func (g *PathGuard) isSensitive(resolved string) bool {
 		}
 	}
 	base := g.fold(filepath.Base(resolved))
-	if base == ".env" || strings.HasPrefix(base, ".env.") {
+	if base == ".env" || base == ".envrc" || strings.HasPrefix(base, ".env.") {
 		return true
 	}
 	for _, suffix := range []string{".pem", ".key", ".p12", ".pfx", ".keystore"} {
