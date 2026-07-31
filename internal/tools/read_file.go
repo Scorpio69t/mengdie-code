@@ -113,15 +113,18 @@ func (readFileTool) Execute(ctx context.Context, call *PreparedCall, cap Capabil
 	if err != nil {
 		return nil, err
 	}
-	if err := CheckPreconditions(call.Preconditions); err != nil {
-		return nil, err
-	}
 
 	file, err := os.Open(resolved.Path)
 	if err != nil {
 		return nil, fmt.Errorf("read_file: %w", err)
 	}
 	defer file.Close()
+	// Hash the open descriptor rather than re-opening by path, so the
+	// precondition check and the content read cannot observe two
+	// different files.
+	if err := CheckFilePreconditions(call.Preconditions, file); err != nil {
+		return nil, err
+	}
 	info, err := file.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("read_file: stat: %w", err)
@@ -139,7 +142,8 @@ func (readFileTool) Execute(ctx context.Context, call *PreparedCall, cap Capabil
 		metadata["end_line"] = fmt.Sprintf("%d", args.EndLine)
 	}
 
-	reader := bufio.NewReader(file)
+	// Sized to the sniff window so Peek(8<<10) never hits ErrBufferFull.
+	reader := bufio.NewReaderSize(file, 8<<10)
 	if sniffBinary(reader) {
 		metadata["encoding"] = "binary"
 		return &ToolResult{
@@ -217,7 +221,10 @@ func collectLines(ctx context.Context, reader *bufio.Reader, startLine, endLine 
 		}
 	}
 	if returned == 0 {
-		return fmt.Sprintf("（指定行范围 %d-%d 内没有内容）", startLine, endLine), false, 0, nil
+		if endLine > 0 {
+			return fmt.Sprintf("（指定行范围 %d-%d 内没有内容）", startLine, endLine), false, 0, nil
+		}
+		return fmt.Sprintf("（从第 %d 行起没有内容）", startLine), false, 0, nil
 	}
 	output, truncated := truncateHead(strings.TrimRight(b.String(), "\n"), DefaultFileReadBytes)
 	return output, truncated, returned, nil

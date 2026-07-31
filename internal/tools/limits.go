@@ -28,6 +28,24 @@ func truncateHead(s string, max int) (string, bool) {
 	return fmt.Sprintf("%s\n… <truncated: %d bytes omitted>", s[:cut], len(s)-cut), true
 }
 
+// truncateHeadTail keeps both ends of s within max bytes, marking the
+// omitted middle (DETAILED_DESIGN.md §9.3: tool output 保留开头和结尾).
+// Truncation never splits a UTF-8 sequence.
+func truncateHeadTail(s string, max int) (string, bool) {
+	if len(s) <= max {
+		return s, false
+	}
+	head := max / 2
+	for head > 0 && (s[head]&0xC0) == 0x80 {
+		head--
+	}
+	start := len(s) - (max - head)
+	for start < len(s) && (s[start]&0xC0) == 0x80 {
+		start++
+	}
+	return fmt.Sprintf("%s\n… <truncated: %d bytes omitted> …\n%s", s[:head], start-head, s[start:]), true
+}
+
 // truncateRunes bounds a single display line by rune count.
 func truncateRunes(s string, max int) string {
 	runes := []rune(s)

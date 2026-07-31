@@ -98,21 +98,57 @@ func TestSearchTextLongLineAndBinary(t *testing.T) {
 	env := newToolTestEnv(t)
 	env.write(t, "long.txt", strings.Repeat("a", 800)+" needle "+strings.Repeat("b", 800)+"\n")
 	env.write(t, "bin.dat", string([]byte{'n', 'e', 'e', 'd', 'l', 'e', 0, 1})+"\n")
-	tool := newSearchTool(true)
 
-	call := prepareCall(t, tool, env, `{"query":"needle"}`)
-	result := executeCall(t, tool, env, call)
+	outputs := map[string]string{}
+	for name, tool := range searchEngines(t) {
+		call := prepareCall(t, tool, env, `{"query":"needle"}`)
+		result := executeCall(t, tool, env, call)
 
-	if !strings.Contains(result.Output, "long.txt:1:") {
-		t.Fatalf("long line match missing:\n%.120s", result.Output)
-	}
-	for _, line := range strings.Split(result.Output, "\n") {
-		if len([]rune(line)) > MaxMatchLineLength+32 {
-			t.Fatalf("match line exceeds budget: %d runes", len([]rune(line)))
+		if !strings.Contains(result.Output, "long.txt:1:") {
+			t.Fatalf("%s: long line match missing:\n%.120s", name, result.Output)
 		}
+		if strings.Contains(result.Output, "[Omitted") {
+			t.Errorf("%s: rg placeholder leaked into output:\n%.200s", name, result.Output)
+		}
+		for _, line := range strings.Split(result.Output, "\n") {
+			if len([]rune(line)) > MaxMatchLineLength+32 {
+				t.Fatalf("%s: match line exceeds budget: %d runes", name, len([]rune(line)))
+			}
+		}
+		if strings.Contains(result.Output, "bin.dat") {
+			t.Fatalf("%s: binary file searched:\n%s", name, result.Output)
+		}
+		outputs[name] = result.Output
 	}
-	if strings.Contains(result.Output, "bin.dat") {
-		t.Fatalf("binary file searched:\n%s", result.Output)
+	if len(outputs) == 2 && outputs["rg"] != outputs["fallback"] {
+		t.Errorf("engines disagree on long line:\nrg:\n%.600s\nfallback:\n%.600s", outputs["rg"], outputs["fallback"])
+	}
+}
+
+func TestSearchTextNestedIgnoreDirs(t *testing.T) {
+	env := newToolTestEnv(t)
+	env.write(t, "main.go", "needle\n")
+	env.write(t, "node_modules/lib/dep.js", "needle in root dependency\n")
+	env.write(t, "sub/node_modules/dep.js", "needle in nested dependency\n")
+	env.write(t, "sub/build/nested.txt", "needle in nested build output\n")
+	env.write(t, "sub/src/kept.go", "needle in kept source\n")
+
+	outputs := map[string]string{}
+	for name, tool := range searchEngines(t) {
+		call := prepareCall(t, tool, env, `{"query":"needle"}`)
+		result := executeCall(t, tool, env, call)
+		for _, banned := range []string{"node_modules", "build"} {
+			if strings.Contains(result.Output, banned) {
+				t.Errorf("%s: searched ignored directory %q:\n%s", name, banned, result.Output)
+			}
+		}
+		if !strings.Contains(result.Output, "sub/src/kept.go:1:") {
+			t.Errorf("%s: nested kept file missing:\n%s", name, result.Output)
+		}
+		outputs[name] = result.Output
+	}
+	if len(outputs) == 2 && outputs["rg"] != outputs["fallback"] {
+		t.Errorf("engines disagree on nested ignores:\nrg:\n%s\nfallback:\n%s", outputs["rg"], outputs["fallback"])
 	}
 }
 
@@ -140,6 +176,7 @@ func TestSearchTextRejectsBadInput(t *testing.T) {
 		`{"query":""}`,
 		`{"query":"x","path":".."}`,
 		`{"query":"x","limit":9999}`,
+		`{"query":"x","glob":"[bad"}`,
 		`{"query":"x","unknown":1}`,
 	} {
 		if _, err := tool.Prepare(context.Background(), json.RawMessage(raw), env.prepareEnv()); err == nil {

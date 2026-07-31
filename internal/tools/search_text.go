@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -36,9 +37,9 @@ const searchTextSchema = `{
 }`
 
 const (
-	defaultSearchLimit  = 50
-	maxSearchLimit      = 500
-	searchCommandTimout = 30 * time.Second
+	defaultSearchLimit   = 50
+	maxSearchLimit       = 500
+	searchCommandTimeout = 30 * time.Second
 )
 
 type searchTextArgs struct {
@@ -55,6 +56,11 @@ func (a *searchTextArgs) validate() error {
 	}
 	if a.Limit < 0 || a.Limit > maxSearchLimit {
 		return fmt.Errorf("search_text: limit must be between 1 and %d", maxSearchLimit)
+	}
+	if a.Glob != "" {
+		if _, err := path.Match(a.Glob, ""); err != nil {
+			return fmt.Errorf("search_text: invalid glob %q: %w", a.Glob, err)
+		}
 	}
 	return nil
 }
@@ -179,7 +185,8 @@ func (t searchTextTool) Execute(ctx context.Context, call *PreparedCall, cap Cap
 		}
 		fmt.Fprintf(&b, "%s:%d: %s\n", display, match.line, truncateRunes(match.text, MaxMatchLineLength))
 	}
-	output, truncatedBytes := truncateHead(strings.TrimRight(b.String(), "\n"), DefaultToolOutputBytes)
+	// §9.3: tool output keeps both head and tail when over budget.
+	output, truncatedBytes := truncateHeadTail(strings.TrimRight(b.String(), "\n"), DefaultToolOutputBytes)
 	truncated := truncatedCount || truncatedBytes
 	if truncatedCount {
 		output += fmt.Sprintf("\n… <truncated: limit %d reached>", args.normalizedLimit())
@@ -209,17 +216,19 @@ func (t searchTextTool) search(ctx context.Context, base string, args searchText
 // with cwd=base and searches ".", so result paths are relative and never
 // contain a drive-letter colon.
 func searchWithRG(ctx context.Context, base string, args searchTextArgs) ([]searchMatch, bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, searchCommandTimout)
+	ctx, cancel := context.WithTimeout(ctx, searchCommandTimeout)
 	defer cancel()
 
 	argv := []string{
-		"--line-number", "--no-heading", "--color", "never",
-		"--fixed-strings", "--max-columns", strconv.Itoa(MaxMatchLineLength * 2),
+		"--line-number", "--no-heading", "--color", "never", "--fixed-strings",
 	}
 	// rg only applies gitignore rules inside git repositories; enforce the
-	// M1 ignore set explicitly so temp projects behave identically.
+	// M1 ignore set explicitly so temp projects behave identically. The
+	// "**/" prefix anchors the rule at any depth: without it a pattern
+	// containing "/" is root-anchored and nested node_modules/build trees
+	// would still be searched, diverging from the fallback engine.
 	for name := range ignoredDirNames {
-		argv = append(argv, "--glob", "!"+name+"/**")
+		argv = append(argv, "--glob", "!**/"+name+"/**")
 	}
 	if !args.caseSensitive() {
 		argv = append(argv, "--ignore-case")
@@ -258,6 +267,9 @@ func searchWithRG(ctx context.Context, base string, args searchTextArgs) ([]sear
 			break
 		}
 		matches = append(matches, match)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, false, fmt.Errorf("search_text: read rg output: %w", err)
 	}
 	return matches, truncated, nil
 }
@@ -340,7 +352,8 @@ func searchFile(ctx context.Context, path, rel, needle string, fold bool, budget
 	}
 	defer file.Close()
 
-	reader := bufio.NewReader(file)
+	// Sized to the sniff window so Peek(8<<10) never hits ErrBufferFull.
+	reader := bufio.NewReaderSize(file, 8<<10)
 	if sniffBinary(reader) {
 		return nil, nil
 	}

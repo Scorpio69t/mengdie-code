@@ -61,3 +61,28 @@ func CheckPreconditions(preconditions []Precondition) error {
 	}
 	return nil
 }
+
+// CheckFilePreconditions verifies file_sha256 preconditions against an
+// already-open file instead of re-opening it by path, closing the window
+// in which the target could be swapped between the hash check and the
+// read. The file offset is rewound before returning.
+func CheckFilePreconditions(preconditions []Precondition, file *os.File) error {
+	for _, precondition := range preconditions {
+		switch precondition.Kind {
+		case PreconditionFileSHA256:
+			sum := sha256.New()
+			if _, err := io.Copy(sum, file); err != nil {
+				return &PreconditionError{Path: precondition.Path, Reason: err.Error()}
+			}
+			if hex.EncodeToString(sum.Sum(nil)) != precondition.SHA256 {
+				return &PreconditionError{Path: precondition.Path, Reason: "content changed after approval"}
+			}
+		default:
+			return fmt.Errorf("tools: unknown precondition kind %q", precondition.Kind)
+		}
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("tools: rewind after precondition check: %w", err)
+	}
+	return nil
+}
