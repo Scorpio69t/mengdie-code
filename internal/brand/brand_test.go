@@ -26,8 +26,7 @@ func TestWriteWelcomeIncludesIdentityAndRuntimeFacts(t *testing.T) {
 		t.Fatalf("WriteWelcome() error = %v", err)
 	}
 
-	for _, want := range []string{
-		Mark,
+	for _, want := range append(strings.Split(Mark, "\n"),
 		"MengDie Code / 梦蝶 Code",
 		"不是记得更多，而是记得更对。",
 		info.Version,
@@ -37,7 +36,7 @@ func TestWriteWelcomeIncludesIdentityAndRuntimeFacts(t *testing.T) {
 		info.WorkDir,
 		info.Model,
 		info.Security,
-	} {
+	) {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("WriteWelcome() output does not contain %q", want)
 		}

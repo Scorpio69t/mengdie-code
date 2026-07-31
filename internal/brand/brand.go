@@ -5,19 +5,23 @@
 package brand
 
 import (
-	"fmt"
 	"io"
+	"strings"
+	"unicode/utf8"
 )
 
 // Mark is the compact terminal representation of the MengDie butterfly.
-const Mark = `  ╭╲      ╱╮
-  │ ╲    ╱ │
-  ╰╮ ╲  ╱ ╭╯
-    ╲ ╲╱ ╱
-    ╱ ╱╲ ╲
-  ╭╯ ╱  ╲ ╰╮
-  │ ╱    ╲ │
-  ╰╱      ╲╯`
+// Generated offline from assets/brand/mengdie-mark.svg: rasterize at 512x512,
+// then map per-cell ink (distance from white) onto the " ░▒▓█" block ramp at
+// 18 columns with a 0.5 cell aspect ratio. Regenerate when the SVG changes.
+const Mark = `     ░    ░
+░▓▓▒░ ░  ░ ░▒▓▓░
+░█▓▒▓▓░▒▒░▓▓▒▓█░
+░▓▓▒░▒▒▓▓▒▒░▒▓▓░
+ ▓██▓▓▒▓▓▒▓▓██▓
+░██▒▓█▓▓▓▓█▓▒██░
+ ▓███▒ ▒▒ ▒███▓
+  ▒░        ░▒`
 
 // Info contains the runtime facts shown on the interactive welcome screen.
 // Values must already be safe for display; secrets never belong here.
@@ -32,21 +36,45 @@ type Info struct {
 	Security  string
 }
 
-// WriteWelcome renders a stable, color-independent welcome screen.
-// Color is intentionally left to the future terminal renderer so redirected
-// output and accessibility modes never receive embedded escape sequences.
+// WriteWelcome renders a stable, color-independent welcome screen with the
+// mark on the left and runtime facts on the right. Color is intentionally
+// left to the future terminal renderer so redirected output and
+// accessibility modes never receive embedded escape sequences.
 func WriteWelcome(w io.Writer, info Info) error {
-	_, err := fmt.Fprintf(w, `%s
+	mark := strings.Split(Mark, "\n")
+	markWidth := 0
+	for _, line := range mark {
+		if n := utf8.RuneCountInString(line); n > markWidth {
+			markWidth = n
+		}
+	}
 
-MengDie Code / 梦蝶 Code  %s
-不是记得更多，而是记得更对。
+	facts := []string{
+		"MengDie Code / 梦蝶 Code  " + info.Version,
+		"不是记得更多，而是记得更对。",
+		"",
+		"构建  " + info.Commit + " · " + info.BuildDate,
+		"平台  " + info.Platform + " · " + info.GoVersion,
+		"项目  " + info.WorkDir,
+		"模型  " + info.Model,
+		"安全  " + info.Security,
+	}
 
-  构建  %s · %s
-  平台  %s · %s
-  项目  %s
-  模型  %s
-  安全  %s
+	var b strings.Builder
+	for i := 0; i < max(len(mark), len(facts)); i++ {
+		var left string
+		if i < len(mark) {
+			left = mark[i]
+			b.WriteString(left)
+		}
+		if i < len(facts) && facts[i] != "" {
+			b.WriteString(strings.Repeat(" ", markWidth-utf8.RuneCountInString(left)+3))
+			b.WriteString(facts[i])
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 
-`, Mark, info.Version, info.Commit, info.BuildDate, info.Platform, info.GoVersion, info.WorkDir, info.Model, info.Security)
+	_, err := io.WriteString(w, b.String())
 	return err
 }
