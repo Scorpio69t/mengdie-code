@@ -30,6 +30,8 @@ type Provider interface {
 
 请求使用未声明能力时，在发起网络请求前返回稳定的 `invalid_request`。P1-03 不调用 `/models` 猜测能力；真实 capability probe 留给 P1-10。
 
+P1-03 也不支持配置附加静态 header（如网关租户头）。第一阶段详细设计 §7.2 中的“附加静态 header”能力随 P1-09 的配置装配交付，届时再按真实端点需求评估。
+
 ## 流事件
 
 Provider sink 只接收以下窄事件，后续 Agent bridge 再映射到 M1 Event 协议：

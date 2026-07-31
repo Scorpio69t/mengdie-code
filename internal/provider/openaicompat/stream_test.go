@@ -59,6 +59,41 @@ func TestDecodeStreamAssemblesToolCallFragments(t *testing.T) {
 	}
 }
 
+func TestDecodeStreamAssemblesMultipleToolCalls(t *testing.T) {
+	stream := sse(
+		`{"id":"chat-1","model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"read_","arguments":"{\"path\":"}}]},"finish_reason":null}]}`,
+		`{"id":"chat-1","model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"write_","arguments":"{\"path\":"}}]},"finish_reason":null}]}`,
+		`{"id":"chat-1","model":"model","choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"function":{"name":"file","arguments":"\"b.txt\"}"}},{"index":0,"function":{"name":"file","arguments":"\"a.txt\"}"}}]},"finish_reason":"tool_calls"}]}`,
+		"[DONE]",
+	)
+	var events []provider.StreamEvent
+	response, visible, err := decodeStream(context.Background(), strings.NewReader(stream), 2<<20, provider.StreamSinkFunc(func(_ context.Context, event provider.StreamEvent) error {
+		events = append(events, event)
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !visible || len(response.Message.ToolCalls) != 2 {
+		t.Fatalf("response=%+v visible=%v", response, visible)
+	}
+	first, second := response.Message.ToolCalls[0], response.Message.ToolCalls[1]
+	if first.ID != "call_a" || first.Name != "read_file" || string(first.Arguments) != `{"path":"a.txt"}` {
+		t.Fatalf("first=%+v", first)
+	}
+	if second.ID != "call_b" || second.Name != "write_file" || string(second.Arguments) != `{"path":"b.txt"}` {
+		t.Fatalf("second=%+v", second)
+	}
+	for _, event := range events {
+		if event.Kind == provider.StreamFinished {
+			continue
+		}
+		if event.ToolCall == nil || (event.ToolCall.Index != 0 && event.ToolCall.Index != 1) {
+			t.Fatalf("unexpected event=%+v", event)
+		}
+	}
+}
+
 func TestDecodeStreamRejectsMalformedCompletion(t *testing.T) {
 	tests := []struct {
 		name   string
