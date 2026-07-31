@@ -42,6 +42,17 @@ func ComputeDigest(toolName string, canonicalArg json.RawMessage) string {
 	return hex.EncodeToString(sum.Sum(nil))
 }
 
+// decodeArgs unmarshals raw tool arguments strictly: unknown fields are
+// rejected so model typos surface as errors instead of silent no-ops.
+func decodeArgs(raw json.RawMessage, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("tools: decode arguments: %w", err)
+	}
+	return nil
+}
+
 // PrepareCall is the finishing step every tool's Prepare should reuse: it
 // validates the raw argument, canonicalizes it and computes the digest, so
 // no tool can forget the binding that Approval relies on.
