@@ -54,6 +54,9 @@ type Tool interface {
 // PrepareEnv carries the read-only context a tool may consult during
 // Prepare. It grants no execution power.
 type PrepareEnv struct {
+	// CallID is the provider tool-call id assigned by the Agent loop; it
+	// is copied into PreparedCall.ID.
+	CallID string
 	// Guard enforces the project-root boundary for every path the tool
 	// touches. Tools must route all user/model paths through it.
 	Guard *platform.PathGuard
@@ -64,6 +67,10 @@ type PrepareEnv struct {
 // ExecEnv carries the execution-time context. Concrete fields (process
 // handles, output limits) arrive with the tools that need them.
 type ExecEnv struct {
+	// Guard lets Execute re-resolve every path, so approval-time state
+	// cannot be swapped for an out-of-root target afterwards.
+	Guard *platform.PathGuard
+	// Now is injectable for deterministic tests.
 	Now func() time.Time
 }
 

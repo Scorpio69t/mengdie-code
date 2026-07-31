@@ -54,6 +54,7 @@ This English README is the entry point for international readers. The detailed [
 - [x] Phase 1 Slice 02: versioned events, terminal/JSON Lines renderers, and Ctrl+C state machine
 - [x] Phase 1 Slice 03: OpenAI-compatible HTTP/SSE, streamed tool-call assembly, and bounded retry ([protocol, Chinese](./docs/development/phase-1-slice-03/PROVIDER_PROTOCOL.md))
 - [x] Phase 1 Slice 04: project-root path guard, Windows path semantics, and the Tool Prepare/Execute base protocol
+- [x] Phase 1 Slice 05: read_file / list_files / search_text read-only tools with rg fallback and output limits
 - [ ] M0: real-world coding, long-run, and memory-trust eval sets
 - [ ] M1: minimum Agent Runtime capable of completing real tasks ([Phase 1 detailed design, Chinese](./docs/design/phase-1/DETAILED_DESIGN.md))
 - [ ] M2: persistent events, resume, context compaction, and Patch Journal
