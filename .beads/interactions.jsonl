@@ -1,0 +1,1 @@
+{"id":"int-71669d6f7b0bee936368f5b1d9bc900e","kind":"field_change","created_at":"2026-08-05T03:21:26.701899Z","actor":"Scorpio69t","issue_id":"mengdie-eep","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"P1-06 已实现并修复跨平台路径别名问题；本地全量/race/eval 与 PR #12 macOS、Windows、Ubuntu、质量检查全部通过。"}}
