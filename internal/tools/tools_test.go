@@ -244,7 +244,7 @@ func TestDefaultToolsIncludesPhaseOneFileTools(t *testing.T) {
 	for _, tool := range tools {
 		names = append(names, tool.Spec().Name)
 	}
-	want := []string{"read_file", "list_files", "search_text", "edit_file", "write_file"}
+	want := []string{"read_file", "list_files", "search_text", "edit_file", "write_file", "shell"}
 	if len(names) != len(want) {
 		t.Fatalf("DefaultTools() names = %v, want %v", names, want)
 	}

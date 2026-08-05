@@ -64,6 +64,12 @@ type PrepareEnv struct {
 	Guard *platform.PathGuard
 	// Now is injectable for deterministic tests.
 	Now func() time.Time
+	// Environment is the process environment snapshot considered by tools.
+	// Nil uses os.Environ; values must never be copied into PreparedCall.
+	Environment []string
+	// AllowedEnvironment names secret-like variables explicitly permitted by
+	// user configuration. Names, never values, appear in approval previews.
+	AllowedEnvironment []string
 }
 
 // ExecEnv carries the execution-time context. Concrete fields (process
@@ -79,6 +85,9 @@ type ExecEnv struct {
 	CapabilityVerifier CapabilityVerifier
 	// Now is injectable for deterministic tests.
 	Now func() time.Time
+	// Environment is re-read when materializing an approved shell call. Nil
+	// uses os.Environ; hashes in CanonicalArg reject approval-time changes.
+	Environment []string
 }
 
 // PreviewKind classifies what Approval should display.

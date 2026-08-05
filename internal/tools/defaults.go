@@ -12,5 +12,6 @@ func DefaultTools() []Tool {
 		NewSearchText(),
 		NewEditFile(),
 		NewWriteFile(),
+		NewShell(),
 	}
 }

@@ -40,6 +40,7 @@ MengDie Code 不用“依赖越多”证明现代化。现代化意味着：
 | SQLite | [`modernc-org/sqlite`](https://github.com/modernc-org/sqlite) | M2 首选候选；纯 Go 有利于 macOS/Windows 单二进制，采用前验证体积与性能 |
 | 系统凭据 | OS 原生适配器，评估 [`zalando/go-keyring`](https://github.com/zalando/go-keyring) | M1 小版本候选；必须验证 Keychain 与 Credential Manager 的失败语义 |
 | 终端能力 | `golang.org/x/term` | 需要 TTY、尺寸或安全输入时采用，避免自行维护平台探测 |
+| Windows 进程树 | [`golang.org/x/sys/windows`](https://pkg.go.dev/golang.org/x/sys/windows) v0.47.0 | P1-08 已采用；Go 官方维护、BSD-3-Clause、无新增传递依赖且无 CGO，只在 Windows 构建中封装 Job Object API，领域层不暴露其类型 |
 | 测试比较 | [`google/go-cmp`](https://github.com/google/go-cmp) | 仅在复杂结构断言出现时作为测试依赖引入 |
 
 候选不等于已经依赖。每个组件只在对应工作包真正需要时，通过独立 spike 和 ADR 固化版本。
