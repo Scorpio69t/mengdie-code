@@ -85,19 +85,20 @@ func (t listFilesTool) Prepare(ctx context.Context, raw json.RawMessage, env Pre
 	}
 	return PrepareCall(env.CallID, "list_files", raw,
 		[]Effect{EffectRead},
-		Preview{Kind: PreviewRead, Title: base, Body: "列出目录内容"},
+		[]PathResource{{Path: base.Path, Sensitive: base.Sensitive}},
+		Preview{Kind: PreviewRead, Title: base.Path, Body: "列出目录内容"},
 		nil,
 	)
 }
 
 // resolveListBase validates args and resolves the starting directory.
-func resolveListBase(raw json.RawMessage, guard *platform.PathGuard) (string, error) {
+func resolveListBase(raw json.RawMessage, guard *platform.PathGuard) (platform.ResolvedPath, error) {
 	var args listFilesArgs
 	if err := decodeArgs(raw, &args); err != nil {
-		return "", err
+		return platform.ResolvedPath{}, err
 	}
 	if err := args.validate(); err != nil {
-		return "", err
+		return platform.ResolvedPath{}, err
 	}
 	target := args.Path
 	if target == "" {
@@ -105,20 +106,20 @@ func resolveListBase(raw json.RawMessage, guard *platform.PathGuard) (string, er
 	}
 	resolved, err := guard.Resolve(target, platform.AccessRead)
 	if err != nil {
-		return "", err
+		return platform.ResolvedPath{}, err
 	}
 	info, err := os.Stat(resolved.Path)
 	if err != nil {
-		return "", fmt.Errorf("list_files: %w", err)
+		return platform.ResolvedPath{}, fmt.Errorf("list_files: %w", err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("list_files: %q is not a directory", target)
+		return platform.ResolvedPath{}, fmt.Errorf("list_files: %q is not a directory", target)
 	}
-	return resolved.Path, nil
+	return resolved, nil
 }
 
 func (listFilesTool) Execute(ctx context.Context, call *PreparedCall, cap Capability, env ExecEnv) (*ToolResult, error) {
-	if err := CheckCapability(call, cap); err != nil {
+	if err := CheckCapability(ctx, call, cap, env); err != nil {
 		return nil, err
 	}
 	base, err := resolveListBase(call.CanonicalArg, env.Guard)
@@ -133,7 +134,7 @@ func (listFilesTool) Execute(ctx context.Context, call *PreparedCall, cap Capabi
 		args.Limit = defaultListLimit
 	}
 
-	entries, truncated, err := walkFiles(ctx, env.Guard.Root(), base, args)
+	entries, truncated, err := walkFiles(ctx, env.Guard.Root(), base.Path, args)
 	if err != nil {
 		return nil, err
 	}
@@ -153,7 +154,7 @@ func (listFilesTool) Execute(ctx context.Context, call *PreparedCall, cap Capabi
 		Output:    strings.TrimRight(b.String(), "\n"),
 		Truncated: truncated,
 		Metadata: map[string]string{
-			"path":      base,
+			"path":      base.Path,
 			"entries":   fmt.Sprintf("%d", len(entries)),
 			"truncated": fmt.Sprintf("%v", truncated),
 		},

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCanonicalizeStabilizesKeyOrderAndWhitespace(t *testing.T) {
@@ -49,7 +50,7 @@ func TestComputeDigestBindsToolName(t *testing.T) {
 }
 
 func TestPrepareCallProducesValidCall(t *testing.T) {
-	call, err := PrepareCall("id-1", "read_file", json.RawMessage(`{"path":"a.txt"}`), []Effect{EffectRead}, Preview{Kind: PreviewRead}, nil)
+	call, err := PrepareCall("id-1", "read_file", json.RawMessage(`{"path":"a.txt"}`), []Effect{EffectRead}, nil, Preview{Kind: PreviewRead}, nil)
 	if err != nil {
 		t.Fatalf("PrepareCall() error = %v", err)
 	}
@@ -97,6 +98,45 @@ func TestPreparedCallValidate(t *testing.T) {
 				t.Fatal("Validate() succeeded, want error")
 			}
 		})
+	}
+}
+
+func TestPreparedCallValidateRejectsUnsafeResourcesAndOversizedPreview(t *testing.T) {
+	root := t.TempDir()
+	call, err := PrepareCall("id", "tool", json.RawMessage(`{}`), []Effect{EffectRead},
+		[]PathResource{{Path: filepath.Join(root, "file.txt")}}, Preview{Kind: PreviewRead}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*PreparedCall){
+		"relative path": func(c *PreparedCall) { c.Paths[0].Path = "file.txt" },
+		"unclean path": func(c *PreparedCall) {
+			c.Paths[0].Path = filepath.Join(root, "sub", "..", "file.txt") + string(filepath.Separator) + ".."
+		},
+		"duplicate path": func(c *PreparedCall) { c.Paths = append(c.Paths, c.Paths[0]) },
+		"large title":    func(c *PreparedCall) { c.Preview.Title = strings.Repeat("x", 4097) },
+		"large body":     func(c *PreparedCall) { c.Preview.Body = strings.Repeat("x", DefaultToolOutputBytes+1) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			copyCall := *call
+			copyCall.Paths = append([]PathResource(nil), call.Paths...)
+			mutate(&copyCall)
+			if err := copyCall.Validate(); err == nil {
+				t.Fatal("Validate() succeeded")
+			}
+		})
+	}
+}
+
+func TestCheckCapabilityRequiresVerifier(t *testing.T) {
+	call, err := PrepareCall("id", "tool", json.RawMessage(`{}`), []Effect{EffectRead}, nil, Preview{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability := Capability{ToolName: call.ToolName, Digest: call.Digest, Nonce: "not-authority"}
+	err = CheckCapability(context.Background(), call, capability, ExecEnv{Now: func() time.Time { return time.Now() }})
+	if !errors.Is(err, ErrCapabilityVerifierMissing) {
+		t.Fatalf("CheckCapability() error = %v", err)
 	}
 }
 

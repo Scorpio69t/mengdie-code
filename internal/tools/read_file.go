@@ -92,13 +92,14 @@ func (readFileTool) Prepare(ctx context.Context, raw json.RawMessage, env Prepar
 	}
 	return PrepareCall(env.CallID, "read_file", raw,
 		[]Effect{EffectRead},
+		[]PathResource{{Path: resolved.Path, Sensitive: resolved.Sensitive}},
 		Preview{Kind: PreviewRead, Title: title, Body: fmt.Sprintf("读取 %d 字节", info.Size())},
 		[]Precondition{{Kind: PreconditionFileSHA256, Path: resolved.Path, SHA256: hash}},
 	)
 }
 
 func (readFileTool) Execute(ctx context.Context, call *PreparedCall, cap Capability, env ExecEnv) (*ToolResult, error) {
-	if err := CheckCapability(call, cap); err != nil {
+	if err := CheckCapability(ctx, call, cap, env); err != nil {
 		return nil, err
 	}
 	var args readFileArgs

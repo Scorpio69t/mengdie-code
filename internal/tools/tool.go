@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Scorpio69t/mengdie-code/internal/platform"
@@ -67,9 +69,14 @@ type PrepareEnv struct {
 // ExecEnv carries the execution-time context. Concrete fields (process
 // handles, output limits) arrive with the tools that need them.
 type ExecEnv struct {
+	// RunID binds the execution to the run that obtained approval.
+	RunID string
 	// Guard lets Execute re-resolve every path, so approval-time state
 	// cannot be swapped for an out-of-root target afterwards.
 	Guard *platform.PathGuard
+	// CapabilityVerifier atomically validates and consumes the one-shot
+	// capability before the tool can observe or change external state.
+	CapabilityVerifier CapabilityVerifier
 	// Now is injectable for deterministic tests.
 	Now func() time.Time
 }
@@ -90,6 +97,15 @@ type Preview struct {
 	Kind  PreviewKind
 	Title string
 	Body  string
+}
+
+// PathResource is a canonical path consulted or changed by a prepared call.
+// Sensitive is produced by PathGuard and lets Policy distinguish ordinary
+// project reads from credentials and repository internals without parsing UI
+// preview text.
+type PathResource struct {
+	Path      string
+	Sensitive bool
 }
 
 // PreconditionKind identifies a verifiable precondition.
@@ -117,6 +133,7 @@ type PreparedCall struct {
 	ToolName      string
 	CanonicalArg  json.RawMessage
 	Effects       []Effect
+	Paths         []PathResource
 	Preview       Preview
 	Preconditions []Precondition
 	Digest        string
@@ -183,6 +200,24 @@ func (c *PreparedCall) Validate() error {
 		if precondition.Path == "" || precondition.SHA256 == "" {
 			return errors.New("prepared call: file_sha256 precondition requires path and hash")
 		}
+	}
+	seenPaths := make(map[string]struct{}, len(c.Paths))
+	for _, resource := range c.Paths {
+		if strings.TrimSpace(resource.Path) == "" || !filepath.IsAbs(resource.Path) {
+			return errors.New("prepared call: path resources must be absolute")
+		}
+		clean := filepath.Clean(resource.Path)
+		if clean != resource.Path {
+			return errors.New("prepared call: path resources must be canonical")
+		}
+		key := clean
+		if _, duplicate := seenPaths[key]; duplicate {
+			return errors.New("prepared call: duplicate path resource")
+		}
+		seenPaths[key] = struct{}{}
+	}
+	if len(c.Preview.Title) > 4<<10 || len(c.Preview.Body) > DefaultToolOutputBytes {
+		return errors.New("prepared call: preview exceeds display budget")
 	}
 	if c.Digest == "" {
 		return errors.New("prepared call: empty digest")
