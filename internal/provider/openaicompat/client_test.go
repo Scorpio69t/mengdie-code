@@ -293,6 +293,34 @@ func TestClientCancellationAndSinkFailure(t *testing.T) {
 	})
 }
 
+func TestClientReportsResponseCloseFailure(t *testing.T) {
+	want := errors.New("response close failed")
+	body := &trackingBody{
+		Reader: strings.NewReader(sse(
+			`{"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}`,
+			"[DONE]",
+		)),
+		closeErr: want,
+	}
+	client := newTestClient(t, Config{
+		BaseURL:     "https://example.invalid/v1",
+		MaxAttempts: 1,
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				Body:       body,
+			}, nil
+		})},
+	})
+
+	response, err := client.Stream(context.Background(), basicRequest(), discardSink())
+	providerErr, ok := provider.AsError(err)
+	if response != nil || !ok || providerErr.Code != "response_close_failed" || !errors.Is(err, want) || !body.closed.Load() {
+		t.Fatalf("response=%v closed=%v error=%v", response, body.closed.Load(), err)
+	}
+}
+
 func TestClientConfigurationAndCapabilities(t *testing.T) {
 	invalid := []Config{
 		{},
@@ -369,10 +397,11 @@ func testResponse(status int, contentType, body string, extra http.Header) *http
 
 type trackingBody struct {
 	io.Reader
-	closed atomic.Bool
+	closed   atomic.Bool
+	closeErr error
 }
 
 func (body *trackingBody) Close() error {
 	body.closed.Store(true)
-	return nil
+	return body.closeErr
 }

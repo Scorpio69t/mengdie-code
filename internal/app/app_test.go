@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,6 +152,34 @@ func TestUnknownCommandIsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestOutputFailuresUseRunErrorExitCode(t *testing.T) {
+	want := errors.New("writer failed")
+
+	t.Run("version output", func(t *testing.T) {
+		application, _, _ := newTestApp(t, nil)
+		application.stdout = appFailingWriter{err: want}
+		if code := application.Run(context.Background(), []string{"version"}, false); code != ExitRunError {
+			t.Fatalf("Run() code = %d, want %d", code, ExitRunError)
+		}
+	})
+
+	t.Run("diagnostic output", func(t *testing.T) {
+		application, _, _ := newTestApp(t, nil)
+		application.stderr = appFailingWriter{err: want}
+		if code := application.Run(context.Background(), []string{"unknown"}, false); code != ExitRunError {
+			t.Fatalf("Run() code = %d, want %d", code, ExitRunError)
+		}
+	})
+
+	t.Run("doctor output", func(t *testing.T) {
+		application, _, _ := newTestApp(t, nil)
+		application.stdout = appFailingWriter{err: want}
+		if code := application.Run(context.Background(), []string{"doctor", "--cwd", t.TempDir()}, false); code != ExitRunError {
+			t.Fatalf("Run() code = %d, want %d", code, ExitRunError)
+		}
+	})
+}
+
 func newTestApp(t *testing.T, environment map[string]string) (*App, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	stdout := &bytes.Buffer{}
@@ -177,4 +206,12 @@ func writeAppConfig(t *testing.T, root, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type appFailingWriter struct {
+	err error
+}
+
+func (writer appFailingWriter) Write([]byte) (int, error) {
+	return 0, writer.err
 }

@@ -26,12 +26,17 @@ func (e *PreconditionError) Error() string {
 
 // FileSHA256 computes the hex SHA-256 of a file. Tools use it during
 // Prepare to build preconditions.
-func FileSHA256(path string) (string, error) {
+func FileSHA256(path string) (digest string, err error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			digest = ""
+			err = errors.Join(err, fmt.Errorf("close file after hashing: %w", closeErr))
+		}
+	}()
 	sum := sha256.New()
 	if _, err := io.Copy(sum, file); err != nil {
 		return "", err

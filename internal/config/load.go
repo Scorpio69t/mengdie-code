@@ -4,6 +4,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -104,7 +105,7 @@ func Load(options Options) (Loaded, error) {
 	return loaded, nil
 }
 
-func applyOptionalFile(config *Config, path string) (bool, error) {
+func applyOptionalFile(config *Config, path string) (loaded bool, err error) {
 	file, err := os.Open(path)
 	if os.IsNotExist(err) {
 		return false, nil
@@ -112,7 +113,12 @@ func applyOptionalFile(config *Config, path string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			loaded = false
+			err = errors.Join(err, fmt.Errorf("close config file: %w", closeErr))
+		}
+	}()
 
 	var layer fileConfig
 	decoder := toml.NewDecoder(file).DisallowUnknownFields()

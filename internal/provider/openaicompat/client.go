@@ -180,7 +180,7 @@ func (c *Client) Stream(ctx context.Context, request provider.ChatRequest, sink 
 	return nil, &provider.Error{Category: provider.ErrorServer, Code: "retry_loop_exhausted"}
 }
 
-func (c *Client) streamAttempt(ctx context.Context, body []byte, sink provider.StreamSink) (*provider.ChatResponse, bool, error) {
+func (c *Client) streamAttempt(ctx context.Context, body []byte, sink provider.StreamSink) (result *provider.ChatResponse, visible bool, err error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, false, invalidRequestError("request_creation_failed", err)
@@ -195,7 +195,16 @@ func (c *Client) streamAttempt(ctx context.Context, body []byte, sink provider.S
 	if err != nil {
 		return nil, false, classifyRequestError(ctx, err)
 	}
-	defer response.Body.Close()
+	defer func() {
+		if closeErr := response.Body.Close(); closeErr != nil {
+			result = nil
+			err = errors.Join(err, &provider.Error{
+				Category: provider.ErrorNetwork,
+				Code:     "response_close_failed",
+				Err:      closeErr,
+			})
+		}
+	}()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		drain(response.Body)
 		return nil, false, classifyHTTPStatus(response)
