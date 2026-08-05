@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "mengdie",
+  "project_id": "47558a27-a765-44e0-821e-7210e18a68a8"
+}
