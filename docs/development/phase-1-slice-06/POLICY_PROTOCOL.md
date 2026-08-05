@@ -20,6 +20,8 @@
 
 工具 `Prepare` 必须把所有实际访问的规范绝对路径写入 `PreparedCall.Paths`，并保留 `PathGuard` 给出的 `Sensitive` 标记。Preview 只负责展示，Policy 不解析 Preview 文本做安全判断。
 
+Policy 根目录和授权工作目录都必须先解析为同一真实目录；macOS 的 `/var`/`/private/var`、Windows 路径别名以及符号链接不能造成误判，也不能借此扩大授权范围。工作目录与 Policy 根不一致时，在显示审批前直接拒绝。
+
 `PreparedCall` 的授权快照包含：
 
 - Call ID、ToolName 与规范化参数；

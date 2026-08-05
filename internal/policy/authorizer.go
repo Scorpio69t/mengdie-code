@@ -105,6 +105,18 @@ func (a *Authorizer) Authorize(ctx context.Context, runID, workDir string, call 
 	}
 	call = clonePreparedCall(call)
 	result := a.engine.Evaluate(call)
+	if result.Decision != DecisionDeny {
+		canonicalWorkDir, err := canonicalDirectory(workDir)
+		if err != nil {
+			return tools.Capability{}, fmt.Errorf("policy: workdir: %w", err)
+		}
+		if !sameDirectory(a.engine.root, canonicalWorkDir) {
+			return tools.Capability{}, ErrWorkDirMismatch
+		}
+		// Store the Engine spelling so the capability and PathGuard-derived
+		// execution context use one stable representation of the same root.
+		workDir = a.engine.root
+	}
 	switch result.Decision {
 	case DecisionDeny:
 		return tools.Capability{}, fmt.Errorf("%w: %s", ErrDenied, result.Reason)

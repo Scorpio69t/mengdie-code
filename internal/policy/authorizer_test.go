@@ -44,7 +44,7 @@ func (o resolvedFailObserver) Resolved(context.Context, ApprovalRequest, Approva
 }
 
 func TestAuthorizerApprovalOutcomes(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	call := testCall(t, root, []tools.Effect{tools.EffectWrite}, "main.go", false)
 	now := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
 	for _, test := range []struct {
@@ -76,7 +76,7 @@ func TestAuthorizerApprovalOutcomes(t *testing.T) {
 }
 
 func TestHeadlessAskBecomesDenyWithoutBroker(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	broker := &fixedBroker{response: ApprovalResponse{Choice: ApprovalApprove}}
 	authorizer, _ := NewAuthorizer(AuthorizerOptions{Engine: testEngine(t, root, ModeHeadless, func(options *Options) {
 		options.CLI = []Rule{{Name: "ask-write", Effects: []tools.Effect{tools.EffectWrite}, Decision: DecisionAsk}}
@@ -91,7 +91,7 @@ func TestHeadlessAskBecomesDenyWithoutBroker(t *testing.T) {
 }
 
 func TestObserverFailurePreventsCapabilityIssuance(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	observerErr := errors.New("sink failed")
 	broker := &fixedBroker{response: ApprovalResponse{Choice: ApprovalApprove}}
 	authorizer, _ := NewAuthorizer(AuthorizerOptions{
@@ -104,7 +104,7 @@ func TestObserverFailurePreventsCapabilityIssuance(t *testing.T) {
 }
 
 func TestResolvedEventFailurePreventsCapabilityIssuance(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	observerErr := errors.New("sink failed")
 	broker := &fixedBroker{response: ApprovalResponse{Choice: ApprovalApprove}}
 	authorizer, _ := NewAuthorizer(AuthorizerOptions{
@@ -117,7 +117,7 @@ func TestResolvedEventFailurePreventsCapabilityIssuance(t *testing.T) {
 }
 
 func TestEventObserverEmitsBoundedNonSensitivePayloads(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	sink := &events.MemorySink{}
 	emitter, err := events.NewEmitter("run-1", sink, time.Now)
 	if err != nil {
@@ -144,7 +144,7 @@ func TestEventObserverEmitsBoundedNonSensitivePayloads(t *testing.T) {
 }
 
 func TestReadToolRequiresAuthorizedOneShotCapability(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	path := filepath.Join(root, "main.go")
 	if err := os.WriteFile(path, []byte("package main\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -173,7 +173,7 @@ func TestReadToolRequiresAuthorizedOneShotCapability(t *testing.T) {
 }
 
 func TestDeniedCallHasZeroSideEffects(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	call := testCall(t, root, []tools.Effect{tools.EffectWrite}, "main.go", false)
 	authorizer, _ := NewAuthorizer(AuthorizerOptions{Engine: testEngine(t, root, ModeHeadless, nil)})
 	capability, err := authorizer.Authorize(context.Background(), "run-1", root, call)
@@ -195,5 +195,48 @@ func TestDeniedCallHasZeroSideEffects(t *testing.T) {
 	}
 	if sideEffects != 0 {
 		t.Fatalf("side effects = %d, want 0", sideEffects)
+	}
+}
+
+func TestAuthorizerCanonicalizesWorkDirAlias(t *testing.T) {
+	rawRoot := t.TempDir()
+	guard, err := platform.NewPathGuard(rawRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := testEngine(t, rawRoot, ModeInteractive, nil)
+	authorizer, err := NewAuthorizer(AuthorizerOptions{Engine: engine})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := rawRoot + string(filepath.Separator) + "."
+	call := testCall(t, guard.Root(), []tools.Effect{tools.EffectRead}, "main.go", false)
+	capability, err := authorizer.Authorize(context.Background(), "run-1", alias, call)
+	if err != nil {
+		t.Fatalf("Authorize() error = %v", err)
+	}
+	if capability.WorkDir != engine.root {
+		t.Fatalf("capability workdir = %q, want canonical root %q", capability.WorkDir, engine.root)
+	}
+}
+
+func TestAuthorizerRejectsDifferentWorkDirBeforeApproval(t *testing.T) {
+	root := testRoot(t)
+	broker := &fixedBroker{response: ApprovalResponse{Choice: ApprovalApprove}}
+	authorizer, err := NewAuthorizer(AuthorizerOptions{
+		Engine: testEngine(t, root, ModeInteractive, nil), Broker: broker,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = authorizer.Authorize(
+		context.Background(), "run-1", testRoot(t),
+		testCall(t, root, []tools.Effect{tools.EffectWrite}, "main.go", false),
+	)
+	if !errors.Is(err, ErrWorkDirMismatch) {
+		t.Fatalf("Authorize() error = %v, want ErrWorkDirMismatch", err)
+	}
+	if broker.calls != 0 {
+		t.Fatalf("broker calls = %d, want 0", broker.calls)
 	}
 }

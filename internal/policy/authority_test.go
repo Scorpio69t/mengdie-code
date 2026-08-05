@@ -16,7 +16,7 @@ import (
 )
 
 func TestCapabilityBindsSnapshotAndCannotReplay(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	now := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
 	call := testCall(t, root, []tools.Effect{tools.EffectRead}, "main.go", false)
 	engine := testEngine(t, root, ModeInteractive, nil)
@@ -38,7 +38,7 @@ func TestCapabilityBindsSnapshotAndCannotReplay(t *testing.T) {
 }
 
 func TestCapabilityRejectsMutationWithoutBurningGrant(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	now := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
 	call := testCall(t, root, []tools.Effect{tools.EffectRead}, "main.go", false)
 	engine := testEngine(t, root, ModeInteractive, nil)
@@ -62,7 +62,7 @@ func TestCapabilityRejectsMutationWithoutBurningGrant(t *testing.T) {
 }
 
 func TestCapabilityBindsEverySecurityField(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	now := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
 	base := testCall(t, root, []tools.Effect{tools.EffectRead}, "main.go", false)
 	base.Preconditions = []tools.Precondition{{Kind: tools.PreconditionFileSHA256, Path: base.Paths[0].Path, SHA256: "hash-1"}}
@@ -127,7 +127,7 @@ func TestCapabilityBindsEverySecurityField(t *testing.T) {
 }
 
 func TestCapabilityExpiryAndForgery(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	now := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
 	call := testCall(t, root, []tools.Effect{tools.EffectRead}, "main.go", false)
 	authorizer, _ := NewAuthorizer(AuthorizerOptions{
@@ -145,7 +145,7 @@ func TestCapabilityExpiryAndForgery(t *testing.T) {
 }
 
 func TestCapabilityConcurrentConsumeHasSingleWinner(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	now := time.Date(2026, 8, 5, 10, 0, 0, 0, time.UTC)
 	call := testCall(t, root, []tools.Effect{tools.EffectRead}, "main.go", false)
 	authorizer, _ := NewAuthorizer(AuthorizerOptions{Engine: testEngine(t, root, ModeInteractive, nil), Now: func() time.Time { return now }})

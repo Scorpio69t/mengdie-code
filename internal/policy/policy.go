@@ -37,6 +37,7 @@ var (
 	ErrDenied          = errors.New("tool call denied by policy")
 	ErrApprovalMissing = errors.New("approval broker is required")
 	ErrReprepare       = errors.New("approval edited; call must be prepared again")
+	ErrWorkDirMismatch = errors.New("authorization workdir does not match policy root")
 )
 
 // Rule matches a prepared call. Empty Tool and Effects are wildcards. When
@@ -79,21 +80,9 @@ func NewEngine(options Options) (*Engine, error) {
 	if options.Mode != ModeInteractive && options.Mode != ModeHeadless {
 		return nil, fmt.Errorf("policy: unsupported mode %q", options.Mode)
 	}
-	if strings.TrimSpace(options.Root) == "" {
-		return nil, errors.New("policy: project root is required")
-	}
-	root, err := filepath.Abs(options.Root)
+	root, err := canonicalDirectory(options.Root)
 	if err != nil {
-		return nil, fmt.Errorf("policy: resolve project root: %w", err)
-	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		return nil, fmt.Errorf("policy: resolve project root symlinks: %w", err)
-	}
-	root = filepath.Clean(root)
-	info, err := os.Stat(root)
-	if err != nil || !info.IsDir() {
-		return nil, errors.New("policy: project root must be an existing directory")
+		return nil, fmt.Errorf("policy: project root: %w", err)
 	}
 	for _, layer := range [][]Rule{options.CLI, options.Profile, options.ToolDefaults} {
 		for _, rule := range layer {
@@ -109,6 +98,39 @@ func NewEngine(options Options) (*Engine, error) {
 		profile:      cloneRules(options.Profile),
 		toolDefaults: cloneRules(options.ToolDefaults),
 	}, nil
+}
+
+// canonicalDirectory resolves every filesystem alias before a path becomes a
+// policy or capability boundary. In particular, macOS may expose /var through
+// /private/var and Windows runners may use an alternate spelling for the same
+// temporary directory.
+func canonicalDirectory(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", errors.New("directory is required")
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve absolute path: %w", err)
+	}
+	canonical, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", fmt.Errorf("resolve symlinks: %w", err)
+	}
+	canonical = filepath.Clean(canonical)
+	info, err := os.Stat(canonical)
+	if err != nil {
+		return "", fmt.Errorf("stat: %w", err)
+	}
+	if !info.IsDir() {
+		return "", errors.New("path is not a directory")
+	}
+	return canonical, nil
+}
+
+func sameDirectory(left, right string) bool {
+	leftInfo, leftErr := os.Stat(left)
+	rightInfo, rightErr := os.Stat(right)
+	return leftErr == nil && rightErr == nil && os.SameFile(leftInfo, rightInfo)
 }
 
 func validateRule(rule Rule) error {

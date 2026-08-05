@@ -8,10 +8,20 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/Scorpio69t/mengdie-code/internal/platform"
 	"github.com/Scorpio69t/mengdie-code/internal/tools"
 )
 
 func boolPointer(value bool) *bool { return &value }
+
+func testRoot(t *testing.T) string {
+	t.Helper()
+	guard, err := platform.NewPathGuard(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewPathGuard() error = %v", err)
+	}
+	return guard.Root()
+}
 
 func testCall(t *testing.T, root string, effects []tools.Effect, relative string, sensitive bool) *tools.PreparedCall {
 	t.Helper()
@@ -47,7 +57,7 @@ func testEngine(t *testing.T, root string, mode Mode, mutate func(*Options)) *En
 }
 
 func TestEngineDefaultMatrix(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	tests := []struct {
 		name      string
 		mode      Mode
@@ -76,7 +86,7 @@ func TestEngineDefaultMatrix(t *testing.T) {
 }
 
 func TestEngineRulePriority(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	engine := testEngine(t, root, ModeInteractive, func(options *Options) {
 		options.CLI = []Rule{{Name: "temporary", Effects: []tools.Effect{tools.EffectWrite}, Decision: DecisionDeny}}
 		options.Profile = []Rule{{Name: "profile", Effects: []tools.Effect{tools.EffectWrite}, Decision: DecisionAllow}}
@@ -98,7 +108,7 @@ func TestEngineRulePriority(t *testing.T) {
 }
 
 func TestEngineHardDenyCannotBeOverridden(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	allow := []Rule{{Name: "allow-all", Decision: DecisionAllow}}
 	for name, call := range map[string]*tools.PreparedCall{
 		"network":            testCall(t, root, []tools.Effect{tools.EffectNetwork}, "", false),
@@ -116,7 +126,7 @@ func TestEngineHardDenyCannotBeOverridden(t *testing.T) {
 }
 
 func TestEngineRuleMatchesToolEffectAndSensitivity(t *testing.T) {
-	root := t.TempDir()
+	root := testRoot(t)
 	engine := testEngine(t, root, ModeInteractive, func(options *Options) {
 		options.CLI = []Rule{{
 			Name: "sensitive-read", Tool: "test_tool", Effects: []tools.Effect{tools.EffectRead},
@@ -128,5 +138,18 @@ func TestEngineRuleMatchesToolEffectAndSensitivity(t *testing.T) {
 	}
 	if got := engine.Evaluate(testCall(t, root, []tools.Effect{tools.EffectRead}, "main.go", false)); got.Decision != DecisionAllow {
 		t.Fatalf("result = %+v", got)
+	}
+}
+
+func TestEngineAcceptsPathGuardRootWhenConfiguredRootHasAlias(t *testing.T) {
+	rawRoot := t.TempDir()
+	guard, err := platform.NewPathGuard(rawRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := testEngine(t, rawRoot, ModeInteractive, nil)
+	result := engine.Evaluate(testCall(t, guard.Root(), []tools.Effect{tools.EffectRead}, "main.go", false))
+	if result.Decision != DecisionAllow {
+		t.Fatalf("result = %+v; raw_root=%q canonical_root=%q", result, rawRoot, guard.Root())
 	}
 }
