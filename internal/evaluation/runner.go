@@ -101,7 +101,17 @@ func runBaselineTask(ctx context.Context, fixtureRoot string, task Task) (result
 		result.Error = fmt.Sprintf("create temporary fixture: %v", err)
 		return result
 	}
-	defer os.RemoveAll(tempRoot)
+	defer func() {
+		if cleanupErr := os.RemoveAll(tempRoot); cleanupErr != nil {
+			result.Passed = false
+			cleanupMessage := fmt.Sprintf("remove temporary fixture: %v", cleanupErr)
+			if result.Error == "" {
+				result.Error = cleanupMessage
+			} else {
+				result.Error += "; " + cleanupMessage
+			}
+		}
+	}()
 
 	workDir := filepath.Join(tempRoot, "workspace")
 	if err := copyTree(source, workDir); err != nil {
@@ -192,12 +202,16 @@ func copyTree(source, destination string) error {
 	})
 }
 
-func copyFile(source, destination string, mode fs.FileMode) error {
+func copyFile(source, destination string, mode fs.FileMode) (err error) {
 	input, err := os.Open(source)
 	if err != nil {
 		return err
 	}
-	defer input.Close()
+	defer func() {
+		if closeErr := input.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close source fixture: %w", closeErr))
+		}
+	}()
 
 	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 	if err != nil {

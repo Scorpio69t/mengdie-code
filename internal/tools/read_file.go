@@ -98,7 +98,7 @@ func (readFileTool) Prepare(ctx context.Context, raw json.RawMessage, env Prepar
 	)
 }
 
-func (readFileTool) Execute(ctx context.Context, call *PreparedCall, cap Capability, env ExecEnv) (*ToolResult, error) {
+func (readFileTool) Execute(ctx context.Context, call *PreparedCall, cap Capability, env ExecEnv) (result *ToolResult, err error) {
 	if err := CheckCapability(ctx, call, cap, env); err != nil {
 		return nil, err
 	}
@@ -119,7 +119,12 @@ func (readFileTool) Execute(ctx context.Context, call *PreparedCall, cap Capabil
 	if err != nil {
 		return nil, fmt.Errorf("read_file: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			result = nil
+			err = errors.Join(err, fmt.Errorf("read_file: close: %w", closeErr))
+		}
+	}()
 	// Hash the open descriptor rather than re-opening by path, so the
 	// precondition check and the content read cannot observe two
 	// different files.

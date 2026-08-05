@@ -63,7 +63,9 @@ func (a *App) Run(ctx context.Context, args []string, interactive bool) int {
 	if len(args) > 0 {
 		switch args[0] {
 		case "version", "--version", "-v":
-			a.writeVersion()
+			if err := a.writeVersion(); err != nil {
+				return ExitRunError
+			}
 			return ExitOK
 		case "doctor":
 			return a.runDoctor(ctx, args[1:])
@@ -71,7 +73,9 @@ func (a *App) Run(ctx context.Context, args []string, interactive bool) int {
 			return a.runExec(ctx, args[1:])
 		}
 		if !strings.HasPrefix(args[0], "-") {
-			fmt.Fprintf(a.stderr, "未知命令 %q\n", args[0])
+			if err := a.writeError("未知命令 %q\n", args[0]); err != nil {
+				return ExitRunError
+			}
 			return ExitInvalidInput
 		}
 	}
@@ -84,12 +88,16 @@ func (a *App) runInteractive(_ context.Context, args []string, interactive bool)
 		return flagExitCode(err)
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintln(a.stderr, "交互模式不接受位置参数")
+		if err := a.writeError("交互模式不接受位置参数\n"); err != nil {
+			return ExitRunError
+		}
 		return ExitInvalidInput
 	}
 	loaded, err := a.loadConfig(common)
 	if err != nil {
-		fmt.Fprintf(a.stderr, "配置错误：%v\n", err)
+		if writeErr := a.writeError("配置错误：%v\n", err); writeErr != nil {
+			return ExitRunError
+		}
 		return ExitInvalidInput
 	}
 	profile := loaded.Profile()
@@ -107,8 +115,12 @@ func (a *App) runInteractive(_ context.Context, args []string, interactive bool)
 			return ExitRunError
 		}
 	}
-	fmt.Fprintln(a.stdout, "当前阶段：P1-00 / P1-01 / P1-02 开发预览，Agent 功能尚未实现。")
-	fmt.Fprintln(a.stdout, "可运行 mengdie doctor 检查当前配置。")
+	if _, err := fmt.Fprint(a.stdout,
+		"当前阶段：P1-00 / P1-01 / P1-02 开发预览，Agent 功能尚未实现。\n"+
+			"可运行 mengdie doctor 检查当前配置。\n",
+	); err != nil {
+		return ExitRunError
+	}
 	return ExitOK
 }
 
@@ -120,17 +132,23 @@ func (a *App) runExec(ctx context.Context, args []string) int {
 	}
 	task := strings.TrimSpace(strings.Join(flags.Args(), " "))
 	if task == "" {
-		fmt.Fprintln(a.stderr, "mengdie exec 需要任务描述")
+		if err := a.writeError("mengdie exec 需要任务描述\n"); err != nil {
+			return ExitRunError
+		}
 		return ExitInvalidInput
 	}
 	loaded, err := a.loadConfig(common)
 	if err != nil {
-		fmt.Fprintf(a.stderr, "配置错误：%v\n", err)
+		if writeErr := a.writeError("配置错误：%v\n", err); writeErr != nil {
+			return ExitRunError
+		}
 		return ExitInvalidInput
 	}
 	runID, err := a.newRunID()
 	if err != nil {
-		fmt.Fprintf(a.stderr, "创建 Run 失败：%v\n", err)
+		if writeErr := a.writeError("创建 Run 失败：%v\n", err); writeErr != nil {
+			return ExitRunError
+		}
 		return ExitRunError
 	}
 	var sink events.Sink
@@ -140,12 +158,16 @@ func (a *App) runExec(ctx context.Context, args []string) int {
 		sink, err = terminal.NewHumanRenderer(a.stderr)
 	}
 	if err != nil {
-		fmt.Fprintf(a.stderr, "初始化输出失败：%v\n", err)
+		if writeErr := a.writeError("初始化输出失败：%v\n", err); writeErr != nil {
+			return ExitRunError
+		}
 		return ExitRunError
 	}
 	emitter, err := events.NewEmitter(runID, sink, a.now)
 	if err != nil {
-		fmt.Fprintf(a.stderr, "初始化事件流失败：%v\n", err)
+		if writeErr := a.writeError("初始化事件流失败：%v\n", err); writeErr != nil {
+			return ExitRunError
+		}
 		return ExitRunError
 	}
 	profile := loaded.Profile()
@@ -154,25 +176,39 @@ func (a *App) runExec(ctx context.Context, args []string) int {
 		CWD:      loaded.ProjectRoot,
 		Security: approvalLabel(loaded.Config.Approval.Mode),
 	}); err != nil {
-		fmt.Fprintf(a.stderr, "输出事件失败：%v\n", err)
+		if writeErr := a.writeError("输出事件失败：%v\n", err); writeErr != nil {
+			return ExitRunError
+		}
 		return emitExitCode(err)
 	}
 	if _, err := emitter.Emit(ctx, events.KindRunFailed, events.RunFailed{
 		Category: "runtime_unavailable",
 		Message:  "Agent Runtime 尚未实现；P1-02 仅提供事件与终端输出骨架",
 	}); err != nil {
-		fmt.Fprintf(a.stderr, "输出事件失败：%v\n", err)
+		if writeErr := a.writeError("输出事件失败：%v\n", err); writeErr != nil {
+			return ExitRunError
+		}
 		return emitExitCode(err)
 	}
 	return ExitRunError
 }
 
-func (a *App) writeVersion() {
-	fmt.Fprintf(a.stdout, "MengDie Code %s\n", a.build.Version)
-	fmt.Fprintf(a.stdout, "commit %s\n", a.build.Commit)
-	fmt.Fprintf(a.stdout, "built %s\n", a.build.Date)
-	fmt.Fprintf(a.stdout, "go %s\n", runtime.Version())
-	fmt.Fprintf(a.stdout, "platform %s/%s\n", runtime.GOOS, runtime.GOARCH)
+func (a *App) writeVersion() error {
+	_, err := fmt.Fprintf(a.stdout,
+		"MengDie Code %s\ncommit %s\nbuilt %s\ngo %s\nplatform %s/%s\n",
+		a.build.Version,
+		a.build.Commit,
+		a.build.Date,
+		runtime.Version(),
+		runtime.GOOS,
+		runtime.GOARCH,
+	)
+	return err
+}
+
+func (a *App) writeError(format string, args ...any) error {
+	_, err := fmt.Fprintf(a.stderr, format, args...)
+	return err
 }
 
 type commonFlags struct {

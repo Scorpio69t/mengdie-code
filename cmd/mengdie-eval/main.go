@@ -27,13 +27,17 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintln(stderr, "mengdie-eval 不接受位置参数")
+		if _, err := fmt.Fprintln(stderr, "mengdie-eval 不接受位置参数"); err != nil {
+			return 1
+		}
 		return 2
 	}
 
 	result, err := evaluation.RunBaseline(ctx, *manifestPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "评测启动失败：%v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "评测启动失败：%v\n", err); writeErr != nil {
+			return 1
+		}
 		return 2
 	}
 	encoder := json.NewEncoder(stdout)
@@ -41,7 +45,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		encoder.SetIndent("", "  ")
 	}
 	if err := encoder.Encode(result); err != nil {
-		fmt.Fprintf(stderr, "评测结果输出失败：%v\n", err)
+		if _, writeErr := fmt.Fprintf(stderr, "评测结果输出失败：%v\n", err); writeErr != nil {
+			return 1
+		}
 		return 1
 	}
 	if !result.Passed {

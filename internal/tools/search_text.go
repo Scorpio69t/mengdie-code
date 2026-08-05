@@ -346,12 +346,17 @@ func searchWithWalker(ctx context.Context, base string, args searchTextArgs) ([]
 }
 
 // searchFile scans one text file for up to budget matches of needle.
-func searchFile(ctx context.Context, path, rel, needle string, fold bool, budget int) ([]searchMatch, error) {
+func searchFile(ctx context.Context, path, rel, needle string, fold bool, budget int) (matches []searchMatch, err error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("search_text: open %q: %w", path, err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			matches = nil
+			err = errors.Join(err, fmt.Errorf("search_text: close %q: %w", path, closeErr))
+		}
+	}()
 
 	// Sized to the sniff window so Peek(8<<10) never hits ErrBufferFull.
 	reader := bufio.NewReaderSize(file, 8<<10)
@@ -359,7 +364,6 @@ func searchFile(ctx context.Context, path, rel, needle string, fold bool, budget
 		return nil, nil
 	}
 
-	var matches []searchMatch
 	lineNo := 0
 	for len(matches) < budget {
 		if err := ctx.Err(); err != nil {

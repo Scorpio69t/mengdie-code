@@ -39,12 +39,16 @@ func (a *App) runDoctor(_ context.Context, args []string) int {
 		return flagExitCode(err)
 	}
 	if flags.NArg() != 0 {
-		fmt.Fprintln(a.stderr, "mengdie doctor 不接受位置参数")
+		if err := a.writeError("mengdie doctor 不接受位置参数\n"); err != nil {
+			return ExitRunError
+		}
 		return ExitInvalidInput
 	}
 	loaded, err := a.loadConfig(common)
 	if err != nil {
-		fmt.Fprintf(a.stderr, "配置错误：%v\n", err)
+		if writeErr := a.writeError("配置错误：%v\n", err); writeErr != nil {
+			return ExitRunError
+		}
 		return ExitInvalidInput
 	}
 	report := a.buildDoctorReport(loaded)
@@ -52,12 +56,16 @@ func (a *App) runDoctor(_ context.Context, args []string) int {
 		encoder := json.NewEncoder(a.stdout)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(report); err != nil {
-			fmt.Fprintf(a.stderr, "doctor 输出失败：%v\n", err)
+			if writeErr := a.writeError("doctor 输出失败：%v\n", err); writeErr != nil {
+				return ExitRunError
+			}
 			return ExitRunError
 		}
 		return ExitOK
 	}
-	a.writeDoctorReport(report)
+	if err := a.writeDoctorReport(report); err != nil {
+		return ExitRunError
+	}
 	return ExitOK
 }
 
@@ -89,22 +97,41 @@ func (a *App) buildDoctorReport(loaded config.Loaded) doctorReport {
 	}
 }
 
-func (a *App) writeDoctorReport(report doctorReport) {
-	fmt.Fprintf(a.stdout, "✓ MengDie Code %s · %s · %s\n", report.Version, report.Platform, report.GoVersion)
-	fmt.Fprintf(a.stdout, "✓ 项目根：%s\n", report.ProjectRoot)
-	fmt.Fprintf(a.stdout, "%s 用户配置：%s\n", loadedMark(report.UserConfigLoaded), report.UserConfigPath)
-	fmt.Fprintf(a.stdout, "%s 项目配置：%s\n", loadedMark(report.ProjectConfigLoaded), report.ProjectConfigPath)
-	fmt.Fprintf(a.stdout, "✓ Profile：%s\n", report.Profile)
-	fmt.Fprintf(a.stdout, "• Provider：%s\n", fallback(report.Provider, "未配置"))
-	fmt.Fprintf(a.stdout, "• 模型：%s\n", fallback(report.Model, "未配置"))
+func (a *App) writeDoctorReport(report doctorReport) error {
+	var apiKeyLine string
 	if report.APIKeyEnvironment == "" {
-		fmt.Fprintln(a.stdout, "• API Key：未配置环境变量名")
+		apiKeyLine = "• API Key：未配置环境变量名"
 	} else {
-		fmt.Fprintf(a.stdout, "%s API Key：%s（不显示值）\n", setMark(report.CredentialSet), report.APIKeyEnvironment)
+		apiKeyLine = fmt.Sprintf("%s API Key：%s（不显示值）", setMark(report.CredentialSet), report.APIKeyEnvironment)
 	}
-	fmt.Fprintf(a.stdout, "✓ 审批模式：%s\n", report.Approval)
-	fmt.Fprintf(a.stdout, "✓ 最大回合：%d\n", report.MaxTurns)
-	fmt.Fprintln(a.stdout, "• Provider 网络与认证探测将在 P1-10 实现")
+	_, err := fmt.Fprintf(a.stdout,
+		"✓ MengDie Code %s · %s · %s\n"+
+			"✓ 项目根：%s\n"+
+			"%s 用户配置：%s\n"+
+			"%s 项目配置：%s\n"+
+			"✓ Profile：%s\n"+
+			"• Provider：%s\n"+
+			"• 模型：%s\n"+
+			"%s\n"+
+			"✓ 审批模式：%s\n"+
+			"✓ 最大回合：%d\n"+
+			"• Provider 网络与认证探测将在 P1-10 实现\n",
+		report.Version,
+		report.Platform,
+		report.GoVersion,
+		report.ProjectRoot,
+		loadedMark(report.UserConfigLoaded),
+		report.UserConfigPath,
+		loadedMark(report.ProjectConfigLoaded),
+		report.ProjectConfigPath,
+		report.Profile,
+		fallback(report.Provider, "未配置"),
+		fallback(report.Model, "未配置"),
+		apiKeyLine,
+		report.Approval,
+		report.MaxTurns,
+	)
+	return err
 }
 
 func loadedMark(loaded bool) string {

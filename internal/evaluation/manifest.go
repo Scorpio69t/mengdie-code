@@ -49,17 +49,21 @@ type BaselineSpec struct {
 }
 
 // LoadManifest reads and strictly validates one manifest.
-func LoadManifest(path string) (Manifest, error) {
+func LoadManifest(path string) (manifest Manifest, err error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("open evaluation manifest: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			manifest = Manifest{}
+			err = errors.Join(err, fmt.Errorf("close evaluation manifest: %w", closeErr))
+		}
+	}()
 
 	decoder := json.NewDecoder(file)
 	decoder.DisallowUnknownFields()
 
-	var manifest Manifest
 	if err := decoder.Decode(&manifest); err != nil {
 		return Manifest{}, fmt.Errorf("decode evaluation manifest: %w", err)
 	}
