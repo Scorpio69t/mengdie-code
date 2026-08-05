@@ -60,6 +60,15 @@ func CheckPreconditions(preconditions []Precondition) error {
 			if actual != precondition.SHA256 {
 				return &PreconditionError{Path: precondition.Path, Reason: "content changed after approval"}
 			}
+		case PreconditionPathAbsent:
+			_, err := os.Lstat(precondition.Path)
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			if err != nil {
+				return &PreconditionError{Path: precondition.Path, Reason: err.Error()}
+			}
+			return &PreconditionError{Path: precondition.Path, Reason: "path now exists"}
 		default:
 			return fmt.Errorf("tools: unknown precondition kind %q", precondition.Kind)
 		}

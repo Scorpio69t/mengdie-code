@@ -115,6 +115,10 @@ const (
 	// PreconditionFileSHA256 requires the file at Path to still hash to
 	// SHA256 immediately before Execute.
 	PreconditionFileSHA256 PreconditionKind = "file_sha256"
+	// PreconditionPathAbsent requires Path not to exist immediately before
+	// Execute. write_file uses it so an approved create can never overwrite a
+	// file that appeared after approval.
+	PreconditionPathAbsent PreconditionKind = "path_absent"
 )
 
 // Precondition binds Execute to state observed during Prepare. A failed
@@ -194,11 +198,17 @@ func (c *PreparedCall) Validate() error {
 		seen[effect] = struct{}{}
 	}
 	for _, precondition := range c.Preconditions {
-		if precondition.Kind != PreconditionFileSHA256 {
+		switch precondition.Kind {
+		case PreconditionFileSHA256:
+			if precondition.Path == "" || precondition.SHA256 == "" {
+				return errors.New("prepared call: file_sha256 precondition requires path and hash")
+			}
+		case PreconditionPathAbsent:
+			if precondition.Path == "" || precondition.SHA256 != "" {
+				return errors.New("prepared call: path_absent precondition requires only path")
+			}
+		default:
 			return fmt.Errorf("prepared call: unknown precondition kind %q", precondition.Kind)
-		}
-		if precondition.Path == "" || precondition.SHA256 == "" {
-			return errors.New("prepared call: file_sha256 precondition requires path and hash")
 		}
 	}
 	seenPaths := make(map[string]struct{}, len(c.Paths))
