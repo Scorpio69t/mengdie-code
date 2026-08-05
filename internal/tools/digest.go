@@ -56,7 +56,7 @@ func decodeArgs(raw json.RawMessage, target any) error {
 // PrepareCall is the finishing step every tool's Prepare should reuse: it
 // validates the raw argument, canonicalizes it and computes the digest, so
 // no tool can forget the binding that Approval relies on.
-func PrepareCall(id, toolName string, raw json.RawMessage, effects []Effect, preview Preview, preconditions []Precondition) (*PreparedCall, error) {
+func PrepareCall(id, toolName string, raw json.RawMessage, effects []Effect, paths []PathResource, preview Preview, preconditions []Precondition) (*PreparedCall, error) {
 	canonical, err := Canonicalize(raw)
 	if err != nil {
 		return nil, err
@@ -66,6 +66,7 @@ func PrepareCall(id, toolName string, raw json.RawMessage, effects []Effect, pre
 		ToolName:      toolName,
 		CanonicalArg:  canonical,
 		Effects:       effects,
+		Paths:         append([]PathResource(nil), paths...),
 		Preview:       preview,
 		Preconditions: preconditions,
 		Digest:        ComputeDigest(toolName, canonical),

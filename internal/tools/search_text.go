@@ -107,18 +107,19 @@ func (searchTextTool) Prepare(ctx context.Context, raw json.RawMessage, env Prep
 	}
 	return PrepareCall(env.CallID, "search_text", raw,
 		[]Effect{EffectRead},
-		Preview{Kind: PreviewRead, Title: base, Body: "搜索文本"},
+		[]PathResource{{Path: base.Path, Sensitive: base.Sensitive}},
+		Preview{Kind: PreviewRead, Title: base.Path, Body: "搜索文本"},
 		nil,
 	)
 }
 
-func resolveSearchBase(raw json.RawMessage, guard *platform.PathGuard) (string, error) {
+func resolveSearchBase(raw json.RawMessage, guard *platform.PathGuard) (platform.ResolvedPath, error) {
 	var args searchTextArgs
 	if err := decodeArgs(raw, &args); err != nil {
-		return "", err
+		return platform.ResolvedPath{}, err
 	}
 	if err := args.validate(); err != nil {
-		return "", err
+		return platform.ResolvedPath{}, err
 	}
 	target := args.Path
 	if target == "" {
@@ -126,20 +127,20 @@ func resolveSearchBase(raw json.RawMessage, guard *platform.PathGuard) (string, 
 	}
 	resolved, err := guard.Resolve(target, platform.AccessRead)
 	if err != nil {
-		return "", err
+		return platform.ResolvedPath{}, err
 	}
 	info, err := os.Stat(resolved.Path)
 	if err != nil {
-		return "", fmt.Errorf("search_text: %w", err)
+		return platform.ResolvedPath{}, fmt.Errorf("search_text: %w", err)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("search_text: %q is not a directory", target)
+		return platform.ResolvedPath{}, fmt.Errorf("search_text: %q is not a directory", target)
 	}
-	return resolved.Path, nil
+	return resolved, nil
 }
 
 func (t searchTextTool) Execute(ctx context.Context, call *PreparedCall, cap Capability, env ExecEnv) (*ToolResult, error) {
-	if err := CheckCapability(call, cap); err != nil {
+	if err := CheckCapability(ctx, call, cap, env); err != nil {
 		return nil, err
 	}
 	base, err := resolveSearchBase(call.CanonicalArg, env.Guard)
@@ -152,7 +153,7 @@ func (t searchTextTool) Execute(ctx context.Context, call *PreparedCall, cap Cap
 	}
 
 	engine := "fallback"
-	matches, truncatedCount, err := t.search(ctx, base, args)
+	matches, truncatedCount, err := t.search(ctx, base.Path, args)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +171,7 @@ func (t searchTextTool) Execute(ctx context.Context, call *PreparedCall, cap Cap
 		return matches[i].line < matches[j].line
 	})
 
-	baseRel, err := filepath.Rel(env.Guard.Root(), base)
+	baseRel, err := filepath.Rel(env.Guard.Root(), base.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +196,7 @@ func (t searchTextTool) Execute(ctx context.Context, call *PreparedCall, cap Cap
 		Output:    output,
 		Truncated: truncated,
 		Metadata: map[string]string{
-			"path":      base,
+			"path":      base.Path,
 			"engine":    engine,
 			"matches":   fmt.Sprintf("%d", len(matches)),
 			"truncated": fmt.Sprintf("%v", truncated),

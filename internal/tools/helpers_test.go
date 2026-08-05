@@ -45,7 +45,16 @@ func (e *toolTestEnv) prepareEnv() PrepareEnv {
 }
 
 func (e *toolTestEnv) execEnv() ExecEnv {
-	return ExecEnv{Guard: e.guard}
+	return ExecEnv{RunID: "run-1", Guard: e.guard, CapabilityVerifier: testCapabilityVerifier{}}
+}
+
+type testCapabilityVerifier struct{}
+
+func (testCapabilityVerifier) Consume(_ context.Context, call *PreparedCall, cap Capability, use CapabilityUse) error {
+	if cap.RunID != use.RunID || cap.ToolName != call.ToolName || cap.Digest != call.Digest {
+		return ErrCapabilityMismatch
+	}
+	return nil
 }
 
 func prepareCall(t *testing.T, tool Tool, env *toolTestEnv, raw string) *PreparedCall {
