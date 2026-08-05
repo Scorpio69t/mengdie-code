@@ -90,6 +90,9 @@ func TestPreparedCallValidate(t *testing.T) {
 		"hashless precondition": func(c *PreparedCall) {
 			c.Preconditions = []Precondition{{Kind: PreconditionFileSHA256, Path: "a.txt"}}
 		},
+		"path absent with hash": func(c *PreparedCall) {
+			c.Preconditions = []Precondition{{Kind: PreconditionPathAbsent, Path: "a.txt", SHA256: "unexpected"}}
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			call := base()
@@ -172,6 +175,21 @@ func TestCheckPreconditionsDetectsTOCTOU(t *testing.T) {
 	}
 }
 
+func TestCheckPreconditionsPathAbsent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new.txt")
+	preconditions := []Precondition{{Kind: PreconditionPathAbsent, Path: path}}
+	if err := CheckPreconditions(preconditions); err != nil {
+		t.Fatalf("CheckPreconditions() error = %v", err)
+	}
+	if err := os.WriteFile(path, []byte("appeared"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var preconditionErr *PreconditionError
+	if err := CheckPreconditions(preconditions); !errors.As(err, &preconditionErr) {
+		t.Fatalf("CheckPreconditions() error = %v, want PreconditionError", err)
+	}
+}
+
 type stubTool struct {
 	spec ToolSpec
 }
@@ -217,5 +235,22 @@ func TestRegistry(t *testing.T) {
 				t.Fatal("NewRegistry() succeeded, want error")
 			}
 		})
+	}
+}
+
+func TestDefaultToolsIncludesPhaseOneFileTools(t *testing.T) {
+	tools := DefaultTools()
+	names := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		names = append(names, tool.Spec().Name)
+	}
+	want := []string{"read_file", "list_files", "search_text", "edit_file", "write_file"}
+	if len(names) != len(want) {
+		t.Fatalf("DefaultTools() names = %v, want %v", names, want)
+	}
+	for index := range want {
+		if names[index] != want[index] {
+			t.Fatalf("DefaultTools() names = %v, want %v", names, want)
+		}
 	}
 }

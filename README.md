@@ -82,6 +82,7 @@ mengdie memory forget <id>
 - [x] 第一阶段 Slice 04：PathGuard 项目边界、Windows 路径语义与 Tool Prepare/Execute 基础协议
 - [x] 第一阶段 Slice 05：read_file / list_files / search_text 只读工具（rg fallback、输出限制）
 - [x] 第一阶段 Slice 06：确定性 Policy、交互审批与一次性 Capability（[协议说明](./docs/development/phase-1-slice-06/POLICY_PROTOCOL.md)）
+- [x] 第一阶段 Slice 07：edit_file / write_file 精确修改、diff 审批、根目录锚定原子写入与 TOCTOU 防护（[协议说明](./docs/development/phase-1-slice-07/EDIT_WRITE_PROTOCOL.md)）
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal

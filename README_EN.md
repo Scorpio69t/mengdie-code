@@ -56,6 +56,7 @@ This English README is the entry point for international readers. The detailed [
 - [x] Phase 1 Slice 04: project-root path guard, Windows path semantics, and the Tool Prepare/Execute base protocol
 - [x] Phase 1 Slice 05: read_file / list_files / search_text read-only tools with rg fallback and output limits
 - [x] Phase 1 Slice 06: deterministic policy, interactive approval, and one-shot capabilities ([protocol, Chinese](./docs/development/phase-1-slice-06/POLICY_PROTOCOL.md))
+- [x] Phase 1 Slice 07: exact edit/write tools with diff approval, root-anchored atomic writes, and TOCTOU guards ([protocol, Chinese](./docs/development/phase-1-slice-07/EDIT_WRITE_PROTOCOL.md))
 - [ ] M0: real-world coding, long-run, and memory-trust eval sets
 - [ ] M1: minimum Agent Runtime capable of completing real tasks ([Phase 1 detailed design, Chinese](./docs/design/phase-1/DETAILED_DESIGN.md))
 - [ ] M2: persistent events, resume, context compaction, and Patch Journal

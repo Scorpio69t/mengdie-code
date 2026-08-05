@@ -10,5 +10,7 @@ func DefaultTools() []Tool {
 		NewReadFile(),
 		NewListFiles(),
 		NewSearchText(),
+		NewEditFile(),
+		NewWriteFile(),
 	}
 }
