@@ -77,7 +77,7 @@ func (a *App) Run(ctx context.Context, args []string, interactive bool) int {
 			}
 			return ExitOK
 		case "doctor":
-			return a.runDoctor(ctx, args[1:])
+			return a.runDoctor(ctx, args[1:], interactive)
 		case "exec":
 			return a.runExec(ctx, args[1:])
 		}
@@ -125,8 +125,8 @@ func (a *App) runInteractive(_ context.Context, args []string, interactive bool)
 		}
 	}
 	if _, err := fmt.Fprint(a.stdout,
-		"当前阶段：P1-00 / P1-01 / P1-02 开发预览，Agent 功能尚未实现。\n"+
-			"可运行 mengdie doctor 检查当前配置。\n",
+		"交互会话仍在开发中；当前请使用 mengdie exec 执行有界任务。\n"+
+			"可先运行 mengdie doctor 检查配置与 Provider。\n",
 	); err != nil {
 		return ExitRunError
 	}

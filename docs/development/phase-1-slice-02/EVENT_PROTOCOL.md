@@ -11,7 +11,7 @@ M1 只在内存中传递事件。此协议不提供 EventStore、重放、sessio
 ## Envelope
 
 ```json
-{"run_id":"run_0123456789abcdef0123456789abcdef","seq":1,"version":1,"time":"2026-07-30T09:00:00Z","kind":"run.started","payload":{"model":"openai-compatible:deepseek-chat","cwd":"/project","security":"建议模式"}}
+{"run_id":"run_0123456789abcdef0123456789abcdef","seq":1,"version":1,"time":"2026-07-30T09:00:00Z","kind":"run.started","payload":{"model":"openai-compatible:deepseek-v4-flash","cwd":"/project","security":"建议模式"}}
 ```
 
 | 字段 | 约束 |

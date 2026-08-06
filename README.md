@@ -85,13 +85,14 @@ mengdie memory forget <id>
 - [x] 第一阶段 Slice 07：edit_file / write_file 精确修改、diff 审批、根目录锚定原子写入与 TOCTOU 防护（[协议说明](./docs/development/phase-1-slice-07/EDIT_WRITE_PROTOCOL.md)）
 - [x] 第一阶段 Slice 08：zsh / PowerShell 受控执行、环境过滤、输出限制与进程树取消（[协议说明](./docs/development/phase-1-slice-08/SHELL_PROTOCOL.md)）
 - [x] 第一阶段 Slice 09：单 Agent Runtime、上下文构建、run-scoped todo 与重复调用保护（[协议说明](./docs/development/phase-1-slice-09/AGENT_RUNTIME_PROTOCOL.md)）
+- [x] 第一阶段 Slice 10：结构化 Doctor、DeepSeek/Kimi 当前配置与受保护的真实 Provider smoke（[说明](./docs/development/phase-1-slice-10/DOCTOR_AND_SMOKE.md)）
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal
 - [ ] M3：可审计的可信记忆
 - [ ] M4：默认只生成提案的复盘机制
 
-完整产品架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；M1 实施基线见 [第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)。`mengdie exec` 已接入最小 Agent Runtime 与安全工具链；真实 DeepSeek/Kimi smoke、交互会话和开发预览验收仍在后续工作包中。
+完整产品架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；M1 实施基线见 [第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)。`mengdie exec` 已接入最小 Agent Runtime 与安全工具链，真实 DeepSeek/Kimi smoke 已提供受保护的手动工作流；交互会话和开发预览验收仍在后续工作包中。
 
 工程依赖的选择、升级和供应链标准见 [依赖与现代化工程准则](./docs/DEPENDENCIES.md)，Logo 与 CLI 启动体验见 [品牌规范](./docs/BRAND.md)。
 
@@ -113,14 +114,15 @@ v0.1 坚持单进程、本地优先。daemon、Web、异步 Swarm、向量检索
 
 ## 本地查看
 
-当前开发预览已经包含 CLI/App 骨架、分层配置、最小 doctor、5 个可重复 Coding baseline、Provider 协议、安全工具链与最小 Agent Runtime。配置 Provider 后，`exec` 可以执行单个有界任务；不带授权时只允许普通项目读取和 run-scoped todo：
+当前开发预览已经包含 CLI/App 骨架、分层配置、结构化 Doctor、5 个可重复 Coding baseline、Provider 协议、安全工具链与最小 Agent Runtime。配置 Provider 后，`exec` 可以执行单个有界任务；不带授权时只允许普通项目读取和 run-scoped todo：
 
 ```bash
 git clone https://github.com/Scorpio69t/mengdie-code.git
 cd mengdie-code
 go test ./...
 go run ./cmd/mengdie --version
-go run ./cmd/mengdie doctor --json
+go run ./cmd/mengdie doctor --offline --json
+go run ./cmd/mengdie doctor
 go run ./cmd/mengdie exec --json "检查当前项目"
 go run ./cmd/mengdie exec --allow-edit --allow-command go,test "修复失败测试"
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
@@ -130,7 +132,9 @@ go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 
 需要 Go 1.26 或更高版本。
 
-国内模型的无密钥配置样例见 [`configs/examples/config.toml`](./configs/examples/config.toml)。用户配置使用 `os.UserConfigDir()` 对应的平台目录，项目配置放在 `.mengdie/config.toml`；密钥只通过样例中的环境变量名引用，不得写入项目文件。
+`doctor --offline` 只做本地检查且不构造 Provider；默认 `doctor` 会用固定、无源码内容的工具调用执行一次有限在线探测。输出中的项目路径和用户配置路径会被逻辑占位符替代，密钥只检查是否存在，永不显示值。完整契约和退出码见 [Doctor 与 Provider smoke 说明](./docs/development/phase-1-slice-10/DOCTOR_AND_SMOKE.md)。
+
+国内模型的无密钥配置样例见[组合示例](./configs/examples/config.toml)、[DeepSeek 示例](./configs/examples/deepseek.toml)和 [Kimi 示例](./configs/examples/kimi.toml)。模型名与端点会随 Provider 调整，示例记录了核验日期，使用前应以官方文档为准。用户配置使用 `os.UserConfigDir()` 对应的平台目录，项目配置放在 `.mengdie/config.toml`；密钥只通过样例中的环境变量名引用，不得写入项目文件。
 
 ## 参与贡献
 

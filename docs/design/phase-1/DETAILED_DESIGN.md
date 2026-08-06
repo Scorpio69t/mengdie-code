@@ -84,7 +84,7 @@ M0 至少完成以下基线后，M1 才进入正式编码：
 
 ```text
 $ mengdie
-MengDie Code · deepseek:deepseek-chat · 受控本地执行
+MengDie Code · deepseek:deepseek-v4-flash · 受控本地执行
 
 > 修复当前失败的单元测试，不要引入新依赖
 
@@ -117,7 +117,7 @@ MengDie Code · deepseek:deepseek-chat · 受控本地执行
 ### 3.2 无头任务
 
 ```bash
-mengdie exec "解释 internal/auth 的鉴权流程" --model deepseek:deepseek-chat
+mengdie exec --model deepseek-v4-flash "解释 internal/auth 的鉴权流程"
 ```
 
 默认规则：
@@ -361,16 +361,17 @@ default_profile = "deepseek"
 provider = "openai-compatible"
 base_url = "https://api.deepseek.com"
 api_key_env = "DEEPSEEK_API_KEY"
-model = "deepseek-chat"
-cheap_model = "deepseek-chat"
+model = "deepseek-v4-flash"
+cheap_model = "deepseek-v4-flash"
 request_timeout = "120s"
-max_context_tokens = 64000
+max_context_tokens = 1000000
 
 [profiles.kimi]
 provider = "openai-compatible"
-base_url = "https://api.moonshot.cn/v1"
+base_url = "https://api.moonshot.ai/v1"
 api_key_env = "MOONSHOT_API_KEY"
-model = "kimi-k2"
+model = "kimi-k3"
+max_context_tokens = 1000000
 
 [approval]
 mode = "suggest"
@@ -1139,4 +1140,3 @@ M1 只保留以下自然演进点：
 - [ ] 哪些风险必须在开始编码前做 spike？
 
 审核通过后，下一步不是一次性创建所有目录，而是先落地 P1-00 与 P1-01，并用第一个纵向切片验证设计。
-
