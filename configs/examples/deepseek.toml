@@ -1,6 +1,5 @@
-# MengDie Code 配置示例。
-# 复制到用户配置目录，或复制为项目中的 .mengdie/config.toml。
-# 项目配置禁止保存密钥；这里只引用环境变量名。
+# DeepSeek 官方 OpenAI-compatible 配置示例（核验日期：2026-08-06）。
+# API Key 只保存在 DEEPSEEK_API_KEY 环境变量中，不要写入本文件。
 
 default_profile = "deepseek"
 
@@ -10,14 +9,6 @@ base_url = "https://api.deepseek.com"
 api_key_env = "DEEPSEEK_API_KEY"
 model = "deepseek-v4-flash"
 cheap_model = "deepseek-v4-flash"
-request_timeout = "120s"
-max_context_tokens = 1000000
-
-[profiles.kimi]
-provider = "openai-compatible"
-base_url = "https://api.moonshot.ai/v1"
-api_key_env = "MOONSHOT_API_KEY"
-model = "kimi-k3"
 request_timeout = "120s"
 max_context_tokens = 1000000
 

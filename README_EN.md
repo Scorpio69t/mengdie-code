@@ -59,6 +59,7 @@ This English README is the entry point for international readers. The detailed [
 - [x] Phase 1 Slice 07: exact edit/write tools with diff approval, root-anchored atomic writes, and TOCTOU guards ([protocol, Chinese](./docs/development/phase-1-slice-07/EDIT_WRITE_PROTOCOL.md))
 - [x] Phase 1 Slice 08: controlled zsh/PowerShell execution with environment filtering, bounded output, and process-tree cancellation ([protocol, Chinese](./docs/development/phase-1-slice-08/SHELL_PROTOCOL.md))
 - [x] Phase 1 Slice 09: single-Agent runtime, context building, run-scoped todos, and repetition guards ([protocol, Chinese](./docs/development/phase-1-slice-09/AGENT_RUNTIME_PROTOCOL.md))
+- [x] Phase 1 Slice 10: structured Doctor, current DeepSeek/Kimi samples, and protected live Provider smoke ([notes, Chinese](./docs/development/phase-1-slice-10/DOCTOR_AND_SMOKE.md))
 - [ ] M0: real-world coding, long-run, and memory-trust eval sets
 - [ ] M1: minimum Agent Runtime capable of completing real tasks ([Phase 1 detailed design, Chinese](./docs/design/phase-1/DETAILED_DESIGN.md))
 - [ ] M2: persistent events, resume, context compaction, and Patch Journal
@@ -69,14 +70,15 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the product architecture and the [P
 
 ## Local preview
 
-The current preview includes the CLI/app skeleton, layered configuration, a minimal doctor command, five reproducible coding baselines, the Provider protocol, the safety toolchain, and a minimal Agent Runtime wired into `mengdie exec`. Real DeepSeek/Kimi smoke tests, interactive sessions, and development-preview acceptance remain follow-up work.
+The current preview includes the CLI/app skeleton, layered configuration, a structured Doctor, five reproducible coding baselines, the Provider protocol, the safety toolchain, and a minimal Agent Runtime wired into `mengdie exec`. A protected manual workflow covers real DeepSeek/Kimi smoke tests; interactive sessions and development-preview acceptance remain follow-up work.
 
 ```bash
 git clone https://github.com/Scorpio69t/mengdie-code.git
 cd mengdie-code
 go test ./...
 go run ./cmd/mengdie --version
-go run ./cmd/mengdie doctor --json
+go run ./cmd/mengdie doctor --offline --json
+go run ./cmd/mengdie doctor
 go run ./cmd/mengdie exec --json "inspect this project"
 go run ./cmd/mengdie exec --allow-edit --allow-command go,test "fix the failing test"
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
@@ -86,7 +88,9 @@ go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 
 Go 1.26 or later is required.
 
-A secret-free domestic-provider example is available at [`configs/examples/config.toml`](./configs/examples/config.toml). API keys are referenced by environment-variable name and must not be stored in project configuration.
+`doctor --offline` performs local checks without constructing a Provider. The default command performs one bounded online tool-call probe with fixed content and no source code. Paths are represented by logical placeholders and credential values are never printed. See the [Chinese Doctor contract](./docs/development/phase-1-slice-10/DOCTOR_AND_SMOKE.md).
+
+Secret-free samples are available for [combined profiles](./configs/examples/config.toml), [DeepSeek](./configs/examples/deepseek.toml), and [Kimi](./configs/examples/kimi.toml). Provider model names and endpoints can change; each sample carries its verification date. API keys are referenced by environment-variable name and must not be stored in project configuration.
 
 ## Contributing
 

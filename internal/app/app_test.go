@@ -33,7 +33,7 @@ model = "test-model"
 		"TEST_SECRET_KEY": "super-secret-value",
 	})
 
-	code := application.Run(context.Background(), []string{"doctor", "--cwd", root, "--json"}, false)
+	code := application.Run(context.Background(), []string{"doctor", "--cwd", root, "--json", "--offline"}, false)
 	if code != ExitOK {
 		t.Fatalf("Run() code = %d, want %d", code, ExitOK)
 	}
@@ -82,7 +82,7 @@ func TestInteractiveOmitsBannerWhenOutputIsRedirected(t *testing.T) {
 			t.Fatalf("redirected output unexpectedly contains banner line %q: %s", markLine, stdout.String())
 		}
 	}
-	if !strings.Contains(stdout.String(), "Agent 功能尚未实现") {
+	if !strings.Contains(stdout.String(), "当前请使用 mengdie exec 执行有界任务") {
 		t.Fatalf("redirected output = %q", stdout.String())
 	}
 }
@@ -276,6 +276,7 @@ model = "test-model"
 
 type appFakeProvider struct {
 	responses []*provider.ChatResponse
+	requests  []provider.ChatRequest
 	index     int
 }
 
@@ -285,7 +286,8 @@ func (*appFakeProvider) Capabilities(context.Context, string) (provider.Capabili
 	return provider.Capabilities{ToolCalling: true, MaxContextTokens: 64_000}, nil
 }
 
-func (fake *appFakeProvider) Stream(ctx context.Context, _ provider.ChatRequest, sink provider.StreamSink) (*provider.ChatResponse, error) {
+func (fake *appFakeProvider) Stream(ctx context.Context, request provider.ChatRequest, sink provider.StreamSink) (*provider.ChatResponse, error) {
+	fake.requests = append(fake.requests, request)
 	if fake.index >= len(fake.responses) {
 		return nil, errors.New("fake responses exhausted")
 	}

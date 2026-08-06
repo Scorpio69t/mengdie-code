@@ -1,0 +1,91 @@
+name: Provider 实机 Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: 要验证的国内 Provider
+        required: true
+        default: deepseek
+        type: choice
+        options:
+          - deepseek
+          - kimi
+
+permissions:
+  contents: read
+
+jobs:
+  deepseek:
+    if: inputs.provider == 'deepseek'
+    name: deepseek · ${{ matrix.os }}
+    environment: provider-smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    env:
+      MENGDIE_LIVE_SMOKE: "1"
+      MENGDIE_LIVE_BASE_URL: https://api.deepseek.com
+      MENGDIE_LIVE_MODEL: deepseek-v4-flash
+      MENGDIE_LIVE_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 验证密钥已配置
+        shell: bash
+        run: |
+          if [ -z "$MENGDIE_LIVE_API_KEY" ]; then
+            echo "provider-smoke 环境缺少所选 Provider 的 GitHub Secret"
+            exit 1
+          fi
+
+      - name: 运行真实只读工具闭环
+        run: go test -tags=liveprovider ./internal/app -run '^TestLiveProviderCompletesReadOnlyToolTask$' -count=1 -v
+
+  kimi:
+    if: inputs.provider == 'kimi'
+    name: kimi · ${{ matrix.os }}
+    environment: provider-smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    env:
+      MENGDIE_LIVE_SMOKE: "1"
+      MENGDIE_LIVE_BASE_URL: https://api.moonshot.ai/v1
+      MENGDIE_LIVE_MODEL: kimi-k3
+      MENGDIE_LIVE_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 验证密钥已配置
+        shell: bash
+        run: |
+          if [ -z "$MENGDIE_LIVE_API_KEY" ]; then
+            echo "provider-smoke 环境缺少 MOONSHOT_API_KEY"
+            exit 1
+          fi
+
+      - name: 运行真实只读工具闭环
+        run: go test -tags=liveprovider ./internal/app -run '^TestLiveProviderCompletesReadOnlyToolTask$' -count=1 -v

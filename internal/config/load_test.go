@@ -16,20 +16,27 @@ func TestExampleConfigLoads(t *testing.T) {
 	if !ok {
 		t.Fatal("runtime.Caller() failed")
 	}
-	examplePath := filepath.Join(filepath.Dir(sourceFile), "..", "..", "configs", "examples", "config.toml")
-	example, err := os.ReadFile(examplePath)
-	if err != nil {
-		t.Fatalf("read example config: %v", err)
-	}
-	root := t.TempDir()
-	writeTestConfig(t, filepath.Join(root, ".mengdie", "config.toml"), string(example))
-
-	loaded, err := Load(Options{WorkDir: root, UserConfigDir: t.TempDir(), LookupEnv: mapLookup(nil)})
-	if err != nil {
-		t.Fatalf("Load() example error = %v", err)
-	}
-	if loaded.SelectedProfile != "deepseek" || loaded.Profile().Model != "deepseek-chat" {
-		t.Fatalf("loaded example = %+v", loaded)
+	examplesRoot := filepath.Join(filepath.Dir(sourceFile), "..", "..", "configs", "examples")
+	for name, want := range map[string]struct{ profile, model string }{
+		"config.toml":   {profile: "deepseek", model: "deepseek-v4-flash"},
+		"deepseek.toml": {profile: "deepseek", model: "deepseek-v4-flash"},
+		"kimi.toml":     {profile: "kimi", model: "kimi-k3"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			example, err := os.ReadFile(filepath.Join(examplesRoot, name))
+			if err != nil {
+				t.Fatalf("read example config: %v", err)
+			}
+			root := t.TempDir()
+			writeTestConfig(t, filepath.Join(root, ".mengdie", "config.toml"), string(example))
+			loaded, err := Load(Options{WorkDir: root, UserConfigDir: t.TempDir(), LookupEnv: mapLookup(nil)})
+			if err != nil {
+				t.Fatalf("Load() example error = %v", err)
+			}
+			if loaded.SelectedProfile != want.profile || loaded.Profile().Model != want.model {
+				t.Fatalf("loaded example = %+v", loaded)
+			}
+		})
 	}
 }
 
