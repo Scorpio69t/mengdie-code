@@ -24,7 +24,10 @@ import (
 
 type providerFactory func(config.Profile, string) (provider.Provider, error)
 
-type execRuntimeOptions struct {
+type runtimeOptions struct {
+	Mode               policy.Mode
+	Broker             policy.Broker
+	Security           string
 	AllowEdit          bool
 	AllowCommands      []string
 	AllowedEnvironment []string
@@ -45,7 +48,7 @@ func defaultProviderFactory(profile config.Profile, apiKey string) (provider.Pro
 	})
 }
 
-func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task string, emitter *events.Emitter, options execRuntimeOptions) int {
+func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task string, emitter *events.Emitter, options runtimeOptions) int {
 	profile := loaded.Profile()
 	if strings.TrimSpace(profile.Provider) == "" || strings.TrimSpace(profile.Model) == "" {
 		return a.runtimeSetupError("Provider 未配置；请先运行 mengdie doctor 并配置 profile")
@@ -71,8 +74,8 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 		return a.runtimeSetupError(fmt.Sprintf("初始化工具失败：%v", err))
 	}
 	engine, err := policy.NewEngine(policy.Options{
-		Root: loaded.ProjectRoot, Mode: policy.ModeHeadless,
-		CLI: execCLIRules(options), Profile: commandRules("profile-command", loaded.Config.Approval.AllowCommands),
+		Root: loaded.ProjectRoot, Mode: options.Mode,
+		CLI: runtimeCLIRules(options), Profile: commandRules("profile-command", loaded.Config.Approval.AllowCommands),
 	})
 	if err != nil {
 		return a.runtimeSetupError(fmt.Sprintf("初始化策略失败：%v", err))
@@ -89,7 +92,7 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 		contextInstructions[index] = agentcontext.Instruction{Source: instruction.Path, Content: instruction.Content}
 	}
 	runtime, err := agent.New(agent.Options{
-		Provider: modelProvider, Registry: registry, Guard: guard, Policy: engine,
+		Provider: modelProvider, Registry: registry, Guard: guard, Policy: engine, Broker: options.Broker,
 		Now: a.now, MaxContextTokens: profile.MaxContextTokens,
 		Environment: a.environment, AllowedEnvironment: options.AllowedEnvironment,
 		Instructions: contextInstructions,
@@ -99,7 +102,7 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	}
 	result, err := runtime.Run(ctx, agent.RunRequest{
 		RunID: runID, Task: task, Model: profile.Model, DisplayModel: modelLabel(profile),
-		MaxTurns: loaded.Config.Context.MaxTurns, Security: "受控本地执行 · 无头模式",
+		MaxTurns: loaded.Config.Context.MaxTurns, Security: options.Security,
 	}, emitter)
 	if err != nil {
 		return runtimeExitCode(err)
@@ -110,7 +113,7 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	return ExitOK
 }
 
-func execCLIRules(options execRuntimeOptions) []policy.Rule {
+func runtimeCLIRules(options runtimeOptions) []policy.Rule {
 	var rules []policy.Rule
 	if options.AllowEdit {
 		for _, name := range []string{"edit_file", "write_file"} {

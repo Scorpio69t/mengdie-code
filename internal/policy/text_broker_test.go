@@ -4,6 +4,7 @@
 package policy
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"strings"
@@ -11,6 +12,21 @@ import (
 
 	"github.com/Scorpio69t/mengdie-code/internal/tools"
 )
+
+func TestTextBrokerReusesBufferedReader(t *testing.T) {
+	reader := bufio.NewReader(strings.NewReader("task\ny\n"))
+	if _, err := reader.ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	broker, err := NewTextBroker(reader, &strings.Builder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := broker.Decide(context.Background(), ApprovalRequest{Prompt: "允许？", Risk: "低"})
+	if err != nil || response.Choice != ApprovalApprove {
+		t.Fatalf("response=%+v error=%v", response, err)
+	}
+}
 
 func TestTextBrokerParsesChineseAndEnglishChoices(t *testing.T) {
 	for input, want := range map[string]ApprovalChoice{

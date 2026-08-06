@@ -60,6 +60,7 @@ This English README is the entry point for international readers. The detailed [
 - [x] Phase 1 Slice 08: controlled zsh/PowerShell execution with environment filtering, bounded output, and process-tree cancellation ([protocol, Chinese](./docs/development/phase-1-slice-08/SHELL_PROTOCOL.md))
 - [x] Phase 1 Slice 09: single-Agent runtime, context building, run-scoped todos, and repetition guards ([protocol, Chinese](./docs/development/phase-1-slice-09/AGENT_RUNTIME_PROTOCOL.md))
 - [x] Phase 1 Slice 10: structured Doctor, current DeepSeek/Kimi samples, and protected live Provider smoke ([notes, Chinese](./docs/development/phase-1-slice-10/DOCTOR_AND_SMOKE.md))
+- [x] Phase 1 Slice 11A: one-shot interactive tasks, terminal approval loop, and fail-closed non-TTY behavior ([protocol, Chinese](./docs/development/phase-1-slice-11a/INTERACTIVE_RUNTIME.md))
 - [ ] M0: real-world coding, long-run, and memory-trust eval sets
 - [ ] M1: minimum Agent Runtime capable of completing real tasks ([Phase 1 detailed design, Chinese](./docs/design/phase-1/DETAILED_DESIGN.md))
 - [ ] M2: persistent events, resume, context compaction, and Patch Journal
@@ -70,7 +71,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the product architecture and the [P
 
 ## Local preview
 
-The current preview includes the CLI/app skeleton, layered configuration, a structured Doctor, five reproducible coding baselines, the Provider protocol, the safety toolchain, and a minimal Agent Runtime wired into `mengdie exec`. A protected manual workflow covers real DeepSeek/Kimi smoke tests; interactive sessions and development-preview acceptance remain follow-up work.
+The current source preview includes the CLI/app skeleton, layered configuration, a structured Doctor, five reproducible coding baselines, the Provider protocol, the safety toolchain, and a minimal Agent Runtime shared by `mengdie` and `mengdie exec`. A protected manual workflow covers real DeepSeek/Kimi smoke tests; multi-platform preview artifacts and M1 exit acceptance remain follow-up work.
 
 ```bash
 git clone https://github.com/Scorpio69t/mengdie-code.git
@@ -79,12 +80,15 @@ go test ./...
 go run ./cmd/mengdie --version
 go run ./cmd/mengdie doctor --offline --json
 go run ./cmd/mengdie doctor
+go run ./cmd/mengdie
 go run ./cmd/mengdie exec --json "inspect this project"
 go run ./cmd/mengdie exec --allow-edit --allow-command go,test "fix the failing test"
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 ```
 
-`exec --json` now emits the complete run as JSON Lines. Headless mode denies edit/write/shell by default; `--allow-edit`, a token-bounded `--allow-command`, and explicit `--allow-env NAME` grants are narrow run-scoped exceptions. A denial is returned to the model and still produces the Policy exit code. Events exclude the full user task, credentials, and hidden reasoning. Human-readable events use stderr; JSON Lines use stdout.
+The interactive entry accepts one task of at most 64 KiB per process. Edit/write and Shell calls not pre-authorized by configuration show a local preview and require approval before execution. There is no history, resume, or REPL yet; context is lost when the process exits, and redirected input/output must use `mengdie exec`.
+
+`exec --json` emits the complete run as JSON Lines. Headless mode denies edit/write/shell by default; `--allow-edit`, a token-bounded `--allow-command`, and explicit `--allow-env NAME` grants are narrow run-scoped exceptions. A denial is returned to the model and still produces the Policy exit code. Events exclude the full user task, credentials, and hidden reasoning. Interactive events and approval prompts use stdout; headless human-readable events use stderr; JSON Lines use stdout.
 
 Go 1.26 or later is required.
 
