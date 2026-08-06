@@ -10,7 +10,8 @@ on:
         type: choice
         options:
           - deepseek
-          - kimi
+          - kimi-code
+          - kimi-platform
       suite:
         description: 要运行的真实 Provider 验收套件
         required: true
@@ -71,9 +72,9 @@ jobs:
         if: inputs.suite == 'm1-coding'
         run: go test -tags=liveprovider ./internal/app -run '^TestLiveProviderCompletesCodingTaskSuite$' -count=1 -timeout=50m -v
 
-  kimi:
-    if: inputs.provider == 'kimi'
-    name: kimi · ${{ matrix.os }}
+  kimi-code:
+    if: inputs.provider == 'kimi-code'
+    name: kimi-code · ${{ matrix.os }}
     environment: provider-smoke
     strategy:
       fail-fast: false
@@ -85,7 +86,50 @@ jobs:
     timeout-minutes: 60
     env:
       MENGDIE_LIVE_SMOKE: "1"
-      MENGDIE_LIVE_BASE_URL: https://api.moonshot.ai/v1
+      MENGDIE_LIVE_BASE_URL: https://api.kimi.com/coding/v1
+      MENGDIE_LIVE_MODEL: kimi-for-coding
+      MENGDIE_LIVE_API_KEY: ${{ secrets.KIMI_CODE_API_KEY }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 验证密钥已配置
+        shell: bash
+        run: |
+          if [ -z "$MENGDIE_LIVE_API_KEY" ]; then
+            echo "provider-smoke 环境缺少 KIMI_CODE_API_KEY"
+            exit 1
+          fi
+
+      - name: 运行真实只读工具闭环
+        if: inputs.suite == 'readonly'
+        run: go test -tags=liveprovider ./internal/app -run '^TestLiveProviderCompletesReadOnlyToolTask$' -count=1 -v
+
+      - name: 运行 M1 真实 Provider Coding 预验收
+        if: inputs.suite == 'm1-coding'
+        run: go test -tags=liveprovider ./internal/app -run '^TestLiveProviderCompletesCodingTaskSuite$' -count=1 -timeout=50m -v
+
+  kimi-platform:
+    if: inputs.provider == 'kimi-platform'
+    name: kimi-platform · ${{ matrix.os }}
+    environment: provider-smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      MENGDIE_LIVE_SMOKE: "1"
+      MENGDIE_LIVE_BASE_URL: https://api.moonshot.cn/v1
       MENGDIE_LIVE_MODEL: kimi-k3
       MENGDIE_LIVE_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
     steps:

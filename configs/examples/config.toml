@@ -13,9 +13,17 @@ cheap_model = "deepseek-v4-flash"
 request_timeout = "120s"
 max_context_tokens = 1000000
 
-[profiles.kimi]
+[profiles.kimi-code]
 provider = "openai-compatible"
-base_url = "https://api.moonshot.ai/v1"
+base_url = "https://api.kimi.com/coding/v1"
+api_key_env = "KIMI_CODE_API_KEY"
+model = "kimi-for-coding"
+request_timeout = "120s"
+max_context_tokens = 262144
+
+[profiles.kimi-platform]
+provider = "openai-compatible"
+base_url = "https://api.moonshot.cn/v1"
 api_key_env = "MOONSHOT_API_KEY"
 model = "kimi-k3"
 request_timeout = "120s"

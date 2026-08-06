@@ -1,0 +1,22 @@
+# Kimi Code 会员 OpenAI-compatible 配置示例（核验日期：2026-08-06）。
+# 会员 Key 只保存在 KIMI_CODE_API_KEY 环境变量中，不要写入本文件。
+# Kimi Code 与 Kimi 开放平台的 Key、端点和额度互不通用。
+
+default_profile = "kimi-code"
+
+[profiles.kimi-code]
+provider = "openai-compatible"
+base_url = "https://api.kimi.com/coding/v1"
+api_key_env = "KIMI_CODE_API_KEY"
+model = "kimi-for-coding"
+request_timeout = "120s"
+max_context_tokens = 262144
+
+[approval]
+mode = "suggest"
+read_project_files = true
+allow_commands = ["go test", "go vet", "git status", "git diff"]
+
+[context]
+max_tool_output_bytes = 65536
+max_turns = 32

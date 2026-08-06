@@ -9,7 +9,7 @@
 - 人类输出与 schema v1 JSON 覆盖配置、凭据存在性、AGENTS 链、Git、shell、rg、TTY、模型能力和稳定错误分类；
 - 项目/用户配置路径脱敏，Provider URL 只报告 origin，密钥值不进入输出或在线请求；
 - Doctor 的 Git 子进程使用最小环境，并禁用外部 diff、textconv、fsmonitor、锁和终端提示；
-- DeepSeek/Kimi 示例已按 2026-08-06 官方资料更新，并拆分为可直接复制的独立配置；
+- DeepSeek/Kimi 示例已按 2026-08-06 官方资料更新；后续真实验收进一步把 Kimi Code 会员与 Kimi 开放平台拆成独立配置，避免混用 Key、端点和额度；
 - `liveprovider` build tag + `MENGDIE_LIVE_SMOKE=1` 构成真实 smoke 的双重 opt-in；
 - GitHub 手动工作流绑定 `provider-smoke` Environment，在 macOS 与 Windows 上验证只读 Agent 闭环；
 - 交互入口的过期“Agent 尚未实现”文案已改为准确引导用户使用 `exec` 和 `doctor`。
@@ -43,7 +43,7 @@
 - `bd preflight --check`：5/6 通过，1 项版本检查因仓库不含 Beads 源码而跳过；另报告既有 `AGENTS.md` / `CLAUDE.md` 独立内容差异警告，本切片未改动两文件；
 - `git diff --check`：通过。
 
-真实 DeepSeek/Kimi 付费调用未在本地执行。合并后由维护者在受保护的 `provider-smoke` Environment 配置密钥并手动选择 Provider 运行，结果不作为普通 PR 的隐式前置条件。
+本切片合并时尚未执行真实付费调用。后续受保护工作流已经取得 DeepSeek macOS/Windows `readonly` 与 10/10 Coding 预验收证据；Kimi 首次调用则用真实 401 证明旧配置混用了 Kimi Code 会员 Key 与开放平台端点，已据此拆分 `kimi-code` / `kimi-platform`。真实结果不作为普通 PR 的隐式前置条件，且密钥仍只存在 GitHub Environment。
 
 ## 4. 后续边界
 

@@ -17,10 +17,36 @@ func TestExampleConfigLoads(t *testing.T) {
 		t.Fatal("runtime.Caller() failed")
 	}
 	examplesRoot := filepath.Join(filepath.Dir(sourceFile), "..", "..", "configs", "examples")
-	for name, want := range map[string]struct{ profile, model string }{
-		"config.toml":   {profile: "deepseek", model: "deepseek-v4-flash"},
-		"deepseek.toml": {profile: "deepseek", model: "deepseek-v4-flash"},
-		"kimi.toml":     {profile: "kimi", model: "kimi-k3"},
+	for name, want := range map[string]struct {
+		profile   string
+		baseURL   string
+		apiKeyEnv string
+		model     string
+	}{
+		"config.toml": {
+			profile:   "deepseek",
+			baseURL:   "https://api.deepseek.com",
+			apiKeyEnv: "DEEPSEEK_API_KEY",
+			model:     "deepseek-v4-flash",
+		},
+		"deepseek.toml": {
+			profile:   "deepseek",
+			baseURL:   "https://api.deepseek.com",
+			apiKeyEnv: "DEEPSEEK_API_KEY",
+			model:     "deepseek-v4-flash",
+		},
+		"kimi-code.toml": {
+			profile:   "kimi-code",
+			baseURL:   "https://api.kimi.com/coding/v1",
+			apiKeyEnv: "KIMI_CODE_API_KEY",
+			model:     "kimi-for-coding",
+		},
+		"kimi-platform.toml": {
+			profile:   "kimi-platform",
+			baseURL:   "https://api.moonshot.cn/v1",
+			apiKeyEnv: "MOONSHOT_API_KEY",
+			model:     "kimi-k3",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			example, err := os.ReadFile(filepath.Join(examplesRoot, name))
@@ -33,7 +59,11 @@ func TestExampleConfigLoads(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load() example error = %v", err)
 			}
-			if loaded.SelectedProfile != want.profile || loaded.Profile().Model != want.model {
+			profile := loaded.Profile()
+			if loaded.SelectedProfile != want.profile ||
+				profile.BaseURL != want.baseURL ||
+				profile.APIKeyEnv != want.apiKeyEnv ||
+				profile.Model != want.model {
 				t.Fatalf("loaded example = %+v", loaded)
 			}
 		})

@@ -74,10 +74,11 @@ JSON schema 当前版本为 `1`。新增字段应保持向后兼容；改变既�
 
 ## 5. 国内 Provider 配置
 
-仓库提供三个无密钥样例：
+仓库提供四个无密钥样例：
 
 - [`configs/examples/deepseek.toml`](../../../configs/examples/deepseek.toml)
-- [`configs/examples/kimi.toml`](../../../configs/examples/kimi.toml)
+- [`configs/examples/kimi-code.toml`](../../../configs/examples/kimi-code.toml)
+- [`configs/examples/kimi-platform.toml`](../../../configs/examples/kimi-platform.toml)
 - [`configs/examples/config.toml`](../../../configs/examples/config.toml)
 
 复制所需样例到平台用户配置目录，或者项目内 `.mengdie/config.toml`，再设置密钥：
@@ -85,13 +86,19 @@ JSON schema 当前版本为 `1`。新增字段应保持向后兼容；改变既�
 ```zsh
 # macOS / zsh
 export DEEPSEEK_API_KEY='...'
-# 或 export MOONSHOT_API_KEY='...'
+# Kimi Code 会员 Key
+export KIMI_CODE_API_KEY='...'
+# Kimi 开放平台按量 Key
+export MOONSHOT_API_KEY='...'
 ```
 
 ```powershell
 # Windows / PowerShell；仅对当前进程生效
 $env:DEEPSEEK_API_KEY = '...'
-# 或 $env:MOONSHOT_API_KEY = '...'
+# Kimi Code 会员 Key
+$env:KIMI_CODE_API_KEY = '...'
+# Kimi 开放平台按量 Key
+$env:MOONSHOT_API_KEY = '...'
 ```
 
 然后依次运行：
@@ -102,22 +109,31 @@ mengdie doctor
 mengdie exec --json "检查当前项目"
 ```
 
-样例核验日期为 2026-08-06。当时 DeepSeek 官方当前模型为 `deepseek-v4-flash` / `deepseek-v4-pro`，Kimi 当前通用模型为 `kimi-k3`，Kimi 另有 Coding 模型 `kimi-k2.7-code`。Provider 会调整模型生命周期和能力，升级前必须重新核验官方文档：
+样例核验日期为 2026-08-06。DeepSeek 使用当前 OpenAI-compatible 模型；Kimi 必须先区分账户体系：
+
+| Profile | 适用 Key | Base URL | 默认模型 |
+| --- | --- | --- | --- |
+| `kimi-code` | Kimi Code 会员控制台 Key | `https://api.kimi.com/coding/v1` | `kimi-for-coding` |
+| `kimi-platform` | Kimi 开放平台中国大陆 Key | `https://api.moonshot.cn/v1` | `kimi-k3` |
+
+两类 Key、端点、计费与额度互不通用。认证失败时 MengDie Code 不会把同一密钥自动转发到另一个端点。Provider 会调整模型生命周期和能力，升级前必须重新核验官方文档：
 
 - [DeepSeek 模型与价格](https://api-docs.deepseek.com/quick_start/pricing)
 - [DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls)
-- [Kimi 模型列表](https://platform.kimi.ai/docs/models)
-- [Kimi K3 快速开始](https://platform.kimi.ai/docs/guide/kimi-k3-quickstart)
+- [Kimi Code 会员权益与第三方接入](https://www.kimi.com/zh-cn/help/kimi-code/membership-guide)
+- [Kimi Code 错误与账户边界](https://www.kimi.com/code/docs/en/kimi-code/error-reference.html)
+- [Kimi API 排障与区域端点](https://www.kimi.com/help/kimi-api/api-troubleshooting)
 
 ## 6. 真实 Provider smoke
 
 `.github/workflows/provider-smoke.yml` 只允许 `workflow_dispatch` 手动触发，并绑定 GitHub Environment `provider-smoke`。仓库维护者需在该 Environment 配置：
 
 - `DEEPSEEK_API_KEY`；
-- `MOONSHOT_API_KEY`；
+- `KIMI_CODE_API_KEY`（Kimi Code 会员）；
+- `MOONSHOT_API_KEY`（Kimi 开放平台）；
 - 建议启用 required reviewers，避免误触发付费调用。
 
-触发时选择 DeepSeek 或 Kimi，并选择 `readonly` 或 `m1-coding` 套件；工作流在 `macos-latest` 与 `windows-latest` 各执行一次。测试还要求 Go build tag `liveprovider` 和 `MENGDIE_LIVE_SMOKE=1`，形成双重 opt-in。同一 Provider 与套件不会并发运行，避免重复付费调用。
+触发时选择 `deepseek`、`kimi-code` 或 `kimi-platform`，并选择 `readonly` 或 `m1-coding` 套件；工作流在 `macos-latest` 与 `windows-latest` 各执行一次。测试还要求 Go build tag `liveprovider` 和 `MENGDIE_LIVE_SMOKE=1`，形成双重 opt-in。同一 Provider 与套件不会并发运行，避免重复付费调用。
 
 `readonly` 创建临时项目和固定标记文件，要求 Agent 必须调用 `read_file` 后完成任务。它不授予 edit/write/shell，限制为 8 轮，并验证：
 
