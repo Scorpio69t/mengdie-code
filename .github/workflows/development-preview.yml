@@ -61,8 +61,8 @@ jobs:
           grep -F "commit ${GITHUB_SHA}" .preview-smoke/version.txt
 
           "$binary" doctor --offline --json --cwd . > .preview-smoke/doctor.json
-          grep -F "\"version\":\"${PREVIEW_VERSION}\"" .preview-smoke/doctor.json
-          grep -F "\"commit\":\"${GITHUB_SHA}\"" .preview-smoke/doctor.json
+          grep -F "\"version\": \"${PREVIEW_VERSION}\"" .preview-smoke/doctor.json
+          grep -F "\"commit\": \"${GITHUB_SHA}\"" .preview-smoke/doctor.json
 
   build:
     name: 构建 · ${{ matrix.target }}
