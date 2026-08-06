@@ -22,10 +22,13 @@ import (
 )
 
 const (
-	ExitOK           = 0
-	ExitRunError     = 1
-	ExitInvalidInput = 2
-	ExitUserCanceled = 5
+	ExitOK            = 0
+	ExitRunError      = 1
+	ExitInvalidInput  = 2
+	ExitProviderError = 3
+	ExitPolicyDenied  = 4
+	ExitUserCanceled  = 5
+	ExitToolFailure   = 6
 )
 
 // BuildInfo contains values injected by the release build.
@@ -38,9 +41,12 @@ type BuildInfo struct {
 // App dispatches CLI commands using explicit process dependencies.
 type App struct {
 	build         BuildInfo
+	stdin         io.Reader
 	stdout        io.Writer
 	stderr        io.Writer
 	lookupEnv     func(string) (string, bool)
+	environment   func() []string
+	newProvider   providerFactory
 	userConfigDir string
 	now           func() time.Time
 	newRunID      func() (string, error)
@@ -49,12 +55,15 @@ type App struct {
 // New constructs the production application service.
 func New(build BuildInfo, stdout, stderr io.Writer) *App {
 	return &App{
-		build:     build,
-		stdout:    stdout,
-		stderr:    stderr,
-		lookupEnv: os.LookupEnv,
-		now:       time.Now,
-		newRunID:  events.NewRunID,
+		build:       build,
+		stdin:       os.Stdin,
+		stdout:      stdout,
+		stderr:      stderr,
+		lookupEnv:   os.LookupEnv,
+		environment: os.Environ,
+		newProvider: defaultProviderFactory,
+		now:         time.Now,
+		newRunID:    events.NewRunID,
 	}
 }
 
@@ -127,6 +136,11 @@ func (a *App) runInteractive(_ context.Context, args []string, interactive bool)
 func (a *App) runExec(ctx context.Context, args []string) int {
 	flags, common := a.newCommonFlagSet("mengdie exec")
 	jsonOutput := flags.Bool("json", false, "输出 JSON Lines 事件")
+	allowEdit := flags.Bool("allow-edit", false, "允许本次无头任务修改项目文件")
+	var allowCommands commandPrefixFlag
+	var allowEnvironment stringListFlag
+	flags.Var(&allowCommands, "allow-command", "允许的非交互命令前缀，可重复；go,test 表示 go test")
+	flags.Var(&allowEnvironment, "allow-env", "允许 shell 继承的敏感环境变量名，可重复或用逗号分隔")
 	if err := flags.Parse(args); err != nil {
 		return flagExitCode(err)
 	}
@@ -143,6 +157,9 @@ func (a *App) runExec(ctx context.Context, args []string) int {
 			return ExitRunError
 		}
 		return ExitInvalidInput
+	}
+	if err := ctx.Err(); err != nil {
+		return emitExitCode(err)
 	}
 	runID, err := a.newRunID()
 	if err != nil {
@@ -170,27 +187,10 @@ func (a *App) runExec(ctx context.Context, args []string) int {
 		}
 		return ExitRunError
 	}
-	profile := loaded.Profile()
-	if _, err := emitter.Emit(ctx, events.KindRunStarted, events.RunStarted{
-		Model:    modelLabel(profile),
-		CWD:      loaded.ProjectRoot,
-		Security: approvalLabel(loaded.Config.Approval.Mode),
-	}); err != nil {
-		if writeErr := a.writeError("输出事件失败：%v\n", err); writeErr != nil {
-			return ExitRunError
-		}
-		return emitExitCode(err)
-	}
-	if _, err := emitter.Emit(ctx, events.KindRunFailed, events.RunFailed{
-		Category: "runtime_unavailable",
-		Message:  "Agent Runtime 尚未实现；P1-02 仅提供事件与终端输出骨架",
-	}); err != nil {
-		if writeErr := a.writeError("输出事件失败：%v\n", err); writeErr != nil {
-			return ExitRunError
-		}
-		return emitExitCode(err)
-	}
-	return ExitRunError
+	return a.runAgent(ctx, loaded, runID, task, emitter, execRuntimeOptions{
+		AllowEdit: *allowEdit, AllowCommands: allowCommands.Values(),
+		AllowedEnvironment: allowEnvironment.Values(),
+	})
 }
 
 func (a *App) writeVersion() error {

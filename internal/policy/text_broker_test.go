@@ -8,6 +8,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/Scorpio69t/mengdie-code/internal/tools"
 )
 
 func TestTextBrokerParsesChineseAndEnglishChoices(t *testing.T) {
@@ -56,5 +58,20 @@ func TestTextBrokerHonorsCancelledContext(t *testing.T) {
 	broker, _ := NewTextBroker(strings.NewReader("y\n"), &strings.Builder{})
 	if _, err := broker.Decide(ctx, ApprovalRequest{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestTextBrokerShowsBoundedLocalPreview(t *testing.T) {
+	var output strings.Builder
+	broker, _ := NewTextBroker(strings.NewReader("y\n"), &output)
+	_, err := broker.Decide(context.Background(), ApprovalRequest{
+		Prompt: "允许？", Risk: "高",
+		Preview: tools.Preview{Title: "执行本地命令", Body: "go test ./..."},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "执行本地命令\ngo test ./...") {
+		t.Fatalf("output=%q", output.String())
 	}
 }

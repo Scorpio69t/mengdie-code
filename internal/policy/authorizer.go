@@ -25,14 +25,16 @@ const (
 	ApprovalEdit    ApprovalChoice = "edit"
 )
 
-// ApprovalRequest is deliberately bounded and excludes arguments, source
-// text and diffs. Rich previews remain in the local UI layer.
+// ApprovalRequest carries the tool-produced bounded preview only to the local
+// approval broker. EventObserver intentionally emits only the generic prompt
+// so JSON event consumers do not accidentally persist source or commands.
 type ApprovalRequest struct {
 	CallID  string
 	Tool    string
 	Prompt  string
 	Risk    string
 	Effects []tools.Effect
+	Preview tools.Preview
 }
 
 type ApprovalResponse struct {
@@ -162,13 +164,13 @@ func makeApprovalRequest(call *tools.PreparedCall, result Result) ApprovalReques
 	risk := "中"
 	if hasEffect(call.Effects, tools.EffectExecute) || hasEffect(call.Effects, tools.EffectNetwork) {
 		risk = "高"
-	} else if onlyEffect(call.Effects, tools.EffectRead) {
+	} else if onlyEffect(call.Effects, tools.EffectRead) || onlyEffect(call.Effects, tools.EffectState) {
 		risk = "低"
 	}
 	return ApprovalRequest{
 		CallID: call.ID, Tool: call.ToolName,
 		Prompt: "是否允许执行 " + call.ToolName + "？", Risk: risk,
-		Effects: append([]tools.Effect(nil), call.Effects...),
+		Effects: append([]tools.Effect(nil), call.Effects...), Preview: call.Preview,
 	}
 }
 

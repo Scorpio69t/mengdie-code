@@ -7,6 +7,7 @@
 package policy
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -43,11 +44,12 @@ var (
 // Rule matches a prepared call. Empty Tool and Effects are wildcards. When
 // Sensitive is nil, path sensitivity is not part of the match.
 type Rule struct {
-	Name      string
-	Tool      string
-	Effects   []tools.Effect
-	Sensitive *bool
-	Decision  Decision
+	Name            string
+	Tool            string
+	Effects         []tools.Effect
+	Sensitive       *bool
+	CommandPrefixes []string
+	Decision        Decision
 }
 
 // Options freezes the complete rule stack for a run. Slice order is
@@ -138,8 +140,18 @@ func validateRule(rule Rule) error {
 		return fmt.Errorf("policy: rule %q has unsupported decision %q", rule.Name, rule.Decision)
 	}
 	for _, effect := range rule.Effects {
-		if effect != tools.EffectRead && effect != tools.EffectWrite && effect != tools.EffectExecute && effect != tools.EffectNetwork {
+		if effect != tools.EffectRead && effect != tools.EffectWrite && effect != tools.EffectExecute && effect != tools.EffectNetwork && effect != tools.EffectState {
 			return fmt.Errorf("policy: rule %q has unsupported effect %q", rule.Name, effect)
+		}
+	}
+	if len(rule.CommandPrefixes) > 0 {
+		if rule.Tool != "shell" || !hasEffect(rule.Effects, tools.EffectExecute) {
+			return fmt.Errorf("policy: rule %q command prefixes require the shell execute effect", rule.Name)
+		}
+		for _, prefix := range rule.CommandPrefixes {
+			if normalizeCommandPrefix(prefix) == "" || hasShellControlOperator(prefix) {
+				return fmt.Errorf("policy: rule %q has unsafe command prefix %q", rule.Name, prefix)
+			}
 		}
 	}
 	return nil
@@ -150,6 +162,7 @@ func cloneRules(rules []Rule) []Rule {
 	for index, rule := range rules {
 		result[index] = rule
 		result[index].Effects = append([]tools.Effect(nil), rule.Effects...)
+		result[index].CommandPrefixes = append([]string(nil), rule.CommandPrefixes...)
 	}
 	return result
 }
@@ -189,6 +202,9 @@ func (e *Engine) Evaluate(call *tools.PreparedCall) Result {
 
 	if onlyEffect(call.Effects, tools.EffectRead) && !sensitive {
 		return Result{Decision: DecisionAllow, Reason: "普通项目读取", Rule: "default.read"}
+	}
+	if onlyEffect(call.Effects, tools.EffectState) {
+		return Result{Decision: DecisionAllow, Reason: "仅更新当前运行状态", Rule: "default.state"}
 	}
 	if e.mode == ModeHeadless {
 		return Result{Decision: DecisionDeny, Reason: "无交互模式默认拒绝", Rule: "default.headless"}
@@ -255,5 +271,36 @@ func matches(rule Rule, call *tools.PreparedCall, sensitive bool) bool {
 			return false
 		}
 	}
+	if len(rule.CommandPrefixes) > 0 && !matchesShellCommand(call, rule.CommandPrefixes) {
+		return false
+	}
 	return true
+}
+
+func matchesShellCommand(call *tools.PreparedCall, prefixes []string) bool {
+	if call.ToolName != "shell" {
+		return false
+	}
+	var arguments struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(call.CanonicalArg, &arguments); err != nil || hasShellControlOperator(arguments.Command) {
+		return false
+	}
+	command := normalizeCommandPrefix(arguments.Command)
+	for _, raw := range prefixes {
+		prefix := normalizeCommandPrefix(raw)
+		if command == prefix || strings.HasPrefix(command, prefix+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeCommandPrefix(command string) string {
+	return strings.Join(strings.Fields(command), " ")
+}
+
+func hasShellControlOperator(command string) bool {
+	return strings.ContainsAny(command, "\r\n;&|<>`") || strings.Contains(command, "$(")
 }

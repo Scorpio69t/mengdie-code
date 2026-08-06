@@ -77,6 +77,26 @@ func TestHumanRendererDoesNotDumpUnknownPayload(t *testing.T) {
 	}
 }
 
+func TestHumanRendererDoesNotDuplicateCompletedStream(t *testing.T) {
+	var output bytes.Buffer
+	renderer, err := NewHumanRenderer(&output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []events.Event{
+		testEvent(t, 1, events.KindMessageDelta, events.MessageDelta{Text: "修复"}),
+		testEvent(t, 2, events.KindMessageDelta, events.MessageDelta{Text: "完成"}),
+		testEvent(t, 3, events.KindMessageCompleted, events.MessageCompleted{Text: "修复完成"}),
+	} {
+		if err := renderer.Emit(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if output.String() != "修复完成\n" {
+		t.Fatalf("output=%q", output.String())
+	}
+}
+
 func TestRenderersPropagateValidationContextAndWriterErrors(t *testing.T) {
 	jsonRenderer, err := NewJSONRenderer(errorWriter{})
 	if err != nil {

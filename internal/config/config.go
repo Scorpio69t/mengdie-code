@@ -71,6 +71,7 @@ type Loaded struct {
 	Config              Config
 	SelectedProfile     string
 	ProjectRoot         string
+	WorkingDir          string
 	UserConfigPath      string
 	ProjectConfigPath   string
 	UserConfigLoaded    bool

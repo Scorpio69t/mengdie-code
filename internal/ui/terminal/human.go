@@ -17,15 +17,16 @@ import (
 // HumanRenderer writes stable, color-independent Chinese output. It only
 // decodes allowlisted payload fields and never dumps an unknown raw payload.
 type HumanRenderer struct {
-	mu     sync.Mutex
-	writer io.Writer
+	mu       sync.Mutex
+	writer   io.Writer
+	streamed map[string]bool
 }
 
 func NewHumanRenderer(writer io.Writer) (*HumanRenderer, error) {
 	if writer == nil {
 		return nil, errors.New("human renderer writer is required")
 	}
-	return &HumanRenderer{writer: writer}, nil
+	return &HumanRenderer{writer: writer, streamed: make(map[string]bool)}, nil
 }
 
 func (r *HumanRenderer) Emit(ctx context.Context, event events.Event) error {
@@ -61,11 +62,17 @@ func (r *HumanRenderer) render(event events.Event) error {
 		if err != nil {
 			return err
 		}
+		r.streamed[event.RunID] = true
 		_, err = io.WriteString(r.writer, payload.Text)
 		return err
 	case events.KindMessageCompleted:
 		payload, err := events.DecodePayload[events.MessageCompleted](event)
 		if err != nil {
+			return err
+		}
+		if r.streamed[event.RunID] {
+			delete(r.streamed, event.RunID)
+			_, err = fmt.Fprintln(r.writer)
 			return err
 		}
 		_, err = fmt.Fprintln(r.writer, payload.Text)

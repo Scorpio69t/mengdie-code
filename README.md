@@ -84,13 +84,14 @@ mengdie memory forget <id>
 - [x] 第一阶段 Slice 06：确定性 Policy、交互审批与一次性 Capability（[协议说明](./docs/development/phase-1-slice-06/POLICY_PROTOCOL.md)）
 - [x] 第一阶段 Slice 07：edit_file / write_file 精确修改、diff 审批、根目录锚定原子写入与 TOCTOU 防护（[协议说明](./docs/development/phase-1-slice-07/EDIT_WRITE_PROTOCOL.md)）
 - [x] 第一阶段 Slice 08：zsh / PowerShell 受控执行、环境过滤、输出限制与进程树取消（[协议说明](./docs/development/phase-1-slice-08/SHELL_PROTOCOL.md)）
+- [x] 第一阶段 Slice 09：单 Agent Runtime、上下文构建、run-scoped todo 与重复调用保护（[协议说明](./docs/development/phase-1-slice-09/AGENT_RUNTIME_PROTOCOL.md)）
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal
 - [ ] M3：可审计的可信记忆
 - [ ] M4：默认只生成提案的复盘机制
 
-完整产品架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；M1 实施基线见 [第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)。当前 Provider 已完成离线协议层，尚未接入 `mengdie exec`；真实模型 smoke 与 CLI 闭环仍在后续工作包中。
+完整产品架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；M1 实施基线见 [第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)。`mengdie exec` 已接入最小 Agent Runtime 与安全工具链；真实 DeepSeek/Kimi smoke、交互会话和开发预览验收仍在后续工作包中。
 
 工程依赖的选择、升级和供应链标准见 [依赖与现代化工程准则](./docs/DEPENDENCIES.md)，Logo 与 CLI 启动体验见 [品牌规范](./docs/BRAND.md)。
 
@@ -112,7 +113,7 @@ v0.1 坚持单进程、本地优先。daemon、Web、异步 Swarm、向量检索
 
 ## 本地查看
 
-当前开发预览已经包含 CLI/App 骨架、分层配置、最小 doctor、5 个可重复 Coding baseline，以及供后续 Runtime 共用的事件与终端输出边界，但还不包含 Agent Runtime：
+当前开发预览已经包含 CLI/App 骨架、分层配置、最小 doctor、5 个可重复 Coding baseline、Provider 协议、安全工具链与最小 Agent Runtime。配置 Provider 后，`exec` 可以执行单个有界任务；不带授权时只允许普通项目读取和 run-scoped todo：
 
 ```bash
 git clone https://github.com/Scorpio69t/mengdie-code.git
@@ -121,10 +122,11 @@ go test ./...
 go run ./cmd/mengdie --version
 go run ./cmd/mengdie doctor --json
 go run ./cmd/mengdie exec --json "检查当前项目"
+go run ./cmd/mengdie exec --allow-edit --allow-command go,test "修复失败测试"
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 ```
 
-`exec --json` 当前会输出 `run.started` 与 `run.failed` 两条 JSON Lines 事件，并以退出码 1 结束，用于验证管道协议；它不会假装已经执行任务。事件只包含运行所需的公开元数据，不写入完整用户任务、密钥或隐藏推理。人类输出走 stderr，JSON Lines 走 stdout，便于稳定接入脚本。
+`exec --json` 输出完整 JSON Lines 运行事件。无头模式默认拒绝 edit/write/shell；`--allow-edit` 只放行项目内修改，`--allow-command go,test` 只放行无控制操作符的 `go test` 命令前缀，`--allow-env NAME` 才允许 shell 继承对应敏感环境变量。拒绝结果会返回模型，但进程最终仍以 Policy 退出码结束。事件不包含完整用户任务、密钥或隐藏推理；人类事件走 stderr，JSON Lines 走 stdout。
 
 需要 Go 1.26 或更高版本。
 
