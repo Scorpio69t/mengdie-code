@@ -32,6 +32,9 @@ func TestClientStreamsRequestAndMapsWireFields(t *testing.T) {
 		if got := request.Header.Get("Accept"); got != "text/event-stream" {
 			t.Errorf("accept = %q", got)
 		}
+		if got := request.Header.Get("User-Agent"); got != defaultUserAgent {
+			t.Errorf("user-agent = %q", got)
+		}
 		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
 			t.Errorf("decode body: %v", err)
 		}

@@ -2,12 +2,12 @@
 
 ## 交付结论
 
-本切片新增了可重复的真实 Provider Coding 预验收入口，但尚未执行付费实机套件，因此只声明“入口完成”，不声明“真实运行通过”或“M1 完成”。
+本切片新增了可重复的真实 Provider Coding 预验收入口，并在合并后完成 DeepSeek 付费实机套件。该证据只声明“有界双平台预验收通过”，不声明外部真实仓库任务或 M1 整体完成。
 
 主要交付：
 
 - `Provider 实机 Smoke` 新增 `readonly` / `m1-coding` 套件选择；
-- DeepSeek 与 Kimi 都在受保护 Environment 中覆盖 macOS、Windows；
+- DeepSeek、Kimi Code 与 Kimi 开放平台都在受保护 Environment 中覆盖 macOS、Windows，并使用互不混用的 Secret 与端点；
 - `m1-coding` 在每个平台串行运行现有 5 个 Go fixture；
 - 每项任务只获得项目内 edit/write 与 `go test` 窄授权；
 - JSON Lines 必须证明成功的 read、edit/write、shell 和 run completion；
@@ -40,8 +40,13 @@
 - `go build ./...`；
 - `git diff --check`。
 
-未执行：`m1-coding` 真实 Provider 工作流。该操作会产生付费 API 请求，只能在代码合并并由维护者确认后手动触发。
+合并后真实证据：
+
+- DeepSeek `readonly` 运行 `31078797034`：macOS、Windows 均通过；
+- DeepSeek `m1-coding` 运行 `31079053820`：macOS 5/5、Windows 5/5；
+- 未授权副作用、白名单外 diff 和密钥泄漏均为 0；
+- Kimi `readonly` 运行 `31078807523`：双平台均返回 401。官方资料和用户确认表明使用的是 Kimi Code 会员 Key，而工作流错误指向开放平台端点；该结果促成 `kimi-code` / `kimi-platform` 显式拆分，不能计为 Kimi 通过。
 
 ## M1 当前边界
 
-PR #19 合并后的 main CI 为此前连续成功序列中的第 19 次。P1-12 后续合并若 main CI 成功，可以形成第 20 次稳定性证据；但 M1 仍需外部真实仓库任务和安全出口记录，不能仅凭 fixture 预验收完成。
+PR #20 合并后的 main CI 已形成连续第 20 次稳定性证据，DeepSeek 双平台 fixture 预验收也已通过；但 M1 仍需外部真实仓库任务和安全出口记录，不能仅凭 fixture 预验收完成。

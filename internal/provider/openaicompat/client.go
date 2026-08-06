@@ -27,6 +27,7 @@ import (
 const (
 	DefaultMaxEventBytes = 2 << 20
 	DefaultMaxAttempts   = 3
+	defaultUserAgent     = "MengDie-Code"
 	defaultTimeout       = 120 * time.Second
 	maximumEventBytes    = 16 << 20
 	maximumAttempts      = 5
@@ -187,6 +188,7 @@ func (c *Client) streamAttempt(ctx context.Context, body []byte, sink provider.S
 	}
 	request.Header.Set("Accept", "text/event-stream")
 	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", defaultUserAgent)
 	if c.apiKey != "" {
 		request.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}

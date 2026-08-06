@@ -366,9 +366,16 @@ cheap_model = "deepseek-v4-flash"
 request_timeout = "120s"
 max_context_tokens = 1000000
 
-[profiles.kimi]
+[profiles.kimi-code]
 provider = "openai-compatible"
-base_url = "https://api.moonshot.ai/v1"
+base_url = "https://api.kimi.com/coding/v1"
+api_key_env = "KIMI_CODE_API_KEY"
+model = "kimi-for-coding"
+max_context_tokens = 262144
+
+[profiles.kimi-platform]
+provider = "openai-compatible"
+base_url = "https://api.moonshot.cn/v1"
 api_key_env = "MOONSHOT_API_KEY"
 model = "kimi-k3"
 max_context_tokens = 1000000
@@ -382,6 +389,8 @@ allow_commands = ["go test", "go vet", "git status", "git diff"]
 max_tool_output_bytes = 65536
 max_turns = 32
 ```
+
+Kimi Code 会员与 Kimi 开放平台属于独立账户和计费体系，Key、端点与额度互不通用。Profile 名称必须显式区分，Doctor 和真实工作流不得根据 401 自动把同一密钥重试到另一套端点。
 
 ### 6.3 秘密
 

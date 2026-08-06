@@ -15,12 +15,14 @@
 
 GitHub Actions 的 `Provider 实机 Smoke` 仅支持 `workflow_dispatch`。选择：
 
-- `provider`：`deepseek` 或 `kimi`；
+- `provider`：`deepseek`、`kimi-code` 或 `kimi-platform`；
 - `suite`：`readonly` 或 `m1-coding`。
 
 `m1-coding` 在 `macos-latest` 和 `windows-latest` 分别执行 `evals/coding/smoke.json` 的 5 个任务。工作流绑定 `provider-smoke` Environment；建议配置 required reviewers，并在 Environment 中保存对应 Provider Secret。
 
 该套件包含付费网络请求，不在普通 push/PR CI 中自动执行，也不允许同一 Provider 与套件并发运行。
+
+Kimi Code 会员与 Kimi 开放平台使用不同的 Environment Secret、端点和额度：前者使用 `KIMI_CODE_API_KEY`，后者使用 `MOONSHOT_API_KEY`。工作流不自动猜测密钥类型，也不会在认证失败后把同一密钥转发到另一套平台。
 
 ## 3. 上下文、权限与事实边界
 
@@ -63,3 +65,11 @@ M1 仍然没有 EventStore、Artifact Store 或 session resume。工作流日志
 只有同一审核提交上的 macOS 与 Windows `m1-coding` Job 均成功，才能记录“各平台 5 个真实 Provider fixture 任务”。PR 编译通过、只读 smoke 通过或验收入口合并都不能替代这次真实运行。这项记录仍不能替代第一阶段详细设计要求的外部真实仓库任务记录。
 
 运行后应在 P1-12 Beads 记录：commit、Provider、两个 Job URL、任务通过数、未授权副作用数和是否发现密钥泄漏。M1 仍需同时满足第一阶段详细设计中的外部真实仓库任务、连续 20 次 main CI、安全专项与其余出口条件。
+
+## 7. 已记录的真实运行
+
+- 审核提交：`535c10e2e9df4742dd55758869b9eecdb2106543`；
+- DeepSeek `readonly`：[31078797034](https://github.com/Scorpio69t/mengdie-code/actions/runs/31078797034)，macOS/Windows 均通过；
+- DeepSeek `m1-coding`：[31079053820](https://github.com/Scorpio69t/mengdie-code/actions/runs/31079053820)，macOS 5/5、Windows 5/5；
+- 未授权副作用：0；白名单外 diff：0；发现密钥泄漏：否；
+- Kimi 首次 `readonly`：[31078807523](https://github.com/Scorpio69t/mengdie-code/actions/runs/31078807523)，双平台均返回 401。该失败证明旧样例混用了 Kimi Code 会员 Key 与开放平台端点，不能计为 Kimi Provider 通过；后续按显式双 profile 修复并重新验收。
