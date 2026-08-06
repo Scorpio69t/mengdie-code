@@ -32,8 +32,12 @@ func NewTextBroker(reader io.Reader, writer io.Writer) (*TextBroker, error) {
 	if reader == nil || writer == nil {
 		return nil, errors.New("policy: approval input and output are required")
 	}
+	buffered, ok := reader.(*bufio.Reader)
+	if !ok {
+		buffered = bufio.NewReader(reader)
+	}
 	return &TextBroker{
-		reader: bufio.NewReader(reader), writer: writer,
+		reader: buffered, writer: writer,
 		maxBytes: defaultApprovalInputBytes, attempts: defaultApprovalAttempts,
 	}, nil
 }

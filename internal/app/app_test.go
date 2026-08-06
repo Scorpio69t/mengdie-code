@@ -4,6 +4,7 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -51,18 +52,15 @@ model = "test-model"
 
 func TestInteractiveShowsConfiguredModel(t *testing.T) {
 	root := t.TempDir()
-	writeAppConfig(t, root, `
-[profiles.default]
-provider = "openai-compatible"
-model = "deepseek-chat"
-`)
+	writeRuntimeConfig(t, root)
 	application, stdout, _ := newTestApp(t, nil)
+	application.stdin = strings.NewReader("检查项目\n")
 
 	code := application.Run(context.Background(), []string{"--cwd", root}, true)
 	if code != ExitOK {
 		t.Fatalf("Run() code = %d, want %d", code, ExitOK)
 	}
-	for _, want := range append(strings.Split(brand.Mark, "\n"), "openai-compatible:deepseek-chat", root) {
+	for _, want := range append(strings.Split(brand.Mark, "\n"), "openai-compatible:test-model", root, "fake completed", "任务完成") {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("interactive output does not contain %q: %s", want, stdout.String())
 		}
@@ -71,20 +69,145 @@ model = "deepseek-chat"
 
 func TestInteractiveOmitsBannerWhenOutputIsRedirected(t *testing.T) {
 	root := t.TempDir()
-	application, stdout, _ := newTestApp(t, nil)
+	application, stdout, stderr := newTestApp(t, nil)
+	providerConstructed := false
+	application.newProvider = func(config.Profile, string) (provider.Provider, error) {
+		providerConstructed = true
+		return nil, errors.New("must not be called")
+	}
 
 	code := application.Run(context.Background(), []string{"--cwd", root}, false)
-	if code != ExitOK {
-		t.Fatalf("Run() code = %d, want %d", code, ExitOK)
+	if code != ExitInvalidInput {
+		t.Fatalf("Run() code = %d, want %d", code, ExitInvalidInput)
 	}
 	for _, markLine := range strings.Split(brand.Mark, "\n") {
 		if strings.Contains(stdout.String(), markLine) {
 			t.Fatalf("redirected output unexpectedly contains banner line %q: %s", markLine, stdout.String())
 		}
 	}
-	if !strings.Contains(stdout.String(), "当前请使用 mengdie exec 执行有界任务") {
-		t.Fatalf("redirected output = %q", stdout.String())
+	if providerConstructed || stdout.Len() != 0 {
+		t.Fatalf("redirected run constructed provider=%t stdout=%q", providerConstructed, stdout.String())
 	}
+	if !strings.Contains(stderr.String(), "请使用 mengdie exec") {
+		t.Fatalf("redirected stderr = %q", stderr.String())
+	}
+}
+
+func TestInteractiveApprovesEditBeforeExecution(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeConfig(t, root)
+	path := filepath.Join(root, "value.go")
+	if err := os.WriteFile(path, []byte("package fixture\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	application, stdout, _ := newTestApp(t, nil)
+	application.stdin = strings.NewReader("修改 value.go\ny\n")
+	application.newProvider = func(config.Profile, string) (provider.Provider, error) {
+		return &appFakeProvider{responses: []*provider.ChatResponse{
+			appToolResponse("edit", "edit_file", map[string]any{
+				"path": "value.go", "old_text": "return 1", "new_text": "return 2", "expected_replacements": 1,
+			}),
+			{Message: provider.Message{Role: provider.RoleAssistant, Content: "修改完成"}},
+		}}, nil
+	}
+
+	code := application.Run(context.Background(), []string{"--cwd", root}, true)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != ExitOK || !strings.Contains(string(content), "return 2") {
+		t.Fatalf("code=%d content=%q", code, content)
+	}
+	for _, want := range []string{"需要批准", "[y]允许", "修改完成"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("interactive output does not contain %q: %s", want, stdout.String())
+		}
+	}
+}
+
+func TestInteractiveRejectionIsReturnedToModel(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeConfig(t, root)
+	path := filepath.Join(root, "value.go")
+	if err := os.WriteFile(path, []byte("package fixture\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	application, _, _ := newTestApp(t, nil)
+	application.stdin = strings.NewReader("修改 value.go\nn\n")
+	fake := &appFakeProvider{responses: []*provider.ChatResponse{
+		appToolResponse("edit", "edit_file", map[string]any{
+			"path": "value.go", "old_text": "return 1", "new_text": "return 2", "expected_replacements": 1,
+		}),
+		{Message: provider.Message{Role: provider.RoleAssistant, Content: "已尊重拒绝"}},
+	}}
+	application.newProvider = func(config.Profile, string) (provider.Provider, error) { return fake, nil }
+
+	code := application.Run(context.Background(), []string{"--cwd", root}, true)
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != ExitPolicyDenied || strings.Contains(string(content), "return 2") {
+		t.Fatalf("code=%d content=%q", code, content)
+	}
+	if len(fake.requests) != 2 {
+		t.Fatalf("provider requests=%d, want 2", len(fake.requests))
+	}
+	messages := fake.requests[1].Messages
+	if len(messages) == 0 || messages[len(messages)-1].Role != provider.RoleTool || !strings.Contains(messages[len(messages)-1].Content, `"category":"denied"`) {
+		t.Fatalf("rejection was not returned as a tool result: %+v", messages)
+	}
+}
+
+func TestInteractiveApprovesShellBeforeExecution(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeConfig(t, root)
+	application, stdout, _ := newTestApp(t, nil)
+	application.stdin = strings.NewReader("检查 Go 版本\ny\n")
+	application.newProvider = func(config.Profile, string) (provider.Provider, error) {
+		return &appFakeProvider{responses: []*provider.ChatResponse{
+			appToolResponse("shell", "shell", map[string]any{"command": "go version"}),
+			{Message: provider.Message{Role: provider.RoleAssistant, Content: "检查完成"}},
+		}}, nil
+	}
+
+	if code := application.Run(context.Background(), []string{"--cwd", root}, true); code != ExitOK {
+		t.Fatalf("Run() code = %d, want %d", code, ExitOK)
+	}
+	if !strings.Contains(stdout.String(), "[y]允许") || !strings.Contains(stdout.String(), "检查完成") {
+		t.Fatalf("interactive shell output = %q", stdout.String())
+	}
+}
+
+func TestReadInteractiveTaskBoundsAndCancellation(t *testing.T) {
+	tests := []struct {
+		name   string
+		ctx    context.Context
+		input  string
+		isErr  error
+		result string
+	}{
+		{name: "trimmed", ctx: context.Background(), input: "  修复测试  \n", result: "修复测试"},
+		{name: "empty", ctx: context.Background(), input: "   \n", isErr: errInteractiveTaskEmpty},
+		{name: "too large", ctx: context.Background(), input: strings.Repeat("a", maxInteractiveTaskBytes+1) + "\n", isErr: errInteractiveTaskTooLarge},
+		{name: "invalid utf8", ctx: context.Background(), input: string([]byte{0xff, '\n'}), isErr: errInteractiveTaskEncoding},
+		{name: "cancelled", ctx: canceledContext(), input: "不会读取\n", isErr: context.Canceled},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := readInteractiveTask(test.ctx, bufio.NewReader(strings.NewReader(test.input)))
+			if !errors.Is(err, test.isErr) || got != test.result {
+				t.Fatalf("readInteractiveTask()=(%q, %v), want (%q, %v)", got, err, test.result, test.isErr)
+			}
+		})
+	}
+}
+
+func canceledContext() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
 }
 
 func TestExecRunsAgentAndEmitsCompletedEvents(t *testing.T) {
@@ -271,6 +394,9 @@ func writeRuntimeConfig(t *testing.T, root string) {
 provider = "openai-compatible"
 base_url = "https://api.example.com/v1"
 model = "test-model"
+
+[approval]
+allow_commands = []
 `)
 }
 

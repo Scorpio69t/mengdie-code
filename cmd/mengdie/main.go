@@ -38,7 +38,7 @@ func main() {
 		})
 	}()
 
-	code := runContext(operationCtx, os.Args[1:], os.Stdout, os.Stderr, isTerminal(os.Stdout))
+	code := runContext(operationCtx, os.Args[1:], os.Stdout, os.Stderr, isTerminal(os.Stdin) && isTerminal(os.Stdout))
 	stopMonitor()
 	signal.Stop(signals)
 	os.Exit(code)
