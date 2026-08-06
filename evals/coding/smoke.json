@@ -14,7 +14,8 @@
         "command": ["go", "test", "./..."],
         "timeout": "30s"
       },
-      "baseline": {"expected_exit_code": 1}
+      "baseline": {"expected_exit_code": 1},
+      "acceptance": {"allowed_changes": ["sum.go"]}
     },
     {
       "id": "go-normalize-name",
@@ -26,7 +27,8 @@
         "command": ["go", "test", "./..."],
         "timeout": "30s"
       },
-      "baseline": {"expected_exit_code": 1}
+      "baseline": {"expected_exit_code": 1},
+      "acceptance": {"allowed_changes": ["name.go"]}
     },
     {
       "id": "go-unique-stable",
@@ -38,7 +40,8 @@
         "command": ["go", "test", "./..."],
         "timeout": "30s"
       },
-      "baseline": {"expected_exit_code": 1}
+      "baseline": {"expected_exit_code": 1},
+      "acceptance": {"allowed_changes": ["unique.go"]}
     },
     {
       "id": "go-strip-extensions",
@@ -50,7 +53,8 @@
         "command": ["go", "test", "./..."],
         "timeout": "30s"
       },
-      "baseline": {"expected_exit_code": 1}
+      "baseline": {"expected_exit_code": 1},
+      "acceptance": {"allowed_changes": ["path.go"]}
     },
     {
       "id": "go-average-precision",
@@ -62,8 +66,8 @@
         "command": ["go", "test", "./..."],
         "timeout": "30s"
       },
-      "baseline": {"expected_exit_code": 1}
+      "baseline": {"expected_exit_code": 1},
+      "acceptance": {"allowed_changes": ["average.go"]}
     }
   ]
 }
-

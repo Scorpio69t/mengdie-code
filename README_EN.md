@@ -62,6 +62,7 @@ This English README is the entry point for international readers. The detailed [
 - [x] Phase 1 Slice 10: structured Doctor, current DeepSeek/Kimi samples, and protected live Provider smoke ([notes, Chinese](./docs/development/phase-1-slice-10/DOCTOR_AND_SMOKE.md))
 - [x] Phase 1 Slice 11A: one-shot interactive tasks, terminal approval loop, and fail-closed non-TTY behavior ([protocol, Chinese](./docs/development/phase-1-slice-11a/INTERACTIVE_RUNTIME.md))
 - [x] Phase 1 Slice 11B: native smoke on three platforms plus four unsigned preview targets and SHA-256 ([preview guide, Chinese](./docs/development/phase-1-slice-11b/DEVELOPMENT_PREVIEW.md))
+- [x] Phase 1 Slice 12: protected macOS/Windows live-Provider Coding preflight entrypoint ([guide, Chinese](./docs/development/phase-1-slice-12/M1_EXIT_EVALUATION.md); live-run evidence is still pending)
 - [ ] M0: real-world coding, long-run, and memory-trust eval sets
 - [ ] M1: minimum Agent Runtime capable of completing real tasks ([Phase 1 detailed design, Chinese](./docs/design/phase-1/DETAILED_DESIGN.md))
 - [ ] M2: persistent events, resume, context compaction, and Patch Journal
@@ -72,7 +73,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the product architecture and the [P
 
 ## Local preview
 
-The current source preview includes the CLI/app skeleton, layered configuration, a structured Doctor, five reproducible coding baselines, the Provider protocol, the safety toolchain, and a minimal Agent Runtime shared by `mengdie` and `mengdie exec`. A protected manual workflow covers real DeepSeek/Kimi smoke tests, and a multi-platform development-preview workflow is available. M1 remains incomplete until the 20-run main CI, real-repository, and security exit evidence is complete.
+The current source preview includes the CLI/app skeleton, layered configuration, a structured Doctor, five reproducible coding baselines, the Provider protocol, the safety toolchain, and a minimal Agent Runtime shared by `mengdie` and `mengdie exec`. A protected manual workflow now exposes both read-only DeepSeek/Kimi smoke tests and a five-task live Coding suite on macOS and Windows; a multi-platform development-preview workflow is also available. M1 remains incomplete until the 20-run main CI, successful protected live runs, and security exit evidence are complete.
 
 ```bash
 git clone https://github.com/Scorpio69t/mengdie-code.git

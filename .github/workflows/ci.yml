@@ -67,3 +67,5 @@ jobs:
       - name: 运行测试
         run: go test ./...
 
+      - name: 离线验证真实 Provider 验收 Harness
+        run: go test -tags=liveprovider ./internal/app -run '^(TestInspectCodingEvidenceUsesSuccessfulToolEvents|TestEnvironmentWithoutRemovesCredentialCaseInsensitively|TestValidateWorkspaceChangesRejectsUnrelatedDiff)$' -count=1

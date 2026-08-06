@@ -11,9 +11,21 @@ on:
         options:
           - deepseek
           - kimi
+      suite:
+        description: 要运行的真实 Provider 验收套件
+        required: true
+        default: readonly
+        type: choice
+        options:
+          - readonly
+          - m1-coding
 
 permissions:
   contents: read
+
+concurrency:
+  group: provider-smoke-${{ inputs.provider }}-${{ inputs.suite }}
+  cancel-in-progress: false
 
 jobs:
   deepseek:
@@ -27,6 +39,7 @@ jobs:
           - macos-latest
           - windows-latest
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     env:
       MENGDIE_LIVE_SMOKE: "1"
       MENGDIE_LIVE_BASE_URL: https://api.deepseek.com
@@ -51,7 +64,12 @@ jobs:
           fi
 
       - name: 运行真实只读工具闭环
+        if: inputs.suite == 'readonly'
         run: go test -tags=liveprovider ./internal/app -run '^TestLiveProviderCompletesReadOnlyToolTask$' -count=1 -v
+
+      - name: 运行 M1 真实 Provider Coding 预验收
+        if: inputs.suite == 'm1-coding'
+        run: go test -tags=liveprovider ./internal/app -run '^TestLiveProviderCompletesCodingTaskSuite$' -count=1 -timeout=50m -v
 
   kimi:
     if: inputs.provider == 'kimi'
@@ -64,6 +82,7 @@ jobs:
           - macos-latest
           - windows-latest
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     env:
       MENGDIE_LIVE_SMOKE: "1"
       MENGDIE_LIVE_BASE_URL: https://api.moonshot.ai/v1
@@ -88,4 +107,9 @@ jobs:
           fi
 
       - name: 运行真实只读工具闭环
+        if: inputs.suite == 'readonly'
         run: go test -tags=liveprovider ./internal/app -run '^TestLiveProviderCompletesReadOnlyToolTask$' -count=1 -v
+
+      - name: 运行 M1 真实 Provider Coding 预验收
+        if: inputs.suite == 'm1-coding'
+        run: go test -tags=liveprovider ./internal/app -run '^TestLiveProviderCompletesCodingTaskSuite$' -count=1 -timeout=50m -v
