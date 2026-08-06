@@ -495,6 +495,15 @@ func doctorPath(path string, loaded config.Loaded) string {
 }
 
 func relativeWithin(root, path string) (string, bool) {
+	resolvedRoot, rootErr := filepath.EvalSymlinks(filepath.Clean(root))
+	resolvedPath, pathErr := filepath.EvalSymlinks(filepath.Clean(path))
+	if rootErr == nil && pathErr == nil {
+		return lexicalRelativeWithin(resolvedRoot, resolvedPath)
+	}
+	return lexicalRelativeWithin(root, path)
+}
+
+func lexicalRelativeWithin(root, path string) (string, bool) {
 	relative, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
 	if err != nil || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return "", false
