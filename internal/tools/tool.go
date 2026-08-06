@@ -31,6 +31,9 @@ const (
 	EffectWrite   Effect = "write"
 	EffectExecute Effect = "execute"
 	EffectNetwork Effect = "network"
+	// EffectState changes only the current in-memory run state. It grants no
+	// filesystem, process, network, or cross-run authority.
+	EffectState Effect = "state"
 )
 
 // ToolSpec is the static contract of a tool, suitable for provider tool
@@ -88,6 +91,8 @@ type ExecEnv struct {
 	// Environment is re-read when materializing an approved shell call. Nil
 	// uses os.Environ; hashes in CanonicalArg reject approval-time changes.
 	Environment []string
+	// TodoWriter is the run-scoped destination used only by write_todos.
+	TodoWriter TodoWriter
 }
 
 // PreviewKind classifies what Approval should display.
@@ -197,7 +202,7 @@ func (c *PreparedCall) Validate() error {
 	seen := make(map[Effect]struct{}, len(c.Effects))
 	for _, effect := range c.Effects {
 		switch effect {
-		case EffectRead, EffectWrite, EffectExecute, EffectNetwork:
+		case EffectRead, EffectWrite, EffectExecute, EffectNetwork, EffectState:
 		default:
 			return fmt.Errorf("prepared call: unknown effect %q", effect)
 		}

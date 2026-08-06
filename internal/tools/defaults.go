@@ -13,5 +13,6 @@ func DefaultTools() []Tool {
 		NewEditFile(),
 		NewWriteFile(),
 		NewShell(),
+		NewWriteTodos(),
 	}
 }

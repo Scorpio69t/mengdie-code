@@ -45,6 +45,18 @@ func (b *TextBroker) Decide(ctx context.Context, request ApprovalRequest) (Appro
 		if err := ctx.Err(); err != nil {
 			return ApprovalResponse{}, err
 		}
+		if attempt == 0 {
+			if title := strings.TrimSpace(request.Preview.Title); title != "" {
+				if _, err := fmt.Fprintln(b.writer, title); err != nil {
+					return ApprovalResponse{}, fmt.Errorf("write approval preview title: %w", err)
+				}
+			}
+			if body := strings.TrimSpace(request.Preview.Body); body != "" {
+				if _, err := fmt.Fprintln(b.writer, body); err != nil {
+					return ApprovalResponse{}, fmt.Errorf("write approval preview: %w", err)
+				}
+			}
+		}
 		if _, err := fmt.Fprintf(b.writer, "%s [y]允许 / [n]拒绝 / [e]编辑后重试（风险：%s）: ", request.Prompt, request.Risk); err != nil {
 			return ApprovalResponse{}, fmt.Errorf("write approval prompt: %w", err)
 		}

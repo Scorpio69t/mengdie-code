@@ -55,6 +55,22 @@ func Load(options Options) (Loaded, error) {
 	if err != nil {
 		return Loaded{}, err
 	}
+	workingDir := options.WorkDir
+	if strings.TrimSpace(workingDir) == "" {
+		workingDir, err = os.Getwd()
+		if err != nil {
+			return Loaded{}, fmt.Errorf("get working directory: %w", err)
+		}
+	}
+	workingDir, err = filepath.Abs(workingDir)
+	if err != nil {
+		return Loaded{}, fmt.Errorf("resolve working directory: %w", err)
+	}
+	if info, statErr := os.Stat(workingDir); statErr == nil && !info.IsDir() {
+		workingDir = filepath.Dir(workingDir)
+	} else if statErr != nil {
+		return Loaded{}, fmt.Errorf("stat working directory: %w", statErr)
+	}
 	userDir := options.UserConfigDir
 	if userDir == "" {
 		userDir, err = os.UserConfigDir()
@@ -66,6 +82,7 @@ func Load(options Options) (Loaded, error) {
 	loaded := Loaded{
 		Config:            Defaults(),
 		ProjectRoot:       root,
+		WorkingDir:        filepath.Clean(workingDir),
 		UserConfigPath:    filepath.Join(userDir, "mengdie", "config.toml"),
 		ProjectConfigPath: filepath.Join(root, ".mengdie", "config.toml"),
 	}

@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/Scorpio69t/mengdie-code/internal/brand"
+	"github.com/Scorpio69t/mengdie-code/internal/config"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
+	"github.com/Scorpio69t/mengdie-code/internal/provider"
 )
 
 func TestDoctorJSONDoesNotRevealCredential(t *testing.T) {
@@ -85,19 +87,20 @@ func TestInteractiveOmitsBannerWhenOutputIsRedirected(t *testing.T) {
 	}
 }
 
-func TestExecReportsUnavailableWithoutPretendingSuccess(t *testing.T) {
+func TestExecRunsAgentAndEmitsCompletedEvents(t *testing.T) {
 	root := t.TempDir()
+	writeRuntimeConfig(t, root)
 	application, stdout, _ := newTestApp(t, nil)
 
 	code := application.Run(context.Background(), []string{"exec", "--cwd", root, "--json", "修复测试"}, false)
-	if code != ExitRunError {
-		t.Fatalf("Run() code = %d, want %d", code, ExitRunError)
+	if code != ExitOK {
+		t.Fatalf("Run() code = %d, want %d", code, ExitOK)
 	}
 	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	if len(lines) != 2 {
+	if len(lines) != 4 {
 		t.Fatalf("exec output has %d lines: %q", len(lines), stdout.String())
 	}
-	wantKinds := []events.Kind{events.KindRunStarted, events.KindRunFailed}
+	wantKinds := []events.Kind{events.KindRunStarted, events.KindMessageDelta, events.KindMessageCompleted, events.KindRunCompleted}
 	for i, line := range lines {
 		var event events.Event
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
@@ -111,24 +114,67 @@ func TestExecReportsUnavailableWithoutPretendingSuccess(t *testing.T) {
 
 func TestExecHumanOutputUsesEventRenderer(t *testing.T) {
 	root := t.TempDir()
+	writeRuntimeConfig(t, root)
 	application, stdout, stderr := newTestApp(t, nil)
 
 	code := application.Run(context.Background(), []string{"exec", "--cwd", root, "修复测试"}, true)
-	if code != ExitRunError {
-		t.Fatalf("Run() code = %d, want %d", code, ExitRunError)
+	if code != ExitOK {
+		t.Fatalf("Run() code = %d, want %d", code, ExitOK)
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
-	for _, want := range []string{"开始任务", "任务失败 [runtime_unavailable]", "Agent Runtime 尚未实现"} {
+	for _, want := range []string{"开始任务", "fake completed", "任务完成"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("stderr does not contain %q: %s", want, stderr.String())
 		}
 	}
 }
 
+func TestExecRequiresExplicitEditAuthorization(t *testing.T) {
+	for name, allow := range map[string]bool{"denied": false, "allowed": true} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeRuntimeConfig(t, root)
+			path := filepath.Join(root, "value.go")
+			if err := os.WriteFile(path, []byte("package fixture\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			application, _, _ := newTestApp(t, nil)
+			application.newProvider = func(config.Profile, string) (provider.Provider, error) {
+				return &appFakeProvider{responses: []*provider.ChatResponse{
+					appToolResponse("edit", "edit_file", map[string]any{
+						"path": "value.go", "old_text": "return 1", "new_text": "return 2", "expected_replacements": 1,
+					}),
+					{Message: provider.Message{Role: provider.RoleAssistant, Content: "处理完成"}},
+				}}, nil
+			}
+			args := []string{"exec", "--cwd", root}
+			if allow {
+				args = append(args, "--allow-edit")
+			}
+			args = append(args, "修改")
+			code := application.Run(context.Background(), args, false)
+			wantCode := ExitPolicyDenied
+			wantContent := "return 1"
+			if allow {
+				wantCode = ExitOK
+				wantContent = "return 2"
+			}
+			content, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if code != wantCode || !strings.Contains(string(content), wantContent) {
+				t.Fatalf("code=%d want=%d content=%q", code, wantCode, content)
+			}
+		})
+	}
+}
+
 func TestExecCanceledContextUsesStableExitCodeAndDoesNotExposeTask(t *testing.T) {
 	root := t.TempDir()
+	writeRuntimeConfig(t, root)
 	application, stdout, stderr := newTestApp(t, nil)
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -149,6 +195,22 @@ func TestUnknownCommandIsInvalidInput(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "未知命令") {
 		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestCommandPrefixFlagTreatsCommaAsTokenSeparator(t *testing.T) {
+	var flag commandPrefixFlag
+	if err := flag.Set("go,test"); err != nil {
+		t.Fatal(err)
+	}
+	if got := flag.Values(); len(got) != 1 || got[0] != "go test" {
+		t.Fatalf("Values()=%v", got)
+	}
+	if err := flag.Set("git status"); err != nil {
+		t.Fatal(err)
+	}
+	if got := flag.Values(); len(got) != 2 || got[1] != "git status" {
+		t.Fatalf("Values()=%v", got)
 	}
 }
 
@@ -190,11 +252,59 @@ func newTestApp(t *testing.T, environment map[string]string) (*App, *bytes.Buffe
 		return time.Date(2026, 7, 30, 9, 0, 0, 0, time.UTC)
 	}
 	application.newRunID = func() (string, error) { return "run-test", nil }
+	application.newProvider = func(config.Profile, string) (provider.Provider, error) {
+		return &appFakeProvider{responses: []*provider.ChatResponse{{
+			Message: provider.Message{Role: provider.RoleAssistant, Content: "fake completed"},
+		}}}, nil
+	}
 	application.lookupEnv = func(key string) (string, bool) {
 		value, ok := environment[key]
 		return value, ok
 	}
 	return application, stdout, stderr
+}
+
+func writeRuntimeConfig(t *testing.T, root string) {
+	t.Helper()
+	writeAppConfig(t, root, `
+[profiles.default]
+provider = "openai-compatible"
+base_url = "https://api.example.com/v1"
+model = "test-model"
+`)
+}
+
+type appFakeProvider struct {
+	responses []*provider.ChatResponse
+	index     int
+}
+
+func (*appFakeProvider) ID() string { return "fake" }
+
+func (*appFakeProvider) Capabilities(context.Context, string) (provider.Capabilities, error) {
+	return provider.Capabilities{ToolCalling: true, MaxContextTokens: 64_000}, nil
+}
+
+func (fake *appFakeProvider) Stream(ctx context.Context, _ provider.ChatRequest, sink provider.StreamSink) (*provider.ChatResponse, error) {
+	if fake.index >= len(fake.responses) {
+		return nil, errors.New("fake responses exhausted")
+	}
+	response := fake.responses[fake.index]
+	fake.index++
+	if response.Message.Content != "" {
+		if err := sink.OnEvent(ctx, provider.StreamEvent{Kind: provider.StreamTextDelta, Text: response.Message.Content}); err != nil {
+			return nil, err
+		}
+	}
+	return response, nil
+}
+
+func appToolResponse(id, name string, arguments any) *provider.ChatResponse {
+	raw, _ := json.Marshal(arguments)
+	return &provider.ChatResponse{Message: provider.Message{
+		Role:      provider.RoleAssistant,
+		ToolCalls: []provider.ToolCall{{ID: id, Type: "function", Name: name, Arguments: raw}},
+	}}
 }
 
 func writeAppConfig(t *testing.T, root, content string) {

@@ -73,6 +73,7 @@ func TestEngineDefaultMatrix(t *testing.T) {
 		{"headless sensitive read", ModeHeadless, []tools.Effect{tools.EffectRead}, true, DecisionDeny},
 		{"headless write", ModeHeadless, []tools.Effect{tools.EffectWrite}, false, DecisionDeny},
 		{"headless execute", ModeHeadless, []tools.Effect{tools.EffectExecute}, false, DecisionDeny},
+		{"headless run state", ModeHeadless, []tools.Effect{tools.EffectState}, false, DecisionAllow},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -83,6 +84,44 @@ func TestEngineDefaultMatrix(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEngineCommandPrefixRulesAreTokenBoundedAndRejectShellChaining(t *testing.T) {
+	root := testRoot(t)
+	engine := testEngine(t, root, ModeHeadless, func(options *Options) {
+		options.CLI = []Rule{{
+			Name: "go-test", Tool: "shell", Effects: []tools.Effect{tools.EffectExecute},
+			CommandPrefixes: []string{"go test"}, Decision: DecisionAllow,
+		}}
+	})
+	for command, want := range map[string]Decision{
+		"go test ./...":             DecisionAllow,
+		"go   test ./internal/app":  DecisionAllow,
+		"go testing ./...":          DecisionDeny,
+		"go test ./... && echo bad": DecisionDeny,
+		"go test ./...; echo bad":   DecisionDeny,
+	} {
+		t.Run(command, func(t *testing.T) {
+			call, err := tools.PrepareCall("call", "shell", mustPolicyJSON(t, map[string]any{
+				"command": command,
+			}), []tools.Effect{tools.EffectExecute}, nil, tools.Preview{}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := engine.Evaluate(call); got.Decision != want {
+				t.Fatalf("decision=%q rule=%q want=%q", got.Decision, got.Rule, want)
+			}
+		})
+	}
+}
+
+func mustPolicyJSON(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
 }
 
 func TestEngineRulePriority(t *testing.T) {
