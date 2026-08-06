@@ -65,7 +65,7 @@ This English README is the entry point for international readers. The detailed [
 - [x] Phase 1 Slice 12: protected macOS/Windows live-Provider Coding preflight ([guide, Chinese](./docs/development/phase-1-slice-12/M1_EXIT_EVALUATION.md); DeepSeek passed 10/10 across both platforms)
 - [ ] M0: real-world coding, long-run, and memory-trust eval sets
 - [ ] M1: minimum Agent Runtime capable of completing real tasks ([Phase 1 detailed design, Chinese](./docs/design/phase-1/DETAILED_DESIGN.md))
-- [ ] M2: persistent events, resume, context compaction, and Patch Journal
+- [ ] M2: persistent events, resume, context compaction, and Patch Journal ([Phase 2 detailed design, Chinese](./docs/design/phase-2/DETAILED_DESIGN.md))
 - [ ] M3: auditable, trustworthy memory
 - [ ] M4: proposal-first reflection
 

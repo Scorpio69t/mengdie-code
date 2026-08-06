@@ -91,7 +91,7 @@ mengdie memory forget <id>
 - [x] 第一阶段 Slice 12：macOS/Windows 受保护的真实 Provider Coding 预验收（[验收说明](./docs/development/phase-1-slice-12/M1_EXIT_EVALUATION.md)，DeepSeek 双平台 10/10 已通过）
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
-- [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal
+- [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal（[第二阶段详细设计](./docs/design/phase-2/DETAILED_DESIGN.md)）
 - [ ] M3：可审计的可信记忆
 - [ ] M4：默认只生成提案的复盘机制
 

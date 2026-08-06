@@ -36,8 +36,8 @@ MengDie Code 不用“依赖越多”证明现代化。现代化意味着：
 | HTTP / SSE | `net/http`、`bufio.Reader` | 已确定；便于精确控制国内兼容端点与流式错误 |
 | 结构化日志 | `log/slog` | 已确定；标准库、结构化、可替换 Handler |
 | TOML | [`pelletier/go-toml/v2`](https://github.com/pelletier/go-toml) | P1-01 候选；成熟且 v2 API 清晰，需先做严格解析测试 |
-| 完整 TUI | [`charmbracelet/bubbletea`](https://github.com/charmbracelet/bubbletea) + Lip Gloss | 保留候选；M1 先用简单 renderer，只有交互复杂度达到阈值才引入 |
-| SQLite | [`modernc-org/sqlite`](https://github.com/modernc-org/sqlite) | M2 首选候选；纯 Go 有利于 macOS/Windows 单二进制，采用前验证体积与性能 |
+| 完整 TUI | [`charm.land/bubbletea/v2`](https://github.com/charmbracelet/bubbletea) + Bubbles v2 + Lip Gloss v2 | M2 首选候选；稳定 v2 API、维护活跃，在 EventStore/恢复事实形成后引入；采用前验证中文宽度、macOS/Windows 终端、无颜色与非 TTY 降级 |
+| SQLite | [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) | M2 首选候选；`database/sql` 与纯 Go 有利于 macOS/Windows 单二进制，采用前验证四目标构建、WAL、故障恢复、体积、性能、许可证与漏洞；`ncruces/go-sqlite3` 仅作同等门禁备选 |
 | 系统凭据 | OS 原生适配器，评估 [`zalando/go-keyring`](https://github.com/zalando/go-keyring) | M1 小版本候选；必须验证 Keychain 与 Credential Manager 的失败语义 |
 | 终端能力 | `golang.org/x/term` | 需要 TTY、尺寸或安全输入时采用，避免自行维护平台探测 |
 | Windows 进程树 | [`golang.org/x/sys/windows`](https://pkg.go.dev/golang.org/x/sys/windows) v0.47.0 | P1-08 已采用；Go 官方维护、BSD-3-Clause、无新增传递依赖且无 CGO，只在 Windows 构建中封装 Job Object API，领域层不暴露其类型 |

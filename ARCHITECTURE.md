@@ -824,6 +824,8 @@ mengdie/
 
 ### M2 · 值得信任（第 5–7 周）
 
+详细事实模型、恢复状态机、TUI 边界、工作切片与验收方案见 [`docs/design/phase-2/DETAILED_DESIGN.md`](./docs/design/phase-2/DETAILED_DESIGN.md)。
+
 交付：
 
 - SQLite EventStore 与 Snapshot；
