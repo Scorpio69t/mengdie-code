@@ -1,0 +1,152 @@
+name: 开发预览
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: development-preview-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PREVIEW_VERSION: 0.1.0-dev.${{ github.run_number }}
+
+jobs:
+  native-smoke:
+    name: 原生 smoke · ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+          - ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 构建并运行版本与 Doctor
+        shell: bash
+        run: |
+          set -euo pipefail
+          extension=""
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            extension=".exe"
+          fi
+          build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          binary="./.preview-smoke/mengdie${extension}"
+          mkdir -p .preview-smoke
+          go build \
+            -trimpath \
+            -buildvcs=false \
+            -ldflags "-s -w -X main.version=${PREVIEW_VERSION} -X main.commit=${GITHUB_SHA} -X main.buildDate=${build_date}" \
+            -o "$binary" \
+            ./cmd/mengdie
+
+          "$binary" version > .preview-smoke/version.txt
+          grep -F "MengDie Code ${PREVIEW_VERSION}" .preview-smoke/version.txt
+          grep -F "commit ${GITHUB_SHA}" .preview-smoke/version.txt
+
+          "$binary" doctor --offline --json --cwd . > .preview-smoke/doctor.json
+          grep -F "\"version\":\"${PREVIEW_VERSION}\"" .preview-smoke/doctor.json
+          grep -F "\"commit\":\"${GITHUB_SHA}\"" .preview-smoke/doctor.json
+
+  build:
+    name: 构建 · ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            goos: darwin
+            goarch: arm64
+            extension: ""
+          - target: darwin-amd64
+            goos: darwin
+            goarch: amd64
+            extension: ""
+          - target: windows-amd64
+            goos: windows
+            goarch: amd64
+            extension: .exe
+          - target: linux-amd64
+            goos: linux
+            goarch: amd64
+            extension: ""
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 生成 unsigned 开发预览
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+          BINARY_EXTENSION: ${{ matrix.extension }}
+        run: |
+          set -euo pipefail
+          root="$PWD/.preview-build"
+          stage="$root/stage"
+          dist="$root/dist"
+          base="mengdie-${PREVIEW_VERSION}-${TARGET}"
+          binary="$stage/mengdie${BINARY_EXTENSION}"
+          build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          mkdir -p "$stage" "$dist"
+
+          CGO_ENABLED=0 GOOS="$TARGET_GOOS" GOARCH="$TARGET_GOARCH" go build \
+            -trimpath \
+            -buildvcs=false \
+            -ldflags "-s -w -X main.version=${PREVIEW_VERSION} -X main.commit=${GITHUB_SHA} -X main.buildDate=${build_date}" \
+            -o "$binary" \
+            ./cmd/mengdie
+
+          go version -m "$binary" > "$dist/${base}.build-info.txt"
+          grep -F "CGO_ENABLED=0" "$dist/${base}.build-info.txt"
+          grep -F "GOOS=${TARGET_GOOS}" "$dist/${base}.build-info.txt"
+          grep -F "GOARCH=${TARGET_GOARCH}" "$dist/${base}.build-info.txt"
+
+          printf '{\n  "schema_version": 1,\n  "name": "mengdie",\n  "version": "%s",\n  "commit": "%s",\n  "build_date": "%s",\n  "goos": "%s",\n  "goarch": "%s",\n  "cgo_enabled": false,\n  "unsigned": true\n}\n' \
+            "$PREVIEW_VERSION" "$GITHUB_SHA" "$build_date" "$TARGET_GOOS" "$TARGET_GOARCH" \
+            > "$stage/metadata.json"
+
+          if [[ "$TARGET_GOOS" == "windows" ]]; then
+            archive="$dist/${base}.zip"
+            (cd "$stage" && zip -q "$archive" "mengdie${BINARY_EXTENSION}" metadata.json)
+          else
+            archive="$dist/${base}.tar.gz"
+            (cd "$stage" && tar -czf "$archive" mengdie metadata.json)
+          fi
+
+          archive_name="$(basename "$archive")"
+          (cd "$dist" && sha256sum "$archive_name" > "${archive_name}.sha256")
+          (cd "$dist" && sha256sum -c "${archive_name}.sha256")
+
+      - name: 上传开发预览
+        uses: actions/upload-artifact@v7
+        with:
+          name: mengdie-${{ env.PREVIEW_VERSION }}-${{ matrix.target }}
+          path: .preview-build/dist/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
