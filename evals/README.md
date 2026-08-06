@@ -16,5 +16,5 @@ go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 - `fixture_root` 相对 manifest 所在目录解析。
 - 每个 `fixture` 必须位于 `fixture_root` 内，禁止 `..` 逃逸。
 - `verify.command` 是 argv 数组，不经过 shell 插值。
+- `acceptance.allowed_changes` 使用相对工作区的 `/` 路径；真实 Agent 预验收只接受白名单内 diff，修改测试、依赖文件或创建未声明文件都会失败。
 - baseline 输出是稳定 JSON，可由 CI 或后续对比工具消费。
-

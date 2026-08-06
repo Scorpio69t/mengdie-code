@@ -45,6 +45,22 @@ func TestResolveFixtureRejectsEscape(t *testing.T) {
 	}
 }
 
+func TestManifestRejectsUnsafeAllowedChange(t *testing.T) {
+	manifest := Manifest{
+		SchemaVersion: SchemaVersion,
+		ID:            "unsafe-change",
+		FixtureRoot:   "fixtures",
+		Tasks: []Task{{
+			ID: "task", Title: "Task", Prompt: "Fix it", Fixture: "task",
+			Verify:     VerifySpec{Command: []string{"go", "test"}},
+			Acceptance: AcceptanceSpec{AllowedChanges: []string{"../outside.go"}},
+		}},
+	}
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("Validate() error = nil, want unsafe allowed change error")
+	}
+}
+
 func TestRunBaseline(t *testing.T) {
 	root := t.TempDir()
 	fixtureRoot := filepath.Join(root, "fixtures")

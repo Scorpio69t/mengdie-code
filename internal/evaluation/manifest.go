@@ -28,13 +28,14 @@ type Manifest struct {
 
 // Task describes one isolated repository state and its verification command.
 type Task struct {
-	ID       string       `json:"id"`
-	Title    string       `json:"title"`
-	Prompt   string       `json:"prompt"`
-	Fixture  string       `json:"fixture"`
-	Tags     []string     `json:"tags,omitempty"`
-	Verify   VerifySpec   `json:"verify"`
-	Baseline BaselineSpec `json:"baseline"`
+	ID         string         `json:"id"`
+	Title      string         `json:"title"`
+	Prompt     string         `json:"prompt"`
+	Fixture    string         `json:"fixture"`
+	Tags       []string       `json:"tags,omitempty"`
+	Verify     VerifySpec     `json:"verify"`
+	Baseline   BaselineSpec   `json:"baseline"`
+	Acceptance AcceptanceSpec `json:"acceptance,omitempty"`
 }
 
 // VerifySpec is an argv-based command. Shell interpolation is never applied.
@@ -46,6 +47,12 @@ type VerifySpec struct {
 // BaselineSpec defines the expected verifier state before an agent edits it.
 type BaselineSpec struct {
 	ExpectedExitCode int `json:"expected_exit_code"`
+}
+
+// AcceptanceSpec constrains the project diff that an evaluated Agent may
+// produce. Paths use slash-separated workspace-relative syntax.
+type AcceptanceSpec struct {
+	AllowedChanges []string `json:"allowed_changes,omitempty"`
 }
 
 // LoadManifest reads and strictly validates one manifest.
@@ -134,6 +141,37 @@ func (t Task) validate() error {
 	}
 	if _, err := t.Verify.duration(); err != nil {
 		return fmt.Errorf("task %q: %w", t.ID, err)
+	}
+	seenChanges := make(map[string]struct{}, len(t.Acceptance.AllowedChanges))
+	for _, path := range t.Acceptance.AllowedChanges {
+		if err := validateWorkspaceRelativePath(path); err != nil {
+			return fmt.Errorf("task %q acceptance.allowed_changes: %w", t.ID, err)
+		}
+		if _, exists := seenChanges[path]; exists {
+			return fmt.Errorf("task %q acceptance.allowed_changes contains duplicate %q", t.ID, path)
+		}
+		seenChanges[path] = struct{}{}
+	}
+	return nil
+}
+
+func validateWorkspaceRelativePath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("path cannot be empty")
+	}
+	if strings.Contains(path, "\\") {
+		return fmt.Errorf("path %q must use forward slashes", path)
+	}
+	converted := filepath.FromSlash(path)
+	cleaned := filepath.Clean(converted)
+	if filepath.IsAbs(cleaned) || filepath.VolumeName(cleaned) != "" {
+		return fmt.Errorf("path %q must be workspace-relative", path)
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path %q escapes the workspace", path)
+	}
+	if filepath.ToSlash(cleaned) != path {
+		return fmt.Errorf("path %q is not canonical", path)
 	}
 	return nil
 }

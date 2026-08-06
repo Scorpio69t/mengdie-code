@@ -117,23 +117,27 @@ mengdie exec --json "检查当前项目"
 - `MOONSHOT_API_KEY`；
 - 建议启用 required reviewers，避免误触发付费调用。
 
-触发时选择 DeepSeek 或 Kimi；工作流在 `macos-latest` 与 `windows-latest` 各执行一次。测试还要求 Go build tag `liveprovider` 和 `MENGDIE_LIVE_SMOKE=1`，形成双重 opt-in。
+触发时选择 DeepSeek 或 Kimi，并选择 `readonly` 或 `m1-coding` 套件；工作流在 `macos-latest` 与 `windows-latest` 各执行一次。测试还要求 Go build tag `liveprovider` 和 `MENGDIE_LIVE_SMOKE=1`，形成双重 opt-in。同一 Provider 与套件不会并发运行，避免重复付费调用。
 
-真实 smoke 创建临时项目和固定标记文件，要求 Agent 必须调用 `read_file` 后完成任务。它不授予 edit/write/shell，限制为 8 轮，并验证：
+`readonly` 创建临时项目和固定标记文件，要求 Agent 必须调用 `read_file` 后完成任务。它不授予 edit/write/shell，限制为 8 轮，并验证：
 
 - 运行完成且确实提出 `read_file`；
 - 固定文件未被修改；
 - stdout/stderr 不包含 Provider 密钥。
 
+`m1-coding` 是 M1 出口预验收入口。它在每个平台依次隔离复制 `evals/coding/smoke.json` 的 5 个任务，只向本次 run 授予项目内 edit/write 和 `go test` 命令前缀，并要求 Agent 完成读取、修改和测试。每项任务最终由独立 argv verifier 再执行 manifest 声明的命令；模型总结、`run.completed` 或一次成功工具调用都不能替代后置测试。manifest 还声明唯一允许变化的实现文件，前后哈希会拒绝测试篡改、依赖修改和未声明新文件。验收同时要求事件中出现成功的 `read_file`、edit/write、shell 和 `run.completed`，且不得出现交互审批请求或密钥泄漏。
+
+该套件会产生多次真实 Provider 请求，默认不会在 push 或 pull request 中运行。只有受保护工作流在 macOS 与 Windows 的 10 个任务全部成功，运行 URL 和 commit 才能计入 M1 出口证据；“入口代码已合并”不等于“真实验收已通过”。详细边界见 [M1 出口验收说明](../phase-1-slice-12/M1_EXIT_EVALUATION.md)。
+
 普通 `push` 和 `pull_request` 不会执行外部或付费 Provider 请求。没有真实密钥时，本地只编译并跳过该测试：
 
 ```bash
-go test -tags=liveprovider ./internal/app -run '^TestLiveProviderCompletesReadOnlyToolTask$' -count=1 -v
+go test -tags=liveprovider ./internal/app -run '^$' -count=1
 ```
 
 ## 7. 已知限制
 
 - 默认在线 Doctor 会产生极少量 Provider token 和一次网络请求；需要绝对离线时必须使用 `--offline`。
 - `Capabilities` 中未被适配器确认的可选能力保持 false；Doctor 不根据营销文档猜测能力。
-- 真实 smoke 验证最小只读闭环，不代表复杂 Coding 任务、长上下文、编辑或 Shell 已完成实机验收。
+- `readonly` 只验证最小只读闭环；`m1-coding` 只覆盖当前 5 个有界 Go 修复任务，不代表长上下文、任意仓库或所有 Provider 已通过。
 - 当前执行层是受控本地执行，不是操作系统级强沙箱。
