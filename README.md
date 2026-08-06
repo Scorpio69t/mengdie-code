@@ -89,6 +89,7 @@ mengdie memory forget <id>
 - [x] 第一阶段 Slice 11A：单次交互任务、终端审批闭环与非 TTY fail-closed（[协议说明](./docs/development/phase-1-slice-11a/INTERACTIVE_RUNTIME.md)）
 - [x] 第一阶段 Slice 11B：三平台原生 smoke、四目标 unsigned 开发预览与 SHA-256（[预览说明](./docs/development/phase-1-slice-11b/DEVELOPMENT_PREVIEW.md)）
 - [x] 第一阶段 Slice 12：macOS/Windows 受保护的真实 Provider Coding 预验收（[验收说明](./docs/development/phase-1-slice-12/M1_EXIT_EVALUATION.md)，DeepSeek 双平台 10/10 已通过）
+- [x] 第二阶段 Slice 02：SQLite EventStore、迁移账本与“先提交、再输出”的最小持久化闭环（[实施报告](./docs/development/phase-2-slice-02/IMPLEMENTATION_REPORT.md)）
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal（[第二阶段详细设计](./docs/design/phase-2/DETAILED_DESIGN.md)）
@@ -117,7 +118,7 @@ v0.1 坚持单进程、本地优先。daemon、Web、异步 Swarm、向量检索
 
 ## 本地查看
 
-当前源码预览已经包含 CLI/App 骨架、分层配置、结构化 Doctor、5 个可重复 Coding baseline、Provider 协议、安全工具链与最小 Agent Runtime。配置 Provider 后，裸命令进入单次交互任务，`exec` 用于无头自动化：
+当前源码预览已经包含 CLI/App 骨架、分层配置、结构化 Doctor、5 个可重复 Coding baseline、Provider 协议、安全工具链、最小 Agent Runtime 与 SQLite 事件持久化基础。配置 Provider 后，裸命令进入单次交互任务，`exec` 用于无头自动化：
 
 ```bash
 git clone https://github.com/Scorpio69t/mengdie-code.git
@@ -132,7 +133,9 @@ go run ./cmd/mengdie exec --allow-edit --allow-command go,test "修复失败测�
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 ```
 
-交互入口每次启动只接收一个不超过 64 KiB 的任务，运行状态只存在内存中；编辑、写入和未被配置规则预先允许的 Shell 会在执行前显示本地预览并请求批准。拒绝会作为工具结果返回模型，但进程最终仍以 Policy 退出码结束。当前没有历史会话、resume 或 REPL，进程退出后不会保留上下文；管道或重定向场景必须改用 `mengdie exec`。
+交互入口每次启动只接收一个不超过 64 KiB 的任务；`run.started`、完成消息、警告和 Run 终态等可重建边界已持久化到本地 SQLite，流式 `message.delta` 仍只存在内存中。事实先提交再输出，因此输出器失败不会抹掉已提交事件；存储失败则不会把事件伪装成已发生。编辑、写入和未被配置规则预先允许的 Shell 会在执行前显示本地预览并请求批准。当前仍没有历史会话、resume 或 REPL，已存事件尚不能恢复上下文；管道或重定向场景必须改用 `mengdie exec`。
+
+默认数据目录为 macOS 的 `~/Library/Application Support/MengDie Code/`、Windows 的 `%LOCALAPPDATA%\MengDie Code\`，Linux 使用 `$XDG_STATE_HOME/mengdie/`（未设置时为 `~/.local/state/mengdie/`）。可通过 `MENGDIE_DATA_DIR` 覆盖，但仓库内、网络共享、OneDrive/iCloud 同步目录以及 symlink/reparse point 会被拒绝。
 
 `exec --json` 输出完整 JSON Lines 运行事件。无头模式默认拒绝 edit/write/shell；`--allow-edit` 只放行项目内修改，`--allow-command go,test` 只放行无控制操作符的 `go test` 命令前缀，`--allow-env NAME` 才允许 shell 继承对应敏感环境变量。事件不包含完整用户任务、密钥或隐藏推理；交互事件和审批走 stdout，无头人类事件走 stderr，JSON Lines 走 stdout。
 

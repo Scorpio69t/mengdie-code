@@ -19,6 +19,7 @@ import (
 	"github.com/Scorpio69t/mengdie-code/internal/config"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 	"github.com/Scorpio69t/mengdie-code/internal/provider"
+	"github.com/Scorpio69t/mengdie-code/internal/session"
 )
 
 func TestDoctorJSONDoesNotRevealCredential(t *testing.T) {
@@ -235,6 +236,83 @@ func TestExecRunsAgentAndEmitsCompletedEvents(t *testing.T) {
 	}
 }
 
+func TestExecPersistsCompletionBoundariesWithoutPrivateTask(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeConfig(t, root)
+	application, stdout, _ := newTestApp(t, map[string]string{"TEST_API_KEY": "must-not-persist"})
+
+	code := application.Run(context.Background(), []string{"exec", "--cwd", root, "--json", "private task text"}, false)
+	if code != ExitOK {
+		t.Fatalf("Run() code = %d, want %d", code, ExitOK)
+	}
+	store, err := session.OpenSQLite(context.Background(), session.OpenOptions{DataDir: application.dataDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestSessionStore(t, store)
+	records, err := store.Load(context.Background(), "run-test", 0, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantKinds := []string{"run.started", "message.completed", "run.completed"}
+	if len(records) != len(wantKinds) {
+		t.Fatalf("records=%d: %+v", len(records), records)
+	}
+	for index, record := range records {
+		if record.Kind != wantKinds[index] || record.SessionSeq != uint64(index+1) {
+			t.Fatalf("record %d=%+v", index, record)
+		}
+	}
+	if strings.Contains(stdout.String(), "private task text") {
+		t.Fatalf("JSON output exposed task: %q", stdout.String())
+	}
+	databaseBytes, err := os.ReadFile(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"private task text", "must-not-persist"} {
+		if bytes.Contains(databaseBytes, []byte(forbidden)) {
+			t.Fatalf("database contains forbidden value %q", forbidden)
+		}
+	}
+}
+
+func TestExecStoreFirstFailureSemantics(t *testing.T) {
+	t.Run("renderer failure leaves durable fact", func(t *testing.T) {
+		root := t.TempDir()
+		writeRuntimeConfig(t, root)
+		application, _, _ := newTestApp(t, nil)
+		application.stdout = appFailingWriter{err: errors.New("renderer failed")}
+		if code := application.Run(context.Background(), []string{"exec", "--cwd", root, "--json", "task"}, false); code != ExitRunError {
+			t.Fatalf("Run() code=%d", code)
+		}
+		store, err := session.OpenSQLite(context.Background(), session.OpenOptions{DataDir: application.dataDir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer closeTestSessionStore(t, store)
+		records, err := store.Load(context.Background(), "run-test", 0, 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(records) != 1 || records[0].Kind != "run.started" {
+			t.Fatalf("records=%+v", records)
+		}
+	})
+	t.Run("store failure is not rendered", func(t *testing.T) {
+		root := t.TempDir()
+		writeRuntimeConfig(t, root)
+		application, stdout, stderr := newTestApp(t, nil)
+		application.dataDir = filepath.Join(root, ".mengdie-data")
+		if code := application.Run(context.Background(), []string{"exec", "--cwd", root, "--json", "task"}, false); code != ExitRunError {
+			t.Fatalf("Run() code=%d", code)
+		}
+		if stdout.Len() != 0 || !strings.Contains(stderr.String(), "会话存储错误") {
+			t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+		}
+	})
+}
+
 func TestExecHumanOutputUsesEventRenderer(t *testing.T) {
 	root := t.TempDir()
 	writeRuntimeConfig(t, root)
@@ -371,6 +449,7 @@ func newTestApp(t *testing.T, environment map[string]string) (*App, *bytes.Buffe
 	stderr := &bytes.Buffer{}
 	application := New(BuildInfo{Version: "test", Commit: "abc123", Date: "2026-07-30"}, stdout, stderr)
 	application.userConfigDir = t.TempDir()
+	application.dataDir = t.TempDir()
 	application.now = func() time.Time {
 		return time.Date(2026, 7, 30, 9, 0, 0, 0, time.UTC)
 	}
@@ -452,4 +531,11 @@ type appFailingWriter struct {
 
 func (writer appFailingWriter) Write([]byte) (int, error) {
 	return 0, writer.err
+}
+
+func closeTestSessionStore(t *testing.T, store *session.SQLiteStore) {
+	t.Helper()
+	if err := store.Close(); err != nil {
+		t.Errorf("close session store: %v", err)
+	}
 }

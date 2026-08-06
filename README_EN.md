@@ -63,6 +63,7 @@ This English README is the entry point for international readers. The detailed [
 - [x] Phase 1 Slice 11A: one-shot interactive tasks, terminal approval loop, and fail-closed non-TTY behavior ([protocol, Chinese](./docs/development/phase-1-slice-11a/INTERACTIVE_RUNTIME.md))
 - [x] Phase 1 Slice 11B: native smoke on three platforms plus four unsigned preview targets and SHA-256 ([preview guide, Chinese](./docs/development/phase-1-slice-11b/DEVELOPMENT_PREVIEW.md))
 - [x] Phase 1 Slice 12: protected macOS/Windows live-Provider Coding preflight ([guide, Chinese](./docs/development/phase-1-slice-12/M1_EXIT_EVALUATION.md); DeepSeek passed 10/10 across both platforms)
+- [x] Phase 2 Slice 02: SQLite EventStore, migration ledger, and a commit-before-output durability loop ([implementation report, Chinese](./docs/development/phase-2-slice-02/IMPLEMENTATION_REPORT.md))
 - [ ] M0: real-world coding, long-run, and memory-trust eval sets
 - [ ] M1: minimum Agent Runtime capable of completing real tasks ([Phase 1 detailed design, Chinese](./docs/design/phase-1/DETAILED_DESIGN.md))
 - [ ] M2: persistent events, resume, context compaction, and Patch Journal ([Phase 2 detailed design, Chinese](./docs/design/phase-2/DETAILED_DESIGN.md))
@@ -88,7 +89,9 @@ go run ./cmd/mengdie exec --allow-edit --allow-command go,test "fix the failing 
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 ```
 
-The interactive entry accepts one task of at most 64 KiB per process. Edit/write and Shell calls not pre-authorized by configuration show a local preview and require approval before execution. There is no history, resume, or REPL yet; context is lost when the process exits, and redirected input/output must use `mengdie exec`.
+The interactive entry accepts one task of at most 64 KiB per process. Reconstructable boundaries such as `run.started`, completed messages, warnings, and terminal run events are now committed to local SQLite before output; streaming `message.delta` events remain transient. Edit/write and Shell calls not pre-authorized by configuration show a local preview and require approval before execution. There is still no history UI, resume, or REPL, and the persisted events cannot yet restore context; redirected input/output must use `mengdie exec`.
+
+The default data directory is `~/Library/Application Support/MengDie Code/` on macOS, `%LOCALAPPDATA%\MengDie Code\` on Windows, and `$XDG_STATE_HOME/mengdie/` on Linux (falling back to `~/.local/state/mengdie/`). `MENGDIE_DATA_DIR` may override it, while repository-local, network-share, OneDrive/iCloud-synchronized, and symlink/reparse-point roots are rejected.
 
 `exec --json` emits the complete run as JSON Lines. Headless mode denies edit/write/shell by default; `--allow-edit`, a token-bounded `--allow-command`, and explicit `--allow-env NAME` grants are narrow run-scoped exceptions. A denial is returned to the model and still produces the Policy exit code. Events exclude the full user task, credentials, and hidden reasoning. Interactive events and approval prompts use stdout; headless human-readable events use stderr; JSON Lines use stdout.
 

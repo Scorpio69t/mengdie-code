@@ -59,6 +59,7 @@ type App struct {
 	environment   func() []string
 	newProvider   providerFactory
 	userConfigDir string
+	dataDir       string
 	now           func() time.Time
 	newRunID      func() (string, error)
 }
@@ -173,18 +174,11 @@ func (a *App) runInteractive(ctx context.Context, args []string, interactive boo
 		}
 		return ExitRunError
 	}
-	emitter, err := events.NewEmitter(runID, renderer, a.now)
-	if err != nil {
-		if writeErr := a.writeError("初始化事件流失败：%v\n", err); writeErr != nil {
-			return ExitRunError
-		}
-		return ExitRunError
-	}
 	broker, err := policy.NewTextBroker(reader, a.stdout)
 	if err != nil {
 		return a.runtimeSetupError(fmt.Sprintf("初始化审批输入失败：%v", err))
 	}
-	return a.runAgent(ctx, loaded, runID, task, emitter, runtimeOptions{
+	return a.runAgent(ctx, loaded, runID, task, renderer, runtimeOptions{
 		Mode:      policy.ModeInteractive,
 		Broker:    broker,
 		AllowEdit: loaded.Config.Approval.Mode == config.ApprovalAutoEdit,
@@ -281,14 +275,7 @@ func (a *App) runExec(ctx context.Context, args []string) int {
 		}
 		return ExitRunError
 	}
-	emitter, err := events.NewEmitter(runID, sink, a.now)
-	if err != nil {
-		if writeErr := a.writeError("初始化事件流失败：%v\n", err); writeErr != nil {
-			return ExitRunError
-		}
-		return ExitRunError
-	}
-	return a.runAgent(ctx, loaded, runID, task, emitter, runtimeOptions{
+	return a.runAgent(ctx, loaded, runID, task, sink, runtimeOptions{
 		Mode: policy.ModeHeadless, Security: "受控本地执行 · 无头模式",
 		AllowEdit: *allowEdit, AllowCommands: allowCommands.Values(),
 		AllowedEnvironment: allowEnvironment.Values(),

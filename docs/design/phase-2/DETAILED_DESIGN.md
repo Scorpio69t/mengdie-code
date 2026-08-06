@@ -1,7 +1,7 @@
 # MengDie Code 第二阶段详细设计
 
 > 里程碑：M2 · 值得信任  
-> 文档状态：待审核，尚未实现  
+> 文档状态：已审核，实施中
 > 适用版本：v0.1 开发阶段  
 > 更新日期：2026-08-06
 
@@ -500,7 +500,7 @@ TUI 只依赖 Application Service：
 
 ## 12. 依赖决策
 
-候选版本是 2026-08-06 的核验快照，不在本设计 PR 中写入 `go.mod`。
+候选版本是 2026-08-06 的核验快照。P2-02 已采用 `modernc.org/sqlite` v1.56.0，其余候选仍不写入 `go.mod`。
 
 | 能力 | 首选 | 核验结论 | 采用门禁 |
 |---|---|---|---|
@@ -619,4 +619,4 @@ TUI 只依赖 Application Service：
 
 ## 17. 当前实现状态
 
-截至本文更新：M1 Runtime 与内存事件流已经存在；本文件描述的 SQLite、Session resume、Snapshot、Artifact、Patch Journal、完整 TUI、成本持久化与 M2 退出评测均尚未实现。README 里的 M2 复选框必须保持未完成，直到上述退出条件全部满足。
+截至本文更新：P2-02 已实现 SQLite EventStore 基础、schema v1、迁移校验、`expectedSeq` 原子追加以及现有完成边界事件的“先提交、再广播”。当前每个 Run 仍对应一个临时 Session，`message.delta` 不落库；Session 列举/resume、Command Ledger、Snapshot、Artifact、Patch Journal、完整 TUI、成本持久化与 M2 退出评测均尚未实现。README 里的 M2 复选框必须保持未完成，直到上述退出条件全部满足。
