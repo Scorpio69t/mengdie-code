@@ -61,6 +61,7 @@ This English README is the entry point for international readers. The detailed [
 - [x] Phase 1 Slice 09: single-Agent runtime, context building, run-scoped todos, and repetition guards ([protocol, Chinese](./docs/development/phase-1-slice-09/AGENT_RUNTIME_PROTOCOL.md))
 - [x] Phase 1 Slice 10: structured Doctor, current DeepSeek/Kimi samples, and protected live Provider smoke ([notes, Chinese](./docs/development/phase-1-slice-10/DOCTOR_AND_SMOKE.md))
 - [x] Phase 1 Slice 11A: one-shot interactive tasks, terminal approval loop, and fail-closed non-TTY behavior ([protocol, Chinese](./docs/development/phase-1-slice-11a/INTERACTIVE_RUNTIME.md))
+- [x] Phase 1 Slice 11B: native smoke on three platforms plus four unsigned preview targets and SHA-256 ([preview guide, Chinese](./docs/development/phase-1-slice-11b/DEVELOPMENT_PREVIEW.md))
 - [ ] M0: real-world coding, long-run, and memory-trust eval sets
 - [ ] M1: minimum Agent Runtime capable of completing real tasks ([Phase 1 detailed design, Chinese](./docs/design/phase-1/DETAILED_DESIGN.md))
 - [ ] M2: persistent events, resume, context compaction, and Patch Journal
@@ -71,7 +72,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the product architecture and the [P
 
 ## Local preview
 
-The current source preview includes the CLI/app skeleton, layered configuration, a structured Doctor, five reproducible coding baselines, the Provider protocol, the safety toolchain, and a minimal Agent Runtime shared by `mengdie` and `mengdie exec`. A protected manual workflow covers real DeepSeek/Kimi smoke tests; multi-platform preview artifacts and M1 exit acceptance remain follow-up work.
+The current source preview includes the CLI/app skeleton, layered configuration, a structured Doctor, five reproducible coding baselines, the Provider protocol, the safety toolchain, and a minimal Agent Runtime shared by `mengdie` and `mengdie exec`. A protected manual workflow covers real DeepSeek/Kimi smoke tests, and a multi-platform development-preview workflow is available. M1 remains incomplete until the 20-run main CI, real-repository, and security exit evidence is complete.
 
 ```bash
 git clone https://github.com/Scorpio69t/mengdie-code.git
@@ -93,6 +94,8 @@ The interactive entry accepts one task of at most 64 KiB per process. Edit/write
 Go 1.26 or later is required.
 
 `doctor --offline` performs local checks without constructing a Provider. The default command performs one bounded online tool-call probe with fixed content and no source code. Paths are represented by logical placeholders and credential values are never printed. See the [Chinese Doctor contract](./docs/development/phase-1-slice-10/DOCTOR_AND_SMOKE.md).
+
+GitHub Actions produces seven-day unsigned previews for macOS Apple Silicon/Intel, Windows x64, and Linux x64, with SHA-256 checksums and build metadata. These are not formal releases; read the [Chinese preview, verification, and platform guide](./docs/development/phase-1-slice-11b/DEVELOPMENT_PREVIEW.md) before installing one.
 
 Secret-free samples are available for [combined profiles](./configs/examples/config.toml), [DeepSeek](./configs/examples/deepseek.toml), and [Kimi](./configs/examples/kimi.toml). Provider model names and endpoints can change; each sample carries its verification date. API keys are referenced by environment-variable name and must not be stored in project configuration.
 

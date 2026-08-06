@@ -87,13 +87,14 @@ mengdie memory forget <id>
 - [x] 第一阶段 Slice 09：单 Agent Runtime、上下文构建、run-scoped todo 与重复调用保护（[协议说明](./docs/development/phase-1-slice-09/AGENT_RUNTIME_PROTOCOL.md)）
 - [x] 第一阶段 Slice 10：结构化 Doctor、DeepSeek/Kimi 当前配置与受保护的真实 Provider smoke（[说明](./docs/development/phase-1-slice-10/DOCTOR_AND_SMOKE.md)）
 - [x] 第一阶段 Slice 11A：单次交互任务、终端审批闭环与非 TTY fail-closed（[协议说明](./docs/development/phase-1-slice-11a/INTERACTIVE_RUNTIME.md)）
+- [x] 第一阶段 Slice 11B：三平台原生 smoke、四目标 unsigned 开发预览与 SHA-256（[预览说明](./docs/development/phase-1-slice-11b/DEVELOPMENT_PREVIEW.md)）
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal
 - [ ] M3：可审计的可信记忆
 - [ ] M4：默认只生成提案的复盘机制
 
-完整产品架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；M1 实施基线见 [第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)。`mengdie` 与 `mengdie exec` 已接入同一套最小 Agent Runtime 和安全工具链，真实 DeepSeek/Kimi smoke 已提供受保护的手动工作流；多平台开发预览及 M1 出口验收仍在后续工作包中。
+完整产品架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；M1 实施基线见 [第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)。`mengdie` 与 `mengdie exec` 已接入同一套最小 Agent Runtime 和安全工具链，真实 DeepSeek/Kimi smoke 已提供受保护的手动工作流；多平台开发预览工作流已经建立，但 20 次 main CI、真实仓库任务与安全出口证据未齐前，M1 仍不标记完成。
 
 工程依赖的选择、升级和供应链标准见 [依赖与现代化工程准则](./docs/DEPENDENCIES.md)，Logo 与 CLI 启动体验见 [品牌规范](./docs/BRAND.md)。
 
@@ -137,6 +138,8 @@ go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 需要 Go 1.26 或更高版本。
 
 `doctor --offline` 只做本地检查且不构造 Provider；默认 `doctor` 会用固定、无源码内容的工具调用执行一次有限在线探测。输出中的项目路径和用户配置路径会被逻辑占位符替代，密钥只检查是否存在，永不显示值。完整契约和退出码见 [Doctor 与 Provider smoke 说明](./docs/development/phase-1-slice-10/DOCTOR_AND_SMOKE.md)。
+
+GitHub Actions 会生成 macOS Apple Silicon/Intel、Windows x64 和 Linux x64 的 7 天 unsigned 开发预览，附带 SHA-256 与构建元数据。它们不是正式 Release，安装前请阅读[开发预览下载、校验与平台限制](./docs/development/phase-1-slice-11b/DEVELOPMENT_PREVIEW.md)。
 
 国内模型的无密钥配置样例见[组合示例](./configs/examples/config.toml)、[DeepSeek 示例](./configs/examples/deepseek.toml)和 [Kimi 示例](./configs/examples/kimi.toml)。模型名与端点会随 Provider 调整，示例记录了核验日期，使用前应以官方文档为准。用户配置使用 `os.UserConfigDir()` 对应的平台目录，项目配置放在 `.mengdie/config.toml`；密钥只通过样例中的环境变量名引用，不得写入项目文件。
 
