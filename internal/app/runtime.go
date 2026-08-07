@@ -19,6 +19,7 @@ import (
 	"github.com/Scorpio69t/mengdie-code/internal/project"
 	"github.com/Scorpio69t/mengdie-code/internal/provider"
 	"github.com/Scorpio69t/mengdie-code/internal/provider/openaicompat"
+	"github.com/Scorpio69t/mengdie-code/internal/session"
 	"github.com/Scorpio69t/mengdie-code/internal/tools"
 )
 
@@ -48,7 +49,7 @@ func defaultProviderFactory(profile config.Profile, apiKey string) (provider.Pro
 	})
 }
 
-func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task string, emitter *events.Emitter, options runtimeOptions) int {
+func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task string, sink events.Sink, options runtimeOptions) int {
 	profile := loaded.Profile()
 	if strings.TrimSpace(profile.Provider) == "" || strings.TrimSpace(profile.Model) == "" {
 		return a.runtimeSetupError("Provider 未配置；请先运行 mengdie doctor 并配置 profile")
@@ -100,12 +101,50 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	if err != nil {
 		return a.runtimeSetupError(fmt.Sprintf("初始化 Agent Runtime 失败：%v", err))
 	}
+	dataDir, err := session.ResolveDataDir(session.DataDirOptions{
+		Override: a.dataDir, ProjectRoot: loaded.ProjectRoot, LookupEnv: a.lookupEnv,
+	})
+	if err != nil {
+		return a.runtimeStorageError(fmt.Sprintf("解析数据目录失败：%v", err))
+	}
+	store, err := session.OpenSQLite(ctx, session.OpenOptions{
+		DataDir: dataDir, ProjectRoot: loaded.ProjectRoot, Now: a.now,
+	})
+	if err != nil {
+		return a.runtimeStorageError(fmt.Sprintf("打开事件存储失败：%v", err))
+	}
+	if err := store.BeginRun(ctx, session.RunMetadata{
+		SessionID: runID, RunID: runID, ProjectRoot: loaded.ProjectRoot,
+		Provider: profile.Provider, Model: profile.Model, StartedAt: a.now(),
+	}); err != nil {
+		_ = store.Close()
+		return a.runtimeStorageError(fmt.Sprintf("创建持久 Run 失败：%v", err))
+	}
+	durableSink, err := session.NewEventSink(runID, 0, store, sink)
+	if err != nil {
+		_ = store.Close()
+		return a.runtimeStorageError(fmt.Sprintf("初始化持久事件流失败：%v", err))
+	}
+	emitter, err := events.NewEmitter(runID, durableSink, a.now)
+	if err != nil {
+		_ = store.Close()
+		return a.runtimeStorageError(fmt.Sprintf("初始化事件流失败：%v", err))
+	}
 	result, err := runtime.Run(ctx, agent.RunRequest{
 		RunID: runID, Task: task, Model: profile.Model, DisplayModel: modelLabel(profile),
 		MaxTurns: loaded.Config.Context.MaxTurns, Security: options.Security,
 	}, emitter)
+	closeErr := store.Close()
 	if err != nil {
+		if closeErr != nil {
+			if writeErr := a.writeError("关闭会话存储失败：%v\n", closeErr); writeErr != nil {
+				return ExitRunError
+			}
+		}
 		return runtimeExitCode(err)
+	}
+	if closeErr != nil {
+		return a.runtimeStorageError(fmt.Sprintf("关闭会话存储失败：%v", closeErr))
 	}
 	if result.DeniedTools > 0 {
 		return ExitPolicyDenied
@@ -141,6 +180,13 @@ func (a *App) runtimeSetupError(message string) int {
 		return ExitRunError
 	}
 	return ExitInvalidInput
+}
+
+func (a *App) runtimeStorageError(message string) int {
+	if err := a.writeError("会话存储错误：%s\n", message); err != nil {
+		return ExitRunError
+	}
+	return ExitRunError
 }
 
 func runtimeExitCode(err error) int {

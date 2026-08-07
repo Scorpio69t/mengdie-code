@@ -40,6 +40,7 @@ func TestLiveProviderCompletesReadOnlyToolTask(t *testing.T) {
 	var stderr bytes.Buffer
 	application := New(BuildInfo{Version: "live-smoke", Commit: "manual"}, &stdout, &stderr)
 	application.userConfigDir = t.TempDir()
+	application.dataDir = t.TempDir()
 	code := application.Run(context.Background(), []string{
 		"exec", "--cwd", root, "--json", "--max-turns", "8",
 		"必须使用 read_file 读取 MENGDIE_SMOKE.txt，然后只回答文件中的标记；禁止修改文件或执行命令。",
@@ -119,6 +120,7 @@ func TestLiveProviderCompletesCodingTaskSuite(t *testing.T) {
 			var stderr bytes.Buffer
 			application := New(BuildInfo{Version: "live-coding", Commit: "manual"}, &stdout, &stderr)
 			application.userConfigDir = t.TempDir()
+			application.dataDir = t.TempDir()
 			prompt := task.Prompt + "\n必须先用 read_file 阅读相关源码和测试；只修改完成任务所需的项目文件；必须执行 go test ./...，失败时根据结果继续修正，测试通过后才能结束。禁止新增依赖、访问网络或执行 go test 之外的命令。"
 			code := application.Run(context.Background(), []string{
 				"exec", "--cwd", workspace, "--json", "--max-turns", "24",

@@ -1,6 +1,6 @@
 # MengDie Code 依赖与现代化工程准则
 
-> 状态：第一阶段准入规则
+> 状态：全阶段准入规则
 >
 > 原则：成熟、活跃、跨平台、可替换；流行度是门槛，不是唯一决策依据。
 
@@ -28,16 +28,16 @@ MengDie Code 不用“依赖越多”证明现代化。现代化意味着：
 
 禁止仅凭 GitHub Star 数选型。流行但过重、维护停滞、依赖树失控或破坏单二进制分发的组件同样不采用。
 
-## 3. 第一阶段组件策略
+## 3. 组件策略
 
-| 能力 | 第一阶段选择 | 状态与原因 |
+| 能力 | 选择 | 状态与原因 |
 |---|---|---|
 | CLI 参数 | Go `flag.FlagSet` | 已确定；M1 命令较少，标准库足够且零依赖 |
 | HTTP / SSE | `net/http`、`bufio.Reader` | 已确定；便于精确控制国内兼容端点与流式错误 |
 | 结构化日志 | `log/slog` | 已确定；标准库、结构化、可替换 Handler |
 | TOML | [`pelletier/go-toml/v2`](https://github.com/pelletier/go-toml) | P1-01 候选；成熟且 v2 API 清晰，需先做严格解析测试 |
 | 完整 TUI | [`charm.land/bubbletea/v2`](https://github.com/charmbracelet/bubbletea) + Bubbles v2 + Lip Gloss v2 | M2 首选候选；稳定 v2 API、维护活跃，在 EventStore/恢复事实形成后引入；采用前验证中文宽度、macOS/Windows 终端、无颜色与非 TTY 降级 |
-| SQLite | [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) | M2 首选候选；`database/sql` 与纯 Go 有利于 macOS/Windows 单二进制，采用前验证四目标构建、WAL、故障恢复、体积、性能、许可证与漏洞；`ncruces/go-sqlite3` 仅作同等门禁备选 |
+| SQLite | [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) v1.56.0 | P2-02 已采用；`database/sql`、纯 Go、BSD-3-Clause，四目标 `CGO_ENABLED=0` 构建、WAL/busy/事务回滚、许可证与漏洞门禁通过；Windows stripped CLI 由 7,857,152 B 增至 11,836,928 B（+50.7%），接受该基础设施成本并持续监控；driver 类型封装在 `internal/session` |
 | 系统凭据 | OS 原生适配器，评估 [`zalando/go-keyring`](https://github.com/zalando/go-keyring) | M1 小版本候选；必须验证 Keychain 与 Credential Manager 的失败语义 |
 | 终端能力 | `golang.org/x/term` | 需要 TTY、尺寸或安全输入时采用，避免自行维护平台探测 |
 | Windows 进程树 | [`golang.org/x/sys/windows`](https://pkg.go.dev/golang.org/x/sys/windows) v0.47.0 | P1-08 已采用；Go 官方维护、BSD-3-Clause、无新增传递依赖且无 CGO，只在 Windows 构建中封装 Job Object API，领域层不暴露其类型 |
