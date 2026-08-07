@@ -95,6 +95,20 @@ func TestEventSinkUsesConfiguredAfterSequence(t *testing.T) {
 	}
 }
 
+func TestCommandEventSinkPersistsCommandIdentity(t *testing.T) {
+	store := &fakeEventStore{}
+	sink, err := NewCommandEventSink("session-1", "command-1", 0, store, &events.MemorySink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Emit(context.Background(), testPublicEvent(t, 1, events.KindRunStarted, events.RunStarted{})); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.records) != 1 || store.records[0].CommandID != "command-1" {
+		t.Fatalf("records=%+v", store.records)
+	}
+}
+
 func testPublicEvent(t *testing.T, seq uint64, kind events.Kind, payload any) events.Event {
 	t.Helper()
 	event, err := events.New("run-1", seq, time.Date(2026, 8, 6, 10, 0, 0, 0, time.UTC), kind, payload)

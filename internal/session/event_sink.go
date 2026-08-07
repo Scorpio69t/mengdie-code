@@ -22,12 +22,26 @@ type EventSink struct {
 	store      EventStore
 	downstream events.Sink
 	sessionID  string
+	commandID  string
 	lastSeq    uint64
 }
 
 // NewEventSink constructs a store-first event adapter. afterSeq supports the
 // later resume reader without changing the current one-run session behavior.
 func NewEventSink(sessionID string, afterSeq uint64, store EventStore, downstream events.Sink) (*EventSink, error) {
+	return newEventSink(sessionID, "", afterSeq, store, downstream)
+}
+
+// NewCommandEventSink associates every durable fact with its originating
+// command while preserving the store-first broadcast guarantee.
+func NewCommandEventSink(sessionID, commandID string, afterSeq uint64, store EventStore, downstream events.Sink) (*EventSink, error) {
+	if commandID == "" {
+		return nil, errors.New("durable event sink command id is required")
+	}
+	return newEventSink(sessionID, commandID, afterSeq, store, downstream)
+}
+
+func newEventSink(sessionID, commandID string, afterSeq uint64, store EventStore, downstream events.Sink) (*EventSink, error) {
 	if sessionID == "" {
 		return nil, errors.New("durable event sink session id is required")
 	}
@@ -37,7 +51,10 @@ func NewEventSink(sessionID string, afterSeq uint64, store EventStore, downstrea
 	if downstream == nil {
 		return nil, errors.New("durable event sink downstream is required")
 	}
-	return &EventSink{store: store, downstream: downstream, sessionID: sessionID, lastSeq: afterSeq}, nil
+	return &EventSink{
+		store: store, downstream: downstream, sessionID: sessionID,
+		commandID: commandID, lastSeq: afterSeq,
+	}, nil
 }
 
 // Emit commits one durable boundary before broadcasting it. A downstream
@@ -63,6 +80,7 @@ func (s *EventSink) Emit(ctx context.Context, event events.Event) error {
 			SessionSeq:    s.lastSeq + 1,
 			RunID:         event.RunID,
 			RunSeq:        event.Seq,
+			CommandID:     s.commandID,
 			Kind:          string(event.Kind),
 			SchemaVersion: event.Version,
 			Visibility:    VisibilityPublic,
