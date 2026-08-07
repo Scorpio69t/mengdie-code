@@ -66,6 +66,193 @@ type RunMetadata struct {
 	StartedAt       time.Time
 }
 
+// BeginCommandRun atomically registers a private command and its first run.
+// A repeated command ID is idempotent only when kind and canonical payload
+// match; the caller must inspect Existing before constructing a runtime.
+func (s *SQLiteStore) BeginCommandRun(ctx context.Context, metadata CommandRunMetadata) (result BeginCommandResult, resultErr error) {
+	if err := validateCommandRunMetadata(metadata); err != nil {
+		return BeginCommandResult{}, err
+	}
+	digest, err := commandPayloadDigest(metadata.CommandPayload)
+	if err != nil {
+		return BeginCommandResult{}, err
+	}
+	if metadata.ProjectIdentity == "" {
+		metadata.ProjectIdentity = projectIdentity(metadata.ProjectRoot)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return BeginCommandResult{}, classifySQLiteError("begin command run", err)
+	}
+	defer rollbackTransaction(tx, &resultErr, "rollback command run")
+
+	existing, existingRunID, existingProject, err := loadCommandTx(ctx, tx, metadata.CommandID)
+	if err == nil {
+		if existing.Kind != metadata.CommandKind || existing.PayloadSHA256 != digest || existingProject != metadata.ProjectIdentity {
+			return BeginCommandResult{}, ErrCommandConflict
+		}
+		if err := tx.Commit(); err != nil {
+			return BeginCommandResult{}, classifySQLiteError("commit existing command", err)
+		}
+		return BeginCommandResult{Command: existing, RunID: existingRunID, Existing: true}, nil
+	}
+	if !errors.Is(err, ErrCommandNotFound) {
+		return BeginCommandResult{}, err
+	}
+
+	stamp := formatTime(metadata.StartedAt)
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO sessions(
+    id, project_root, project_identity, title, status, last_seq, snapshot_seq, created_at, updated_at
+) VALUES (?, ?, ?, NULL, 'active', 0, 0, ?, ?)`,
+		metadata.SessionID, metadata.ProjectRoot, metadata.ProjectIdentity, stamp, stamp,
+	); err != nil {
+		return BeginCommandResult{}, classifySQLiteError("create command session", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO commands(id, session_id, kind, payload_json, payload_sha256, status, result_seq, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, 'accepted', NULL, ?, ?)`,
+		metadata.CommandID, metadata.SessionID, metadata.CommandKind, []byte(metadata.CommandPayload), digest, stamp, stamp,
+	); err != nil {
+		return BeginCommandResult{}, classifySQLiteError("create command", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO runs(
+    id, session_id, command_id, status, provider, model, last_run_seq, started_at, finished_at
+) VALUES (?, ?, ?, 'running', ?, ?, 0, ?, NULL)`,
+		metadata.RunID, metadata.SessionID, metadata.CommandID, metadata.Provider, metadata.Model, stamp,
+	); err != nil {
+		return BeginCommandResult{}, classifySQLiteError("create command run", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return BeginCommandResult{}, classifySQLiteError("commit command run", err)
+	}
+	return BeginCommandResult{Command: Command{
+		ID: metadata.CommandID, SessionID: metadata.SessionID, Kind: metadata.CommandKind,
+		Payload: append(json.RawMessage(nil), metadata.CommandPayload...), PayloadSHA256: digest,
+		Status: CommandAccepted, CreatedAt: metadata.StartedAt.UTC(), UpdatedAt: metadata.StartedAt.UTC(),
+	}, RunID: metadata.RunID}, nil
+}
+
+func validateCommandRunMetadata(metadata CommandRunMetadata) error {
+	if strings.TrimSpace(metadata.CommandID) == "" {
+		return errors.New("command id is required")
+	}
+	if len(metadata.CommandID) > 128 {
+		return errors.New("command id exceeds 128 bytes")
+	}
+	if strings.TrimSpace(metadata.CommandKind) == "" {
+		return errors.New("command kind is required")
+	}
+	if len(metadata.CommandKind) > 128 {
+		return errors.New("command kind exceeds 128 bytes")
+	}
+	return validateRunMetadata(RunMetadata{
+		SessionID: metadata.SessionID, RunID: metadata.RunID, ProjectRoot: metadata.ProjectRoot,
+		ProjectIdentity: metadata.ProjectIdentity, Provider: metadata.Provider, Model: metadata.Model,
+		StartedAt: metadata.StartedAt,
+	})
+}
+
+func loadCommandTx(ctx context.Context, tx *sql.Tx, commandID string) (Command, string, string, error) {
+	var command Command
+	var payload []byte
+	var resultSeq sql.NullInt64
+	var createdAt, updatedAt, runID, project string
+	err := tx.QueryRowContext(ctx, `
+SELECT c.id, c.session_id, c.kind, c.payload_json, c.payload_sha256, c.status, c.result_seq,
+	   c.created_at, c.updated_at, COALESCE((SELECT id FROM runs WHERE command_id=c.id ORDER BY started_at LIMIT 1), ''),
+	   s.project_identity
+FROM commands c JOIN sessions s ON s.id=c.session_id WHERE c.id = ?`, commandID).Scan(
+		&command.ID, &command.SessionID, &command.Kind, &payload, &command.PayloadSHA256, &command.Status,
+		&resultSeq, &createdAt, &updatedAt, &runID, &project,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Command{}, "", "", ErrCommandNotFound
+	}
+	if err != nil {
+		return Command{}, "", "", classifySQLiteError("load command", err)
+	}
+	if !validCommandStatus(command.Status) || !json.Valid(payload) {
+		return Command{}, "", "", errors.New("decode command: invalid persisted value")
+	}
+	digest, err := commandPayloadDigest(payload)
+	if err != nil || digest != command.PayloadSHA256 {
+		return Command{}, "", "", errors.New("decode command: payload checksum mismatch")
+	}
+	command.Payload = append(json.RawMessage(nil), payload...)
+	if resultSeq.Valid {
+		command.ResultSeq = uint64(resultSeq.Int64)
+	}
+	command.CreatedAt, err = time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return Command{}, "", "", fmt.Errorf("decode command created time: %w", err)
+	}
+	command.UpdatedAt, err = time.Parse(time.RFC3339Nano, updatedAt)
+	if err != nil {
+		return Command{}, "", "", fmt.Errorf("decode command updated time: %w", err)
+	}
+	return command, runID, project, nil
+}
+
+// LookupCommand returns one ledger entry for application idempotency checks.
+// Callers must not project Payload to public output.
+func (s *SQLiteStore) LookupCommand(ctx context.Context, commandID string) (result Command, resultErr error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return Command{}, classifySQLiteError("begin command lookup", err)
+	}
+	defer rollbackTransaction(tx, &resultErr, "rollback command lookup")
+	command, _, _, err := loadCommandTx(ctx, tx, commandID)
+	if err != nil {
+		return Command{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Command{}, classifySQLiteError("commit command lookup", err)
+	}
+	return command, nil
+}
+
+// RejectUnstartedCommand closes a command that could not construct its local
+// runtime. No result sequence is invented because no terminal event exists.
+func (s *SQLiteStore) RejectUnstartedCommand(ctx context.Context, commandID string) (resultErr error) {
+	if strings.TrimSpace(commandID) == "" {
+		return errors.New("command id is required")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return classifySQLiteError("begin command rejection", err)
+	}
+	defer rollbackTransaction(tx, &resultErr, "rollback command rejection")
+	stamp := formatTime(s.now().UTC())
+	result, err := tx.ExecContext(ctx, `
+UPDATE commands SET status='rejected', updated_at=?
+WHERE id=? AND status='accepted'`, stamp, commandID)
+	if err != nil {
+		return classifySQLiteError("reject command", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("inspect command rejection: %w", err)
+	}
+	if count != 1 {
+		return ErrCommandConflict
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE runs SET status='failed', finished_at=? WHERE command_id=? AND status='running'`, stamp, commandID); err != nil {
+		return classifySQLiteError("reject command run", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE sessions SET status='failed', updated_at=?
+WHERE id=(SELECT session_id FROM commands WHERE id=?)`, stamp, commandID); err != nil {
+		return classifySQLiteError("reject command session", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return classifySQLiteError("commit command rejection", err)
+	}
+	return nil
+}
+
 // SQLiteStore is the local M2 EventStore adapter. It deliberately exposes no
 // database/sql types to callers.
 type SQLiteStore struct {
@@ -345,6 +532,8 @@ func (s *SQLiteStore) Append(ctx context.Context, sessionID string, expectedSeq 
 
 	runStatus := make(map[string]string)
 	sessionStatus := ""
+	commandStatuses := make(map[string]CommandStatus)
+	commandResultSeq := make(map[string]uint64)
 	for _, record := range records {
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO events(
@@ -362,6 +551,16 @@ INSERT INTO events(
 		if status := terminalStatus(record.Kind); status != "" {
 			runStatus[record.RunID] = status
 			sessionStatus = status
+			if record.CommandID != "" {
+				commandStatus, err := terminalCommandStatus(record)
+				if err != nil {
+					return err
+				}
+				commandStatuses[record.CommandID] = commandStatus
+				commandResultSeq[record.CommandID] = record.SessionSeq
+			}
+		} else if record.CommandID != "" {
+			commandStatuses[record.CommandID] = CommandRunning
 		}
 	}
 	runIDs := make([]string, 0, len(runLastSeq))
@@ -400,6 +599,30 @@ INSERT INTO events(
 			return classifySQLiteError("update session status", err)
 		}
 	}
+	for commandID, status := range commandStatuses {
+		if status == CommandRunning {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE commands SET status='running', updated_at=? WHERE id=? AND status='accepted'`,
+				updatedAt, commandID,
+			); err != nil {
+				return classifySQLiteError("mark command running", err)
+			}
+			continue
+		}
+		result, err := tx.ExecContext(ctx, `
+UPDATE commands SET status=?, result_seq=?, updated_at=?
+WHERE id=? AND status IN ('accepted','running')`, status, commandResultSeq[commandID], updatedAt, commandID)
+		if err != nil {
+			return classifySQLiteError("finish command", err)
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("inspect command terminal update: %w", err)
+		}
+		if count != 1 {
+			return ErrCommandConflict
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return classifySQLiteError("commit append", err)
 	}
@@ -418,6 +641,28 @@ func terminalStatus(kind string) string {
 		return "interrupted"
 	default:
 		return ""
+	}
+}
+
+func terminalCommandStatus(record Record) (CommandStatus, error) {
+	switch record.Kind {
+	case "run.completed":
+		var payload struct {
+			DeniedTools int `json:"denied_tools"`
+		}
+		if err := json.Unmarshal(record.Payload, &payload); err != nil {
+			return "", fmt.Errorf("decode run.completed command outcome: %w", err)
+		}
+		if payload.DeniedTools > 0 {
+			return CommandRejected, nil
+		}
+		return CommandApplied, nil
+	case "run.failed":
+		return CommandFailed, nil
+	case "run.cancelled", "run.interrupted":
+		return CommandInterrupted, nil
+	default:
+		return "", nil
 	}
 }
 

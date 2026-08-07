@@ -92,6 +92,8 @@ func (a *App) Run(ctx context.Context, args []string, interactive bool) int {
 			return a.runDoctor(ctx, args[1:], interactive)
 		case "exec":
 			return a.runExec(ctx, args[1:])
+		case "session":
+			return a.runSession(ctx, args[1:])
 		}
 		if !strings.HasPrefix(args[0], "-") {
 			if err := a.writeError("未知命令 %q\n", args[0]); err != nil {
@@ -232,6 +234,7 @@ func (a *App) runExec(ctx context.Context, args []string) int {
 	flags, common := a.newCommonFlagSet("mengdie exec")
 	jsonOutput := flags.Bool("json", false, "输出 JSON Lines 事件")
 	allowEdit := flags.Bool("allow-edit", false, "允许本次无头任务修改项目文件")
+	commandID := flags.String("command-id", "", "幂等命令 ID；重复 ID 只回放已提交结果")
 	var allowCommands commandPrefixFlag
 	var allowEnvironment stringListFlag
 	flags.Var(&allowCommands, "allow-command", "允许的非交互命令前缀，可重复；go,test 表示 go test")
@@ -242,6 +245,12 @@ func (a *App) runExec(ctx context.Context, args []string) int {
 	task := strings.TrimSpace(strings.Join(flags.Args(), " "))
 	if task == "" {
 		if err := a.writeError("mengdie exec 需要任务描述\n"); err != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+	if *commandID != "" && !validOpaqueCommandID(*commandID) {
+		if err := a.writeError("--command-id 仅允许 1-128 个 ASCII 字母、数字及 . _ : -\n"); err != nil {
 			return ExitRunError
 		}
 		return ExitInvalidInput
@@ -278,8 +287,22 @@ func (a *App) runExec(ctx context.Context, args []string) int {
 	return a.runAgent(ctx, loaded, runID, task, sink, runtimeOptions{
 		Mode: policy.ModeHeadless, Security: "受控本地执行 · 无头模式",
 		AllowEdit: *allowEdit, AllowCommands: allowCommands.Values(),
-		AllowedEnvironment: allowEnvironment.Values(),
+		AllowedEnvironment: allowEnvironment.Values(), CommandID: *commandID,
 	})
+}
+
+func validOpaqueCommandID(value string) bool {
+	if len(value) == 0 || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' ||
+			character >= '0' && character <= '9' || strings.ContainsRune("._:-", character) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (a *App) writeVersion() error {

@@ -175,10 +175,13 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 		}
 		if len(response.Message.ToolCalls) == 0 {
 			summary := strings.TrimSpace(response.Message.Content)
-			if _, err := emitter.Emit(ctx, events.KindRunCompleted, events.RunCompleted{Summary: summary}); err != nil {
-				return state.result(summary), err
+			result := state.result(summary)
+			if _, err := emitter.Emit(ctx, events.KindRunCompleted, events.RunCompleted{
+				Summary: summary, DeniedTools: result.DeniedTools,
+			}); err != nil {
+				return result, err
 			}
-			return state.result(summary), nil
+			return result, nil
 		}
 
 		for _, call := range response.Message.ToolCalls {

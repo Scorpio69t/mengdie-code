@@ -236,7 +236,7 @@ func TestExecRunsAgentAndEmitsCompletedEvents(t *testing.T) {
 	}
 }
 
-func TestExecPersistsCompletionBoundariesWithoutPrivateTask(t *testing.T) {
+func TestExecPersistsPrivateTaskOnlyInCommandLedger(t *testing.T) {
 	root := t.TempDir()
 	writeRuntimeConfig(t, root)
 	application, stdout, _ := newTestApp(t, map[string]string{"TEST_API_KEY": "must-not-persist"})
@@ -250,7 +250,7 @@ func TestExecPersistsCompletionBoundariesWithoutPrivateTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeTestSessionStore(t, store)
-	records, err := store.Load(context.Background(), "run-test", 0, 20)
+	records, err := store.Load(context.Background(), "ses_run-test", 0, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,8 +259,11 @@ func TestExecPersistsCompletionBoundariesWithoutPrivateTask(t *testing.T) {
 		t.Fatalf("records=%d: %+v", len(records), records)
 	}
 	for index, record := range records {
-		if record.Kind != wantKinds[index] || record.SessionSeq != uint64(index+1) {
+		if record.Kind != wantKinds[index] || record.SessionSeq != uint64(index+1) || record.CommandID != "cmd_run-test" {
 			t.Fatalf("record %d=%+v", index, record)
+		}
+		if bytes.Contains(record.Payload, []byte("private task text")) {
+			t.Fatalf("public event contains private task: %s", record.Payload)
 		}
 	}
 	if strings.Contains(stdout.String(), "private task text") {
@@ -270,7 +273,14 @@ func TestExecPersistsCompletionBoundariesWithoutPrivateTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"private task text", "must-not-persist"} {
+	command, err := store.LookupCommand(context.Background(), "cmd_run-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(command.Payload, []byte("private task text")) {
+		t.Fatalf("command payload=%s", command.Payload)
+	}
+	for _, forbidden := range []string{"must-not-persist"} {
 		if bytes.Contains(databaseBytes, []byte(forbidden)) {
 			t.Fatalf("database contains forbidden value %q", forbidden)
 		}
@@ -291,11 +301,11 @@ func TestExecStoreFirstFailureSemantics(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer closeTestSessionStore(t, store)
-		records, err := store.Load(context.Background(), "run-test", 0, 20)
+		records, err := store.Load(context.Background(), "ses_run-test", 0, 20)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(records) != 1 || records[0].Kind != "run.started" {
+		if len(records) == 0 || records[0].Kind != "run.started" {
 			t.Fatalf("records=%+v", records)
 		}
 	})
@@ -311,6 +321,136 @@ func TestExecStoreFirstFailureSemantics(t *testing.T) {
 			t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
 		}
 	})
+}
+
+func TestExecCommandIDReplaysTerminalFactsWithoutProvider(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeConfig(t, root)
+	application, stdout, stderr := newTestApp(t, nil)
+	providerCreations := 0
+	application.newProvider = func(config.Profile, string) (provider.Provider, error) {
+		providerCreations++
+		return &appFakeProvider{responses: []*provider.ChatResponse{{Message: provider.Message{Role: provider.RoleAssistant, Content: "once"}}}}, nil
+	}
+	ids := []string{"run-first", "run-retry", "run-conflict"}
+	application.newRunID = func() (string, error) {
+		id := ids[0]
+		ids = ids[1:]
+		return id, nil
+	}
+	args := []string{"exec", "--cwd", root, "--json", "--command-id", "stable-1", "private task"}
+	if code := application.Run(context.Background(), args, false); code != ExitOK {
+		t.Fatalf("first code=%d stderr=%s", code, stderr.String())
+	}
+	firstOutput := stdout.String()
+	stdout.Reset()
+	if code := application.Run(context.Background(), args, false); code != ExitOK {
+		t.Fatalf("retry code=%d stderr=%s", code, stderr.String())
+	}
+	if providerCreations != 1 {
+		t.Fatalf("provider creations=%d", providerCreations)
+	}
+	if strings.Contains(stdout.String(), "private task") {
+		t.Fatalf("replay leaked private task: %s", stdout.String())
+	}
+	if strings.Count(strings.TrimSpace(stdout.String()), "\n")+1 != 3 {
+		t.Fatalf("replay output=%q first=%q", stdout.String(), firstOutput)
+	}
+	stdout.Reset()
+	conflict := []string{"exec", "--cwd", root, "--json", "--command-id", "stable-1", "different task"}
+	if code := application.Run(context.Background(), conflict, false); code != ExitRunError {
+		t.Fatalf("conflict code=%d", code)
+	}
+	if providerCreations != 1 {
+		t.Fatalf("provider called after conflict: %d", providerCreations)
+	}
+}
+
+func TestExecCommandIDFailsClosedForRunningCommand(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeConfig(t, root)
+	application, stdout, stderr := newTestApp(t, nil)
+	payload, err := session.TaskCommandPayload("private task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := session.OpenSQLite(context.Background(), session.OpenOptions{DataDir: application.dataDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.BeginCommandRun(context.Background(), session.CommandRunMetadata{
+		SessionID: "session-running", CommandID: "stable-running", CommandKind: session.CommandKindExec,
+		CommandPayload: payload, RunID: "run-running", ProjectRoot: filepath.Clean(root),
+		Provider: "openai-compatible", Model: "test-model", StartedAt: application.now(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := events.New("run-running", 1, application.now(), events.KindRunStarted, events.RunStarted{Model: "test-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink, err := session.NewCommandEventSink("session-running", "stable-running", 0, store, &events.MemorySink{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Emit(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	closeTestSessionStore(t, store)
+	providerCreations := 0
+	application.newProvider = func(config.Profile, string) (provider.Provider, error) {
+		providerCreations++
+		return &appFakeProvider{}, nil
+	}
+	code := application.Run(context.Background(), []string{"exec", "--cwd", root, "--json", "--command-id", "stable-running", "private task"}, false)
+	if code != ExitRunError || providerCreations != 0 {
+		t.Fatalf("code=%d provider creations=%d", code, providerCreations)
+	}
+	if !strings.Contains(stderr.String(), "不会自动续跑") || strings.Contains(stdout.String(), "private task") {
+		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestExecRejectsUnsafeCommandID(t *testing.T) {
+	application, _, stderr := newTestApp(t, nil)
+	code := application.Run(context.Background(), []string{"exec", "--command-id", "unsafe id", "task"}, false)
+	if code != ExitInvalidInput || !strings.Contains(stderr.String(), "--command-id") {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+}
+
+func TestSessionCommandsExposeOnlyPublicProjectionAndRequireDeleteConfirmation(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeConfig(t, root)
+	application, stdout, stderr := newTestApp(t, nil)
+	if code := application.Run(context.Background(), []string{"exec", "--cwd", root, "--json", "private task"}, false); code != ExitOK {
+		t.Fatalf("exec code=%d stderr=%s", code, stderr.String())
+	}
+	stdout.Reset()
+	if code := application.Run(context.Background(), []string{"session", "list", "--cwd", root, "--json"}, false); code != ExitOK {
+		t.Fatalf("list code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "ses_run-test") || strings.Contains(stdout.String(), "private task") {
+		t.Fatalf("list=%s", stdout.String())
+	}
+	stdout.Reset()
+	if code := application.Run(context.Background(), []string{"session", "show", "--cwd", root, "--json", "ses_run-test"}, false); code != ExitOK {
+		t.Fatalf("show code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "fake completed") || strings.Contains(stdout.String(), "private task") {
+		t.Fatalf("show=%s", stdout.String())
+	}
+	stdout.Reset()
+	if code := application.Run(context.Background(), []string{"session", "delete", "--cwd", root, "ses_run-test"}, false); code != ExitInvalidInput {
+		t.Fatalf("delete without yes code=%d", code)
+	}
+	if code := application.Run(context.Background(), []string{"session", "delete", "--cwd", root, "--yes", "--json", "ses_run-test"}, false); code != ExitOK {
+		t.Fatalf("delete code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"deleted":true`) {
+		t.Fatalf("delete output=%s", stdout.String())
+	}
 }
 
 func TestExecHumanOutputUsesEventRenderer(t *testing.T) {
@@ -342,7 +482,9 @@ func TestExecRequiresExplicitEditAuthorization(t *testing.T) {
 				t.Fatal(err)
 			}
 			application, _, _ := newTestApp(t, nil)
+			providerCreations := 0
 			application.newProvider = func(config.Profile, string) (provider.Provider, error) {
+				providerCreations++
 				return &appFakeProvider{responses: []*provider.ChatResponse{
 					appToolResponse("edit", "edit_file", map[string]any{
 						"path": "value.go", "old_text": "return 1", "new_text": "return 2", "expected_replacements": 1,
@@ -368,6 +510,14 @@ func TestExecRequiresExplicitEditAuthorization(t *testing.T) {
 			}
 			if code != wantCode || !strings.Contains(string(content), wantContent) {
 				t.Fatalf("code=%d want=%d content=%q", code, wantCode, content)
+			}
+			if !allow {
+				if retryCode := application.Run(context.Background(), args, false); retryCode != ExitPolicyDenied {
+					t.Fatalf("retry code=%d want=%d", retryCode, ExitPolicyDenied)
+				}
+				if providerCreations != 1 {
+					t.Fatalf("provider creations after rejected replay=%d", providerCreations)
+				}
 			}
 		})
 	}
