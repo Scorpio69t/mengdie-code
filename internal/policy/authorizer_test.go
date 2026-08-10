@@ -75,6 +75,43 @@ func TestAuthorizerApprovalOutcomes(t *testing.T) {
 	}
 }
 
+func TestReauthorizeAlwaysMintsFreshCapabilityAfterCurrentPreview(t *testing.T) {
+	root := testRoot(t)
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	call := testCall(t, root, []tools.Effect{tools.EffectRead}, "main.go", false)
+	broker := &fixedBroker{response: ApprovalResponse{Choice: ApprovalApprove}}
+	sink := &events.MemorySink{}
+	emitter, err := events.NewEmitter("run-recovered", sink, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer, err := NewAuthorizer(AuthorizerOptions{
+		Engine: testEngine(t, root, ModeInteractive, nil), Broker: broker,
+		Observer: EventObserver{Emitter: emitter}, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldCapability, err := authorizer.Authorize(context.Background(), "run-original", root, call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability, err := authorizer.Reauthorize(context.Background(), "run-recovered", root, call, "重新确认")
+	if err != nil {
+		t.Fatalf("Reauthorize() error=%v", err)
+	}
+	if broker.calls != 1 || capability.Nonce == oldCapability.Nonce || capability.RunID != "run-recovered" {
+		t.Fatalf("broker=%d old=%+v new=%+v", broker.calls, oldCapability, capability)
+	}
+	if err := authorizer.Verifier().Consume(context.Background(), call, oldCapability, tools.CapabilityUse{RunID: "run-recovered", WorkDir: root, At: now}); err == nil {
+		t.Fatal("old capability was accepted by recovered run")
+	}
+	got := sink.Events()
+	if len(got) != 2 || got[0].Kind != events.KindApprovalNeeded || got[1].Kind != events.KindApprovalResolved {
+		t.Fatalf("recovery approval events=%+v", got)
+	}
+}
+
 func TestHeadlessAskBecomesDenyWithoutBroker(t *testing.T) {
 	root := testRoot(t)
 	broker := &fixedBroker{response: ApprovalResponse{Choice: ApprovalApprove}}

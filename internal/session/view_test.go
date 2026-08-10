@@ -25,16 +25,17 @@ func TestReduceBuildsPublicViewAndSkipsUnknownKinds(t *testing.T) {
 		viewRecord(t, 6, events.KindApprovalResolved, events.ApprovalResolved{CallID: "call-1", Decision: "allow"}),
 		viewRecord(t, 7, events.KindToolStarted, events.ToolStarted{CallID: "call-1", Tool: "read_file"}),
 		viewRecord(t, 8, events.KindToolCompleted, events.ToolCompleted{CallID: "call-1", Tool: "read_file", Success: truth, Summary: "ok", DurationMS: 3}),
-		viewRecord(t, 9, events.KindUsageUpdated, events.UsageUpdated{InputTokens: 10, OutputTokens: 5, CacheReadTokens: 2}),
-		viewRecord(t, 10, events.KindWarning, events.Warning{Code: "W", Message: "warning"}),
-		{ID: "evt-unknown", SessionID: "session-view", SessionSeq: 11, RunID: "run-view", RunSeq: 11, Kind: "future.fact", SchemaVersion: 1, Visibility: VisibilityPublic, Payload: json.RawMessage(`{"future":true}`), Time: storeTestTime.Add(11 * time.Second)},
-		viewRecord(t, 12, events.KindRunCompleted, events.RunCompleted{Summary: "done"}),
+		viewRecord(t, 9, events.KindRecoveryResolved, events.RecoveryResolved{SourceRunID: "run-old", CallID: "call-1", Action: "retry_read", Outcome: "completed"}),
+		viewRecord(t, 10, events.KindUsageUpdated, events.UsageUpdated{InputTokens: 10, OutputTokens: 5, CacheReadTokens: 2}),
+		viewRecord(t, 11, events.KindWarning, events.Warning{Code: "W", Message: "warning"}),
+		{ID: "evt-unknown", SessionID: "session-view", SessionSeq: 12, RunID: "run-view", RunSeq: 12, Kind: "future.fact", SchemaVersion: 1, Visibility: VisibilityPublic, Payload: json.RawMessage(`{"future":true}`), Time: storeTestTime.Add(12 * time.Second)},
+		viewRecord(t, 13, events.KindRunCompleted, events.RunCompleted{Summary: "done"}),
 	}
 	view, err := Reduce(SessionView{ID: "session-view", Status: "active", CreatedAt: storeTestTime, UpdatedAt: storeTestTime}, records)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if view.LastSeq != 12 || view.Status != "completed" || len(view.Runs) != 1 || view.Runs[0].Status != "completed" {
+	if view.LastSeq != 13 || view.Status != "completed" || len(view.Runs) != 1 || view.Runs[0].Status != "completed" {
 		t.Fatalf("view status=%s last=%d runs=%+v", view.Status, view.LastSeq, view.Runs)
 	}
 	if len(view.Messages) != 1 || view.Messages[0].Text != "完成" || len(view.Todos) != 1 || len(view.Tools) != 1 || len(view.Approvals) != 1 || len(view.Warnings) != 1 {
@@ -45,6 +46,9 @@ func TestReduceBuildsPublicViewAndSkipsUnknownKinds(t *testing.T) {
 	}
 	if view.Usage.InputTokens != 10 || view.Usage.OutputTokens != 5 || view.Usage.CacheReadTokens != 2 {
 		t.Fatalf("usage=%+v", view.Usage)
+	}
+	if len(view.Recoveries) != 1 || view.Recoveries[0].SourceRunID != "run-old" || view.Recoveries[0].Action != "retry_read" {
+		t.Fatalf("recoveries=%+v", view.Recoveries)
 	}
 }
 

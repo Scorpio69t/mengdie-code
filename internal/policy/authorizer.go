@@ -160,6 +160,59 @@ func (a *Authorizer) Authorize(ctx context.Context, runID, workDir string, call 
 	}
 }
 
+// Reauthorize requires a fresh human decision even when the current policy
+// would otherwise allow the call. Recovery uses it after Prepare has observed
+// the current filesystem and environment, so an old approval or capability is
+// never replayed across a process interruption.
+func (a *Authorizer) Reauthorize(ctx context.Context, runID, workDir string, call *tools.PreparedCall, prompt string) (tools.Capability, error) {
+	if err := ctx.Err(); err != nil {
+		return tools.Capability{}, err
+	}
+	call = clonePreparedCall(call)
+	result := a.engine.Evaluate(call)
+	if result.Decision == DecisionDeny {
+		return tools.Capability{}, fmt.Errorf("%w: %s", ErrDenied, result.Reason)
+	}
+	canonicalWorkDir, err := canonicalDirectory(workDir)
+	if err != nil {
+		return tools.Capability{}, fmt.Errorf("policy: workdir: %w", err)
+	}
+	if !sameDirectory(a.engine.root, canonicalWorkDir) {
+		return tools.Capability{}, ErrWorkDirMismatch
+	}
+	if a.engine.Mode() == ModeHeadless || a.broker == nil {
+		return tools.Capability{}, ErrApprovalMissing
+	}
+	request := makeApprovalRequest(call, result)
+	if strings.TrimSpace(prompt) != "" {
+		request.Prompt = prompt
+	}
+	if err := a.observer.Needed(ctx, request); err != nil {
+		return tools.Capability{}, fmt.Errorf("emit recovery approval needed: %w", err)
+	}
+	response, err := a.broker.Decide(ctx, request)
+	if err != nil {
+		return tools.Capability{}, fmt.Errorf("recovery approval: %w", err)
+	}
+	if err := validateApprovalResponse(response); err != nil {
+		return tools.Capability{}, err
+	}
+	if err := a.observer.Resolved(ctx, request, response); err != nil {
+		return tools.Capability{}, fmt.Errorf("emit recovery approval resolved: %w", err)
+	}
+	if response.Choice == ApprovalApprove {
+		return a.authority.issue(runID, a.engine.root, call, a.now())
+	}
+	if response.Choice == ApprovalEdit {
+		return tools.Capability{}, ErrReprepare
+	}
+	reason := strings.TrimSpace(response.Reason)
+	if reason == "" {
+		reason = "用户拒绝"
+	}
+	return tools.Capability{}, fmt.Errorf("%w: %s", ErrDenied, reason)
+}
+
 func makeApprovalRequest(call *tools.PreparedCall, result Result) ApprovalRequest {
 	risk := "中"
 	if hasEffect(call.Effects, tools.EffectExecute) || hasEffect(call.Effects, tools.EffectNetwork) {

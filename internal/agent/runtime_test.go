@@ -270,6 +270,73 @@ func TestAgentStopsBeforeModelWhenContextPersistenceFails(t *testing.T) {
 	assertEventKinds(t, sink.Events(), []events.Kind{events.KindRunStarted, events.KindRunFailed})
 }
 
+func TestAgentRecoveryRepreparesAndReauthorizesBeforeProviderCall(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "value.txt"), []byte("current value\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	call := provider.ToolCall{ID: "recovery-read", Type: "function", Name: "read_file", Arguments: json.RawMessage(`{"path":"value.txt"}`)}
+	fake := &scriptedProvider{responses: []*provider.ChatResponse{assistantFinal("恢复完成。", provider.Usage{})}}
+	recorder := &memoryContextRecorder{}
+	runtime, emitter, sink := newInteractiveRecoveryHarness(t, root, fake, "y\n", recorder)
+	_, err := runtime.Run(context.Background(), RunRequest{
+		RunID: "run-test", Task: "继续处理", Model: "fake:model", MaxTurns: 2,
+		History:  []provider.Message{{Role: provider.RoleUser, Content: "旧任务"}, {Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call}}},
+		Recovery: &RecoveryAction{SourceRunID: "run-old", Call: call, Kind: RecoveryRetryRead},
+	}, emitter)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(fake.requests) != 1 {
+		t.Fatalf("provider requests=%d", len(fake.requests))
+	}
+	request := fake.requests[0]
+	if len(request.Messages) < 3 {
+		t.Fatalf("provider messages=%+v", request.Messages)
+	}
+	last := request.Messages[len(request.Messages)-3:]
+	if last[0].Role != provider.RoleAssistant || last[0].ToolCalls[0].ID != call.ID ||
+		last[1].Role != provider.RoleTool || last[1].ToolCallID != call.ID ||
+		last[2].Role != provider.RoleUser || last[2].Content != "继续处理" {
+		t.Fatalf("provider recovery history=%+v", last)
+	}
+	if len(recorder.records) < 2 || recorder.records[0].message.Role != provider.RoleTool || recorder.records[1].message.Role != provider.RoleUser {
+		t.Fatalf("context records=%+v", recorder.records)
+	}
+	assertEventKinds(t, sink.Events(), []events.Kind{
+		events.KindRunStarted, events.KindToolProposed, events.KindApprovalNeeded, events.KindApprovalResolved,
+		events.KindToolStarted, events.KindToolCompleted, events.KindRecoveryResolved, events.KindMessageDelta, events.KindMessageCompleted, events.KindRunCompleted,
+	})
+}
+
+func TestAgentRecoveryRejectsWriteWithoutSideEffect(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "value.txt")
+	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	call := provider.ToolCall{ID: "recovery-write", Type: "function", Name: "edit_file", Arguments: json.RawMessage(`{"path":"value.txt","old_text":"old","new_text":"new","expected_replacements":1}`)}
+	fake := &scriptedProvider{responses: []*provider.ChatResponse{assistantFinal("已拒绝修改。", provider.Usage{})}}
+	runtime, emitter, sink := newInteractiveRecoveryHarness(t, root, fake, "n\n", nil)
+	_, err := runtime.Run(context.Background(), RunRequest{
+		RunID: "run-test", Task: "继续处理", Model: "fake:model", MaxTurns: 2,
+		History:  []provider.Message{{Role: provider.RoleUser, Content: "旧任务"}, {Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call}}},
+		Recovery: &RecoveryAction{SourceRunID: "run-old", Call: call, Kind: RecoveryReapprove},
+	}, emitter)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil || string(content) != "old\n" {
+		t.Fatalf("file content=%q error=%v", content, err)
+	}
+	for _, event := range sink.Events() {
+		if event.Kind == events.KindToolStarted {
+			t.Fatalf("rejected write emitted tool.started")
+		}
+	}
+}
+
 func newAgentTestHarness(t *testing.T, root string, fake provider.Provider, rules []policy.Rule) (*Agent, *events.Emitter, *events.MemorySink) {
 	return newAgentTestHarnessWithRecorder(t, root, fake, rules, nil)
 }
@@ -291,6 +358,40 @@ func newAgentTestHarnessWithRecorder(t *testing.T, root string, fake provider.Pr
 	now := time.Now
 	runtime, err := New(Options{
 		Provider: fake, Registry: registry, Guard: guard, Policy: engine,
+		Now: now, MaxContextTokens: 64_000, ContextRecorder: recorder,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &events.MemorySink{}
+	emitter, err := events.NewEmitter("run-test", sink, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return runtime, emitter, sink
+}
+
+func newInteractiveRecoveryHarness(t *testing.T, root string, fake provider.Provider, input string, recorder ContextRecorder) (*Agent, *events.Emitter, *events.MemorySink) {
+	t.Helper()
+	guard, err := platform.NewPathGuard(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := tools.NewRegistry(tools.DefaultTools()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := policy.NewEngine(policy.Options{Root: root, Mode: policy.ModeInteractive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker, err := policy.NewTextBroker(strings.NewReader(input), &strings.Builder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now
+	runtime, err := New(Options{
+		Provider: fake, Registry: registry, Guard: guard, Policy: engine, Broker: broker,
 		Now: now, MaxContextTokens: 64_000, ContextRecorder: recorder,
 	})
 	if err != nil {
