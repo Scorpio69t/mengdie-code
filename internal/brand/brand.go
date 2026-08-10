@@ -10,18 +10,20 @@ import (
 	"unicode/utf8"
 )
 
-// Mark is the compact terminal representation of the MengDie butterfly.
-// Generated offline from assets/brand/mengdie-mark.svg: rasterize at 512x512,
-// then map per-cell ink (distance from white) onto the " ░▒▓█" block ramp at
-// 18 columns with a 0.5 cell aspect ratio. Regenerate when the SVG changes.
-const Mark = `     ░    ░
-░▓▓▒░ ░  ░ ░▒▓▓░
-░█▓▒▓▓░▒▒░▓▓▒▓█░
-░▓▓▒░▒▒▓▓▒▒░▒▓▓░
- ▓██▓▓▒▓▓▒▓▓██▓
-░██▒▓█▓▓▓▓█▓▒██░
- ▓███▒ ▒▒ ▒███▓
-  ▒░        ░▒`
+// Mark is the terminal counterpart of assets/brand/mengdie-mark.svg. Two
+// angle-bracket wings surround a split insertion caret: code on both sides,
+// with an evidence boundary in the middle. It intentionally uses line art so
+// it remains crisp in macOS and Windows terminals without half-block shading.
+const Mark = `╲╲      ╱╱
+ ╲╲  ╷ ╱╱
+  ╲╲ │╱╱
+  ╱╱ │╲╲
+ ╱╱  ╵ ╲╲
+╱╱      ╲╲`
+
+// CompactMark is used in dense headers where the full six-line mark would
+// compete with the conversation.
+const CompactMark = "╲╱│╲╱"
 
 // Info contains the runtime facts shown on the interactive welcome screen.
 // Values must already be safe for display; secrets never belong here.

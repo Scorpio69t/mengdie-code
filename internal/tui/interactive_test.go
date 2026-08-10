@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Scorpio69t/mengdie-code/internal/brand"
 	"github.com/Scorpio69t/mengdie-code/internal/policy"
@@ -21,13 +22,39 @@ func TestInteractiveModelWelcomeIsChineseFirstResponsiveAndColorFree(t *testing.
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 36, Height: 22})
 	model = updated.(InteractiveModel)
 	content := model.View().Content
-	for _, want := range []string{"MengDie Code / 梦蝶 Code", "不是记得更多", info.WorkDir, info.Model, info.Security, "请描述", "Ctrl+S"} {
+	for _, want := range []string{"梦蝶 CODE", "不是记得更多", "梦蝶", "openai-compatible", "受控本地执行", "输入任务", "Ctrl+S"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("welcome missing %q:\n%s", want, content)
 		}
 	}
 	if strings.Contains(content, "\x1b[") {
 		t.Fatalf("no-color view contains ANSI sequence: %q", content)
+	}
+	if strings.Contains(content, "工作区") || strings.Contains(content, "░") {
+		t.Fatalf("narrow view retained sidebar or legacy raster mark: %s", content)
+	}
+	assertViewWidth(t, content, 36)
+}
+
+func TestInteractiveModelWideLayoutPrioritizesTimelineAndContextSidebar(t *testing.T) {
+	model := NewInteractiveModel(interactiveTestInfo(), &fakeTaskRunner{}, nil, nil, false)
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 34})
+	model = updated.(InteractiveModel)
+	content := model.View().Content
+	for _, want := range []string{"梦蝶 CODE", "工作区", "会话", "模型", "安全", "进度", "D:/项目/梦蝶"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("wide layout missing %q:\n%s", want, content)
+		}
+	}
+	assertViewWidth(t, content, 120)
+}
+
+func assertViewWidth(t *testing.T, content string, width int) {
+	t.Helper()
+	for lineNumber, line := range strings.Split(content, "\n") {
+		if actual := ansi.StringWidth(line); actual > width {
+			t.Errorf("line %d width=%d exceeds terminal width=%d: %q", lineNumber+1, actual, width, line)
+		}
 	}
 }
 
@@ -47,13 +74,18 @@ func TestInteractiveModelSubmitsBoundedTaskAndCancelsSafely(t *testing.T) {
 	if runner.task != "检查项目" || model.phase != phaseRunning || model.view.ID != "ses-test" {
 		t.Fatalf("task=%q phase=%v view=%+v", runner.task, model.phase, model.view)
 	}
+	content := model.View().Content
+	if !strings.Contains(content, "你") || !strings.Contains(content, "检查项目") {
+		t.Fatalf("running timeline does not retain the submitted task: %s", content)
+	}
+	assertViewWidth(t, content, 100)
 
 	updated, quit := model.Update(tea.KeyPressMsg(tea.Key{Code: 'c', Mod: tea.ModCtrl}))
 	model = updated.(InteractiveModel)
 	if quit != nil || !runner.execution.cancelled || model.phase != phaseCancelling {
 		t.Fatalf("quit=%v cancelled=%t phase=%v", quit, runner.execution.cancelled, model.phase)
 	}
-	if !strings.Contains(model.View().Content, "等待持久终态") {
+	if !strings.Contains(model.View().Content, "持久终态") {
 		t.Fatalf("cancelling view does not explain durable shutdown: %s", model.View().Content)
 	}
 }
@@ -102,7 +134,7 @@ func TestInteractiveModelResolvesApprovalWithoutIssuingCapability(t *testing.T) 
 	prompt := receiveApprovalPrompt(t, broker.Prompts())
 	updated, _ := model.Update(approvalPromptMsg{prompt: prompt})
 	model = updated.(InteractiveModel)
-	if !strings.Contains(model.View().Content, "需要审批") || !strings.Contains(model.View().Content, "修改 main.go") {
+	if !strings.Contains(model.View().Content, "需要你的决定") || !strings.Contains(model.View().Content, "修改 main.go") {
 		t.Fatalf("approval preview missing: %s", model.View().Content)
 	}
 	updated, _ = model.Update(tea.KeyPressMsg(tea.Key{Text: "y", Code: 'y'}))

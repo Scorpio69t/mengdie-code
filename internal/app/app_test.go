@@ -86,7 +86,7 @@ func TestInteractiveDefaultsToFullScreenTUI(t *testing.T) {
 		updated, _ := interactive.Update(tea.WindowSizeMsg{Width: 100, Height: 32})
 		interactive = updated.(tui.InteractiveModel)
 		content := interactive.View().Content
-		for _, want := range []string{"MengDie Code / 梦蝶 Code", root[:20], "openai-compatible:test-model", "等待任务", "Ctrl+S"} {
+		for _, want := range []string{"梦蝶 CODE", filepath.Base(root), "openai-compatible:test", "等待任务", "Ctrl+S", "工作区"} {
 			if !strings.Contains(content, want) {
 				t.Errorf("default TUI missing %q: %s", want, content)
 			}

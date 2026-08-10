@@ -21,6 +21,11 @@ import (
 
 const MaxInteractiveTaskBytes = 64 << 10
 
+const (
+	wideLayoutWidth = 96
+	sidebarWidth    = 31
+)
+
 type TaskResult struct {
 	ExitCode int
 	Detail   string
@@ -66,6 +71,7 @@ type InteractiveModel struct {
 	inputError   string
 	feedError    error
 	detail       string
+	task         string
 	exitCode     int
 	execution    TaskExecution
 	subscription FactSubscription
@@ -74,15 +80,14 @@ type InteractiveModel struct {
 
 func NewInteractiveModel(info brand.Info, runner TaskRunner, factSource SessionFactSource, approvals ApprovalSource, color bool) InteractiveModel {
 	input := textarea.New()
-	input.Placeholder = "请描述要完成的 Coding 任务……"
+	input.Prompt = ""
+	input.Placeholder = "输入任务，可以直接粘贴代码、报错或目标……"
 	input.ShowLineNumbers = false
 	input.CharLimit = MaxInteractiveTaskBytes
 	input.MaxContentHeight = MaxInteractiveTaskBytes
-	input.SetHeight(5)
+	input.SetHeight(3)
 	input.SetWidth(76)
-	if !color {
-		input.SetStyles(textarea.Styles{})
-	}
+	input.SetStyles(textarea.Styles{})
 	_ = input.Focus()
 	view := viewport.New(viewport.WithWidth(76), viewport.WithHeight(8))
 	model := InteractiveModel{
@@ -241,6 +246,7 @@ func (m InteractiveModel) submitTask() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.phase, m.inputError = phaseStarting, ""
+	m.task = task
 	m.input.Blur()
 	return m, prepareTask(m.runner, task)
 }
@@ -339,19 +345,16 @@ func waitForApproval(source ApprovalSource) tea.Cmd {
 }
 
 func (m *InteractiveModel) resize() {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	contentWidth := max(20, width-4)
-	m.input.SetWidth(contentWidth)
-	m.input.SetHeight(5)
-	m.viewport.SetWidth(contentWidth)
+	contentWidth := m.contentWidth()
+	mainWidth, _ := m.layoutWidths()
+	m.input.SetWidth(max(16, contentWidth-6))
+	m.input.SetHeight(3)
+	m.viewport.SetWidth(mainWidth)
 	height := m.height
 	if height <= 0 {
-		height = 24
+		height = 30
 	}
-	reserved := lipgloss.Height(m.renderHeader()) + lipgloss.Height(m.renderAction()) + 3
+	reserved := lipgloss.Height(m.renderHeader()) + lipgloss.Height(m.renderAction()) + 2
 	m.viewport.SetHeight(max(3, height-reserved))
 	m.refreshViewport(false)
 }
@@ -359,9 +362,9 @@ func (m *InteractiveModel) resize() {
 func (m *InteractiveModel) refreshViewport(forceBottom bool) {
 	wasBottom := forceBottom || m.viewport.AtBottom()
 	if m.view.ID == "" {
-		m.viewport.SetContent(brand.Mark + "\n\n不是记得更多，而是记得更对。\n\n输入一个明确任务。梦蝶会在本地受控边界内读取、修改并验证当前项目。\n持久事实是恢复依据；界面和实时通知都可以重建。")
+		m.viewport.SetContent(m.renderWelcome())
 	} else {
-		m.viewport.SetContent(renderSessionTimeline(m.view, max(20, m.viewport.Width())))
+		m.viewport.SetContent(m.renderConversation())
 	}
 	if wasBottom {
 		m.viewport.GotoBottom()
@@ -369,7 +372,10 @@ func (m *InteractiveModel) refreshViewport(forceBottom bool) {
 }
 
 func (m InteractiveModel) View() tea.View {
-	content := strings.Join([]string{m.renderHeader(), m.viewport.View(), m.renderAction()}, "\n")
+	content := strings.Join([]string{m.renderHeader(), m.renderMain(), m.renderAction()}, "\n")
+	if m.width > 4 {
+		content = lipgloss.NewStyle().MarginLeft(2).Render(content)
+	}
 	result := tea.NewView(content)
 	result.AltScreen = true
 	result.WindowTitle = "MengDie Code / 梦蝶 Code"
@@ -377,41 +383,50 @@ func (m InteractiveModel) View() tea.View {
 }
 
 func (m InteractiveModel) renderHeader() string {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	heading := "MengDie Code / 梦蝶 Code"
-	if m.color {
-		heading = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63")).Render(heading)
-	}
-	status := interactiveStatus(m.phase)
-	if width < 72 {
-		valueWidth := max(12, width-5)
+	styles := newInteractiveStyles(m.color)
+	width := m.contentWidth()
+	title := strings.Join([]string{
+		styles.accent.Render(brand.CompactMark),
+		styles.strong.Render("梦蝶 CODE"),
+	}, "  ")
+	right := styles.status.Render(statusSymbol(m.phase) + " " + interactiveStatus(m.phase))
+	if width < 60 {
 		return strings.Join([]string{
-			fmt.Sprintf("%s  %s", heading, m.info.Version),
-			"项目 " + clip(m.info.WorkDir, valueWidth),
-			"模型 " + clip(m.info.Model, valueWidth),
-			"安全 " + clip(m.info.Security, valueWidth),
-			"状态 " + status,
+			padBetween(title, right, width),
+			styles.muted.Render(truncateLine("项目  "+projectName(m.info.WorkDir), width)),
+			styles.muted.Render(truncateLine("模型  "+m.info.Model, width)),
+			styles.muted.Render(truncateLine("安全  "+m.info.Security, width)),
 		}, "\n")
 	}
-	return strings.Join([]string{
-		fmt.Sprintf("%s  %s", heading, m.info.Version),
-		fmt.Sprintf("项目 %s · 模型 %s · 状态 %s", clip(m.info.WorkDir, max(12, width/2)), clip(m.info.Model, 32), status),
-		"安全 " + clip(m.info.Security, max(12, width-5)),
-	}, "\n")
+	left := title + "  " + styles.muted.Render("MENGDIE · "+m.info.Version)
+	first := padBetween(left, right, width)
+	if width >= wideLayoutWidth {
+		return first
+	}
+	context := strings.Join([]string{
+		projectName(m.info.WorkDir),
+		m.info.Model,
+		m.info.Security,
+	}, "  ·  ")
+	return first + "\n" + styles.muted.Render(truncateLine(context, width))
 }
 
 func (m InteractiveModel) renderAction() string {
+	styles := newInteractiveStyles(m.color)
+	width := m.contentWidth()
 	if m.feedError != nil {
-		return "事实流异常（已提交内容仍可恢复）：" + clip(m.feedError.Error(), 72)
+		return renderBottomBar(styles, width, "事实流已暂停", "已提交内容仍可恢复 · "+clip(m.feedError.Error(), max(20, width-24)))
 	}
 	if m.approval != nil {
 		request := m.approval.Request
 		preview := strings.TrimSpace(strings.Join([]string{request.Preview.Title, request.Preview.Body}, "\n"))
-		preview = clipLines(preview, 8, 120)
-		return fmt.Sprintf("需要审批 · %s · 风险 %s\n%s\n[y] 允许  [n] 拒绝  [e] 编辑后重新准备  [Ctrl+C] 取消任务", request.Tool, request.Risk, preview)
+		preview = clipLines(preview, 7, max(24, width-6))
+		body := strings.Join([]string{
+			padBetween(styles.strong.Render("需要你的决定"), styles.muted.Render(request.Tool+" · 风险 "+request.Risk), max(20, width-6)),
+			preview,
+			styles.accent.Render("Y 允许") + "   " + styles.muted.Render("N 拒绝  ·  E 编辑后重备  ·  Ctrl+C 取消"),
+		}, "\n")
+		return styles.approval.Render(body)
 	}
 	switch m.phase {
 	case phaseInput:
@@ -419,23 +434,252 @@ func (m InteractiveModel) renderAction() string {
 		if !m.color {
 			inputView = ansi.Strip(inputView)
 		}
-		message := inputView + "\n[Ctrl+S / Ctrl+Enter] 提交  [Enter] 换行  [Esc] 退出"
+		message := inputView + "\n" + padBetween(
+			styles.muted.Render("Enter 换行  ·  Esc 退出"),
+			styles.accent.Render("Ctrl+S 提交"),
+			max(20, width-6),
+		)
 		if m.inputError != "" {
-			message += "\n" + m.inputError
+			message += "\n" + styles.strong.Render(m.inputError)
 		}
-		return message
+		return styles.input.Render(message)
 	case phaseStarting, phaseRunning:
-		return "任务运行中 · [PgUp/PgDn] 查看时间线 · [Ctrl+C 或 q] 安全取消"
+		return renderBottomBar(styles, width, statusSymbol(m.phase)+" "+interactiveStatus(m.phase), "PgUp/PgDn 时间线  ·  Ctrl+C 或 q 安全取消")
 	case phaseCancelling:
-		return "正在取消并等待持久终态，请勿强制关闭……"
+		return renderBottomBar(styles, width, "正在取消", "等待 Runtime 写入持久终态，请勿强制关闭")
 	case phaseDone:
-		message := "任务已结束 · [PgUp/PgDn] 查看时间线 · [q/Esc] 退出"
+		message := "PgUp/PgDn 时间线  ·  q 或 Esc 退出"
 		if m.detail != "" {
-			message += "\n" + clip(m.detail, 120)
+			message = clip(m.detail, max(20, width-18)) + "  ·  " + message
 		}
-		return message
+		return renderBottomBar(styles, width, statusSymbol(m.phase)+" "+interactiveStatus(m.phase), message)
 	default:
 		return ""
+	}
+}
+
+func (m InteractiveModel) renderMain() string {
+	mainWidth, sideWidth := m.layoutWidths()
+	main := lipgloss.NewStyle().Width(mainWidth).Height(m.viewport.Height()).Render(m.viewport.View())
+	if sideWidth == 0 {
+		return main
+	}
+	styles := newInteractiveStyles(m.color)
+	sidebar := styles.sidebar.Width(max(16, sideWidth-4)).Height(m.viewport.Height()).Render(m.renderSidebar(sideWidth - 4))
+	return lipgloss.JoinHorizontal(lipgloss.Top, main, "  ", sidebar)
+}
+
+func (m InteractiveModel) renderWelcome() string {
+	styles := newInteractiveStyles(m.color)
+	if m.viewport.Width() < 48 {
+		return strings.Join([]string{
+			styles.accent.Render(brand.CompactMark) + "  " + styles.strong.Render("梦蝶 CODE"),
+			styles.muted.Render("MENGDIE CODE"),
+			"",
+			styles.strong.Render("不是记得更多，而是记得更对。"),
+			"",
+			ansi.Wrap("描述一个明确的编码任务。梦蝶会在受控边界内读取、修改并验证当前项目。", max(20, m.viewport.Width()), " "),
+		}, "\n")
+	}
+	wordmark := strings.Join([]string{
+		styles.strong.Render("梦蝶 CODE"),
+		styles.muted.Render("MENGDIE CODE"),
+		"",
+		styles.accent.Render("不是记得更多，而是记得更对。"),
+	}, "\n")
+	logo := lipgloss.JoinHorizontal(lipgloss.Center, styles.accent.Render(brand.Mark), "    ", wordmark)
+	return strings.Join([]string{
+		logo,
+		"",
+		styles.strong.Render("准备好了。"),
+		ansi.Wrap("在下方描述一个明确任务，可以附上报错、文件名或验收条件。梦蝶会在本地受控边界内工作；界面来自已提交事实，缺口可以从 EventStore 重建。", max(24, m.viewport.Width()), " "),
+	}, "\n")
+}
+
+func (m InteractiveModel) renderConversation() string {
+	styles := newInteractiveStyles(m.color)
+	width := max(20, m.viewport.Width()-1)
+	var sections []string
+	if strings.TrimSpace(m.task) != "" {
+		sections = append(sections, styles.muted.Render("你")+"\n"+ansi.Wrap(strings.TrimSpace(m.task), width, " "))
+	}
+	for _, message := range m.view.Messages {
+		text := strings.TrimSpace(message.Text)
+		if text == "" {
+			continue
+		}
+		sections = append(sections, styles.accent.Render(brand.CompactMark+"  梦蝶")+"\n"+ansi.Wrap(text, width, " "))
+	}
+	if len(m.view.Tools) > 0 {
+		lines := []string{styles.muted.Render("工具活动")}
+		for _, tool := range m.view.Tools {
+			line := "└─ " + tool.Tool + "  " + toolPhaseLabel(tool.Phase)
+			if strings.TrimSpace(tool.Summary) != "" {
+				line += "  ·  " + strings.TrimSpace(tool.Summary)
+			}
+			lines = append(lines, styles.muted.Render(truncateLine(line, width)))
+		}
+		sections = append(sections, strings.Join(lines, "\n"))
+	}
+	for _, warning := range m.view.Warnings {
+		sections = append(sections, styles.strong.Render("提示")+"\n"+ansi.Wrap(warning.Message, width, " "))
+	}
+	if len(sections) == 0 {
+		return styles.muted.Render("正在建立上下文……")
+	}
+	return strings.Join(sections, "\n\n")
+}
+
+func (m InteractiveModel) renderSidebar(width int) string {
+	styles := newInteractiveStyles(m.color)
+	section := func(label, value string) string {
+		return styles.label.Render(label) + "\n" + value
+	}
+	sessionID := "新任务"
+	if m.view.ID != "" {
+		sessionID = truncateLine(m.view.ID, width)
+	}
+	completed, total := toolProgress(m.view.Tools)
+	progress := fmt.Sprintf("%d 条事实  ·  工具 %d/%d", m.view.LastSeq, completed, total)
+	parts := []string{
+		section("工作区", styles.strong.Render(truncateLine(projectName(m.info.WorkDir), width))+"\n"+styles.muted.Render(truncateLine(m.info.WorkDir, width))),
+		section("会话", truncateLine(sessionID, width)),
+		section("模型", truncateLine(m.info.Model, width)),
+		section("安全", truncateLine(m.info.Security, width)),
+		section("进度", truncateLine(progress, width)),
+	}
+	if len(m.view.Todos) > 0 {
+		lines := make([]string, 0, min(4, len(m.view.Todos)))
+		for index, todo := range m.view.Todos {
+			if index == 4 {
+				lines = append(lines, "…")
+				break
+			}
+			lines = append(lines, "· "+truncateLine(todo.Content, max(10, width-2)))
+		}
+		parts = append(parts, section("待办", strings.Join(lines, "\n")))
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func (m InteractiveModel) contentWidth() int {
+	width := m.width
+	if width <= 0 {
+		width = 100
+	}
+	return max(20, width-4)
+}
+
+func (m InteractiveModel) layoutWidths() (int, int) {
+	width := m.contentWidth()
+	if width < wideLayoutWidth {
+		return width, 0
+	}
+	return max(40, width-sidebarWidth-2), sidebarWidth
+}
+
+type interactiveStyles struct {
+	accent   lipgloss.Style
+	strong   lipgloss.Style
+	muted    lipgloss.Style
+	label    lipgloss.Style
+	status   lipgloss.Style
+	input    lipgloss.Style
+	approval lipgloss.Style
+	sidebar  lipgloss.Style
+}
+
+func newInteractiveStyles(color bool) interactiveStyles {
+	styles := interactiveStyles{
+		input:    lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1),
+		approval: lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1),
+		sidebar:  lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, false, false, true).PaddingLeft(2),
+	}
+	if !color {
+		return styles
+	}
+	accent := lipgloss.Color("#2CC7A1")
+	muted := lipgloss.Color("#7D8590")
+	border := lipgloss.Color("#30363D")
+	styles.accent = lipgloss.NewStyle().Foreground(accent).Bold(true)
+	styles.strong = lipgloss.NewStyle().Foreground(lipgloss.Color("#E6EDF3")).Bold(true)
+	styles.muted = lipgloss.NewStyle().Foreground(muted)
+	styles.label = lipgloss.NewStyle().Foreground(muted).Bold(true)
+	styles.status = lipgloss.NewStyle().Foreground(accent)
+	styles.input = styles.input.BorderForeground(border)
+	styles.approval = styles.approval.BorderForeground(accent)
+	styles.sidebar = styles.sidebar.BorderForeground(border)
+	return styles
+}
+
+func renderBottomBar(styles interactiveStyles, width int, left, right string) string {
+	content := padBetween(styles.status.Render(left), styles.muted.Render(right), max(20, width-4))
+	bar := lipgloss.NewStyle().Border(lipgloss.NormalBorder(), true, false, false, false).Padding(0, 1)
+	if styles.sidebar.GetBorderLeftForeground() != nil {
+		bar = bar.BorderForeground(lipgloss.Color("#30363D"))
+	}
+	return bar.Render(content)
+}
+
+func padBetween(left, right string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	right = truncateLine(right, width)
+	rightWidth := ansi.StringWidth(right)
+	left = truncateLine(left, max(0, width-rightWidth-1))
+	space := width - ansi.StringWidth(left) - ansi.StringWidth(right)
+	if space < 1 {
+		return truncateLine(left+right, width)
+	}
+	return left + strings.Repeat(" ", space) + right
+}
+
+func truncateLine(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return ansi.Truncate(value, width, "…")
+}
+
+func projectName(path string) string {
+	path = strings.TrimRight(strings.ReplaceAll(path, "\\", "/"), "/")
+	if index := strings.LastIndex(path, "/"); index >= 0 && index+1 < len(path) {
+		return path[index+1:]
+	}
+	if path == "" {
+		return "当前项目"
+	}
+	return path
+}
+
+func statusSymbol(phase interactivePhase) string {
+	if phase == phaseRunning || phase == phaseStarting {
+		return "●"
+	}
+	return "○"
+}
+
+func toolProgress(tools []session.ToolView) (int, int) {
+	completed := 0
+	for _, tool := range tools {
+		if tool.Phase == "completed" {
+			completed++
+		}
+	}
+	return completed, len(tools)
+}
+
+func toolPhaseLabel(phase string) string {
+	switch phase {
+	case "completed":
+		return "已完成"
+	case "started":
+		return "执行中"
+	case "proposed":
+		return "待决策"
+	default:
+		return phase
 	}
 }
 
@@ -465,7 +709,7 @@ func clipLines(value string, lines, width int) string {
 		parts = append(parts[:lines], "…")
 	}
 	for index := range parts {
-		parts[index] = clip(parts[index], width)
+		parts[index] = truncateLine(parts[index], width)
 	}
 	return strings.Join(parts, "\n")
 }

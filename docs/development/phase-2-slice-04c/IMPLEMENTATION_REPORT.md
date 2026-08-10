@@ -23,6 +23,12 @@ TUI 在同一进程通过 Application 拥有的 `TaskRunner` 启动现有单 Age
 - macOS 与 Windows 共同采用 Bubble Tea v2 输入模型，执行与取消继续复用现有 zsh/PowerShell 平台适配；
 - `exec`、JSON Lines、`session tui` 历史只读视图和 `--plain` 行为保持兼容。
 
+## 审核后的视觉迭代
+
+首版功能闭环完成后，根据审核意见重新梳理信息层级。参考 [Crush](https://github.com/charmbracelet/crush) 的高密度终端工作台思路，但不复制其品牌和布局细节：宽屏把会话时间线作为主区域，右侧集中展示工作区、会话、模型、安全、进度和待办；窄屏退化为单列，项目、模型与安全信息移入紧凑页头；输入框固定在底部，审批会临时替换输入区，避免与普通消息混淆。
+
+视觉只使用一枚“梦蝶玉”强调色，其余信息依靠字重、边框和间距建立层级，`NO_COLOR` 下仍完整可读。旧的块状灰阶 Logo 被替换为由两组代码尖括号和断开插入光标组成的单色“代码蝶”，并同步 SVG、透明 PNG、终端宽版字符画与紧凑符号。响应式测试额外约束每一行不得超过终端宽度，防止中文、长模型名和路径挤坏布局。
+
 ## 明确不做
 
 本切片每个进程只提交一个任务，不实现同一 TUI 内的连续多轮 REPL。跨进程实时广播、daemon、Web、Artifact Store、Patch Journal、成本视图和异步 Swarm 仍不在当前范围。
@@ -31,7 +37,7 @@ TUI 在同一进程通过 Application 拥有的 `TaskRunner` 启动现有单 Age
 
 - 单元与集成测试覆盖默认路由、中文/窄屏/无颜色、UTF-8 字节上限、提交、已提交事实通知、审批一次性响应、取消等待和关闭解阻；
 - 依赖新增 Bubbles v2.1.1，并按依赖准入规则执行许可证、漏洞与四目标构建检查；
-- `go fmt ./...`、`go vet ./...`、`go test ./...`：通过，461 项 / 18 个包；`go test -race ./...` 同样通过；
+- `go fmt ./...`、`go vet ./...`、`go test ./...`：通过，462 项 / 18 个包；`go test -race ./...` 同样通过；
 - `golangci-lint run --build-tags=liveprovider ./...`：0 issue；`govulncheck@v1.1.4 ./...`：未发现漏洞；
 - Coding baseline：5/5；live-provider 离线 Harness：3/3；
 - `go-licenses` 确认新增 Bubbles/ANSI 为 MIT、clipboard 为 BSD-3-Clause；既有 modernc 许可证定位警告不属于本次新增依赖；
