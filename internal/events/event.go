@@ -175,7 +175,8 @@ type Warning struct {
 }
 
 type RunCompleted struct {
-	Summary string `json:"summary,omitempty"`
+	Summary     string `json:"summary,omitempty"`
+	DeniedTools int    `json:"denied_tools,omitempty"`
 }
 
 type RunFailed struct {

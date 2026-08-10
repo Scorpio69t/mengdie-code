@@ -528,10 +528,17 @@ TUI 只依赖 Application Service：
 - EventStore 集成测试、序号冲突、busy、磁盘故障、四目标构建；
 - 不在该切片承诺完整 resume 或 TUI。
 
-### P2-03：Command Ledger、Reducer 与恢复核心
+### P2-03A：Command Ledger、Reducer/Snapshot 与会话查看
 
 - Session/Run/Command、Snapshot 与纯 Reducer；
-- CLI 历史列表、查看、删除和 resume；
+- CLI 历史列表、查看和显式确认删除；
+- 终态 Command 重试只回放公开事实，不再次调用 Provider/工具；
+- 完整任务只存入私有 Command payload，公开投影不暴露；
+- 不在本切片承诺 resume、审批恢复或写工具未知状态续跑。
+
+### P2-03B：恢复核心
+
+- CLI resume 与模型上下文恢复；
 - 模型中断、可恢复审批、只读工具重试；
 - 写入状态未知时先安全阻断，不在 Journal 完成前自动续写。
 
@@ -619,4 +626,4 @@ TUI 只依赖 Application Service：
 
 ## 17. 当前实现状态
 
-截至本文更新：P2-02 已实现 SQLite EventStore 基础、schema v1、迁移校验、`expectedSeq` 原子追加以及现有完成边界事件的“先提交、再广播”。当前每个 Run 仍对应一个临时 Session，`message.delta` 不落库；Session 列举/resume、Command Ledger、Snapshot、Artifact、Patch Journal、完整 TUI、成本持久化与 M2 退出评测均尚未实现。README 里的 M2 复选框必须保持未完成，直到上述退出条件全部满足。
+截至本文更新：P2-03A 已在 P2-02 事实源上实现独立 Session/Command/Run 身份、私有 Command 幂等载荷、终态原子推进、纯 Reducer、带版本和 SHA-256 校验的可丢弃 Snapshot，以及 `session list/show/delete`。同 `command_id`、同任务的终态重试只回放公开事实；异任务冲突，运行中/中断状态安全阻断。`message.delta` 仍不落库；真正 resume、模型上下文恢复、可恢复审批、未知写状态处理、Artifact、Patch Journal、完整 TUI、成本持久化与 M2 退出评测均尚未实现。README 里的 M2 复选框必须保持未完成，直到上述退出条件全部满足。

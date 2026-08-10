@@ -90,6 +90,7 @@ mengdie memory forget <id>
 - [x] 第一阶段 Slice 11B：三平台原生 smoke、四目标 unsigned 开发预览与 SHA-256（[预览说明](./docs/development/phase-1-slice-11b/DEVELOPMENT_PREVIEW.md)）
 - [x] 第一阶段 Slice 12：macOS/Windows 受保护的真实 Provider Coding 预验收（[验收说明](./docs/development/phase-1-slice-12/M1_EXIT_EVALUATION.md)，DeepSeek 双平台 10/10 已通过）
 - [x] 第二阶段 Slice 02：SQLite EventStore、迁移账本与“先提交、再输出”的最小持久化闭环（[实施报告](./docs/development/phase-2-slice-02/IMPLEMENTATION_REPORT.md)）
+- [x] 第二阶段 Slice 03A：Command Ledger、纯 Reducer/Snapshot 与会话 list/show/delete（[实施报告](./docs/development/phase-2-slice-03a/IMPLEMENTATION_REPORT.md)）
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal（[第二阶段详细设计](./docs/design/phase-2/DETAILED_DESIGN.md)）
@@ -109,7 +110,7 @@ flowchart LR
     RUNTIME --> PROVIDER["Provider Adapters"]
     RUNTIME --> POLICY["Policy + Approval"]
     POLICY --> TOOLS["Read / Patch / Shell"]
-    APP --> STORE[("SQLite\nsessions + events + jobs + memory")]
+    APP --> STORE[("SQLite\nsessions + commands + events + snapshots")]
     TOOLS --> JOURNAL["Patch Journal"]
     STORE --> REFLECT["Reflect Worker\n默认只生成提案"]
 ```
@@ -129,15 +130,21 @@ go run ./cmd/mengdie doctor --offline --json
 go run ./cmd/mengdie doctor
 go run ./cmd/mengdie
 go run ./cmd/mengdie exec --json "检查当前项目"
+go run ./cmd/mengdie exec --json --command-id ci-job-42 "检查当前项目"
 go run ./cmd/mengdie exec --allow-edit --allow-command go,test "修复失败测试"
+go run ./cmd/mengdie session list
+go run ./cmd/mengdie session show --json <session-id>
+go run ./cmd/mengdie session delete --yes <session-id>
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 ```
 
-交互入口每次启动只接收一个不超过 64 KiB 的任务；`run.started`、完成消息、警告和 Run 终态等可重建边界已持久化到本地 SQLite，流式 `message.delta` 仍只存在内存中。事实先提交再输出，因此输出器失败不会抹掉已提交事件；存储失败则不会把事件伪装成已发生。编辑、写入和未被配置规则预先允许的 Shell 会在执行前显示本地预览并请求批准。当前仍没有历史会话、resume 或 REPL，已存事件尚不能恢复上下文；管道或重定向场景必须改用 `mengdie exec`。
+交互入口每次启动只接收一个不超过 64 KiB 的任务；`run.started`、完成消息、警告和 Run 终态等可重建边界已持久化到本地 SQLite，流式 `message.delta` 仍只存在内存中。事实先提交再输出，因此输出器失败不会抹掉已提交事件；存储失败则不会把事件伪装成已发生。`session list/show/delete` 通过同一个纯 Reducer 投影历史公开事实，Snapshot 只作可丢弃缓存；`delete` 必须显式提供 `--yes`。编辑、写入和未被配置规则预先允许的 Shell 会在执行前显示本地预览并请求批准。当前仍没有 resume、可恢复审批、TUI 或 REPL，已存事件尚不能恢复模型上下文；管道或重定向场景必须改用 `mengdie exec`。
 
 默认数据目录为 macOS 的 `~/Library/Application Support/MengDie Code/`、Windows 的 `%LOCALAPPDATA%\MengDie Code\`，Linux 使用 `$XDG_STATE_HOME/mengdie/`（未设置时为 `~/.local/state/mengdie/`）。可通过 `MENGDIE_DATA_DIR` 覆盖，但仓库内、网络共享、OneDrive/iCloud 同步目录以及 symlink/reparse point 会被拒绝。
 
-`exec --json` 输出完整 JSON Lines 运行事件。无头模式默认拒绝 edit/write/shell；`--allow-edit` 只放行项目内修改，`--allow-command go,test` 只放行无控制操作符的 `go test` 命令前缀，`--allow-env NAME` 才允许 shell 继承对应敏感环境变量。事件不包含完整用户任务、密钥或隐藏推理；交互事件和审批走 stdout，无头人类事件走 stderr，JSON Lines 走 stdout。
+`exec --json` 输出完整 JSON Lines 运行事件。`--command-id` 可为自动化提供幂等键：同 ID、同任务只回放已经提交的公开事实，不再调用 Provider 或工具；同 ID、不同任务直接冲突，运行中或中断状态在 resume 实现前安全阻断。无头模式默认拒绝 edit/write/shell；`--allow-edit` 只放行项目内修改，`--allow-command go,test` 只放行无控制操作符的 `go test` 命令前缀，`--allow-env NAME` 才允许 shell 继承对应敏感环境变量。
+
+公开事件、`session` 输出和日志不包含完整用户任务、密钥或隐藏推理。为进行 Command 幂等校验，完整任务会作为 `commands.payload_json` 私有事实保存在上述本地 SQLite 中；当前仅依赖目录/文件权限，尚未静态加密。不要把 `MENGDIE_DATA_DIR` 指向共享或同步目录，并使用 `session delete --yes` 删除不再需要的本地会话。API Key、环境变量值和可重放审批授权不会写入账本。
 
 需要 Go 1.26 或更高版本。
 
