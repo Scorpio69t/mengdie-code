@@ -9,17 +9,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/Scorpio69t/mengdie-code/internal/brand"
 	"github.com/Scorpio69t/mengdie-code/internal/config"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 	"github.com/Scorpio69t/mengdie-code/internal/provider"
 	"github.com/Scorpio69t/mengdie-code/internal/session"
+	"github.com/Scorpio69t/mengdie-code/internal/tui"
 )
 
 func TestDoctorJSONDoesNotRevealCredential(t *testing.T) {
@@ -57,13 +61,87 @@ func TestInteractiveShowsConfiguredModel(t *testing.T) {
 	application, stdout, _ := newTestApp(t, nil)
 	application.stdin = strings.NewReader("检查项目\n")
 
-	code := application.Run(context.Background(), []string{"--cwd", root}, true)
+	code := application.Run(context.Background(), []string{"--plain", "--cwd", root}, true)
 	if code != ExitOK {
 		t.Fatalf("Run() code = %d, want %d", code, ExitOK)
 	}
 	for _, want := range append(strings.Split(brand.Mark, "\n"), "openai-compatible:test-model", root, "fake completed", "任务完成") {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("interactive output does not contain %q: %s", want, stdout.String())
+		}
+	}
+}
+
+func TestInteractiveDefaultsToFullScreenTUI(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeConfig(t, root)
+	application, stdout, _ := newTestApp(t, nil)
+	called := false
+	application.runTUI = func(model tea.Model, _ io.Reader, _ io.Writer) (tea.Model, error) {
+		called = true
+		interactive, ok := model.(tui.InteractiveModel)
+		if !ok {
+			t.Fatalf("default model type = %T", model)
+		}
+		updated, _ := interactive.Update(tea.WindowSizeMsg{Width: 100, Height: 32})
+		interactive = updated.(tui.InteractiveModel)
+		content := interactive.View().Content
+		for _, want := range []string{"MengDie Code / 梦蝶 Code", root[:20], "openai-compatible:test-model", "等待任务", "Ctrl+S"} {
+			if !strings.Contains(content, want) {
+				t.Errorf("default TUI missing %q: %s", want, content)
+			}
+		}
+		return interactive, nil
+	}
+
+	code := application.Run(context.Background(), []string{"--cwd", root, "--no-color"}, true)
+	if code != ExitOK || !called {
+		t.Fatalf("Run() code=%d called=%t", code, called)
+	}
+	if strings.Contains(stdout.String(), "请输入任务（单次有界运行") {
+		t.Fatalf("default run used legacy prompt: %s", stdout.String())
+	}
+}
+
+func TestInteractiveTaskRunnerPublishesCommittedFacts(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeConfig(t, root)
+	application, _, _ := newTestApp(t, nil)
+	loaded, err := application.loadConfig(&commonFlags{cwd: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker := tui.NewApprovalBroker()
+	defer broker.Close()
+	runner := &interactiveTaskRunner{ctx: context.Background(), app: application, loaded: loaded, broker: broker}
+	defer runner.Close()
+	execution, err := runner.PrepareTask("检查项目")
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscription, err := application.factBus.Subscribe(execution.SessionID(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer subscription.Close()
+	if result := execution.Run(); result.ExitCode != ExitOK {
+		t.Fatalf("Run() result=%+v", result)
+	}
+
+	var kinds []events.Kind
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case notification := <-subscription.Notifications():
+			kinds = append(kinds, notification.Fact.Kind)
+			if notification.Fact.Kind == events.KindRunCompleted {
+				if !containsEventKind(kinds, events.KindMessageCompleted) {
+					t.Fatalf("facts=%v, missing message.completed", kinds)
+				}
+				return
+			}
+		case <-deadline:
+			t.Fatalf("facts=%v, missing run.completed", kinds)
 		}
 	}
 }
@@ -112,7 +190,7 @@ func TestInteractiveApprovesEditBeforeExecution(t *testing.T) {
 		}}, nil
 	}
 
-	code := application.Run(context.Background(), []string{"--cwd", root}, true)
+	code := application.Run(context.Background(), []string{"--plain", "--cwd", root}, true)
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -144,7 +222,7 @@ func TestInteractiveRejectionIsReturnedToModel(t *testing.T) {
 	}}
 	application.newProvider = func(config.Profile, string) (provider.Provider, error) { return fake, nil }
 
-	code := application.Run(context.Background(), []string{"--cwd", root}, true)
+	code := application.Run(context.Background(), []string{"--plain", "--cwd", root}, true)
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -173,7 +251,7 @@ func TestInteractiveApprovesShellBeforeExecution(t *testing.T) {
 		}}, nil
 	}
 
-	if code := application.Run(context.Background(), []string{"--cwd", root}, true); code != ExitOK {
+	if code := application.Run(context.Background(), []string{"--plain", "--cwd", root}, true); code != ExitOK {
 		t.Fatalf("Run() code = %d, want %d", code, ExitOK)
 	}
 	if !strings.Contains(stdout.String(), "[y]允许") || !strings.Contains(stdout.String(), "检查完成") {
@@ -763,4 +841,13 @@ func closeTestSessionStore(t *testing.T, store *session.SQLiteStore) {
 	if err := store.Close(); err != nil {
 		t.Errorf("close session store: %v", err)
 	}
+}
+
+func containsEventKind(kinds []events.Kind, target events.Kind) bool {
+	for _, kind := range kinds {
+		if kind == target {
+			return true
+		}
+	}
+	return false
 }

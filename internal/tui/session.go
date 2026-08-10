@@ -1,8 +1,8 @@
 // Copyright 2026 MengDie Code Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package tui contains replaceable, read-only terminal views over public
-// application facts. It never opens the EventStore or invokes tools.
+// Package tui contains replaceable terminal views over application-owned task
+// submission and public facts. It never opens the EventStore or invokes tools.
 package tui
 
 import (
@@ -16,8 +16,8 @@ import (
 	"github.com/Scorpio69t/mengdie-code/internal/session"
 )
 
-// SessionModel renders one public SessionView. Later slices may feed it replay
-// and subscription messages, but this model deliberately owns no persistence.
+// SessionModel renders one public SessionView and deliberately owns no
+// persistence.
 type SessionModel struct {
 	view         session.SessionView
 	width        int
@@ -198,9 +198,18 @@ func RenderSession(view session.SessionView, width int, color bool) string {
 		heading = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("63")).Render(heading)
 	}
 	lines := []string{heading, fmt.Sprintf("%s · %s · %d 条事实", clip(view.ID, 48), view.Status, view.LastSeq), ""}
-	lines = append(lines, "时间线：")
+	lines = append(lines, renderSessionTimeline(view, width), "", "受控本地执行 · 公开事实视图 · q 退出")
+	return strings.Join(lines, "\n")
+}
+
+func renderSessionTimeline(view session.SessionView, width int) string {
+	messageLimit := 96
+	if width > 0 {
+		messageLimit = max(24, width-6)
+	}
+	lines := []string{fmt.Sprintf("会话 %s · %s · %d 条已提交事实", clip(view.ID, 48), view.Status, view.LastSeq), "", "时间线："}
 	for _, message := range view.Messages {
-		lines = append(lines, "- "+clip(strings.TrimSpace(message.Text), 96))
+		lines = append(lines, "- "+clip(strings.TrimSpace(message.Text), messageLimit))
 	}
 	if len(view.Messages) == 0 {
 		lines = append(lines, "- 暂无完成消息")
@@ -221,7 +230,6 @@ func RenderSession(view session.SessionView, width int, color bool) string {
 	if len(view.Todos) == 0 {
 		lines = append(lines, "- 暂无待办")
 	}
-	lines = append(lines, "", "受控本地执行 · 公开事实视图 · q 退出")
 	return strings.Join(lines, "\n")
 }
 

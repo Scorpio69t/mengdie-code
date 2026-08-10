@@ -69,6 +69,7 @@ This English README is the entry point for international readers. The detailed [
 - [x] Phase 2 Slice 03B2: fresh approval after interruption and guarded retry for in-flight read-only tools ([implementation report, Chinese](./docs/development/phase-2-slice-03b2/IMPLEMENTATION_REPORT.md))
 - [x] Phase 2 Slice 04A: read-only Session TUI ([implementation report, Chinese](./docs/development/phase-2-slice-04a/IMPLEMENTATION_REPORT.md))
 - [x] Phase 2 Slice 04B: committed public-fact subscriptions, gap replay, and the TUI replay adapter ([implementation report, Chinese](./docs/development/phase-2-slice-04b/IMPLEMENTATION_REPORT.md))
+- [x] Phase 2 Slice 04C: default full-screen TUI with task submission, committed-fact updates, and interactive approvals ([implementation report, Chinese](./docs/development/phase-2-slice-04c/IMPLEMENTATION_REPORT.md))
 - [ ] M0: real-world coding, long-run, and memory-trust eval sets
 - [ ] M1: minimum Agent Runtime capable of completing real tasks ([Phase 1 detailed design, Chinese](./docs/design/phase-1/DETAILED_DESIGN.md))
 - [ ] M2: persistent events, resume, context compaction, and Patch Journal ([Phase 2 detailed design, Chinese](./docs/design/phase-2/DETAILED_DESIGN.md))
@@ -79,7 +80,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the product architecture and the [P
 
 ## Local preview
 
-The current source preview includes the CLI/app skeleton, layered configuration, a structured Doctor, five reproducible coding baselines, the Provider protocol, the safety toolchain, and a minimal Agent Runtime shared by `mengdie` and `mengdie exec`. Multi-platform previews, 20 consecutive successful main CI runs, and a 10/10 protected DeepSeek Coding preflight across macOS and Windows now have recorded evidence. M1 remains incomplete until external real-repository tasks and the security exit record are complete.
+The current source preview includes the CLI/app skeleton, layered configuration, a structured Doctor, five reproducible coding baselines, the Provider protocol, the safety toolchain, a minimal Agent Runtime, SQLite event persistence, and a default full-screen TUI. Multi-platform previews, 20 consecutive successful main CI runs, and a 10/10 protected DeepSeek Coding preflight across macOS and Windows now have recorded evidence. M1 remains incomplete until external real-repository tasks and the security exit record are complete.
 
 ```bash
 git clone https://github.com/Scorpio69t/mengdie-code.git
@@ -89,6 +90,7 @@ go run ./cmd/mengdie --version
 go run ./cmd/mengdie doctor --offline --json
 go run ./cmd/mengdie doctor
 go run ./cmd/mengdie
+go run ./cmd/mengdie --plain
 go run ./cmd/mengdie exec --json "inspect this project"
 go run ./cmd/mengdie exec --json --command-id ci-job-42 "inspect this project"
 go run ./cmd/mengdie exec --allow-edit --allow-command go,test "fix the failing test"
@@ -100,7 +102,7 @@ go run ./cmd/mengdie session delete --yes <session-id>
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 ```
 
-The interactive entry accepts one task of at most 64 KiB per process. Reconstructable boundaries are committed to local SQLite before output, while streaming `message.delta` events remain transient. Committed public facts then enter a bounded in-process notification bus; a slow consumer receives a gap marker and catches up from EventStore with `afterSeq`, so the TUI never becomes another source of truth. `session resume` creates a new Run in the same Session and restores complete user, assistant, read-only tool, and Todo boundaries; write, execute, and network results are replaced by recovery-safe summaries. A pending approval can resume only in an interactive terminal: MengDie Code re-prepares against the current project state, presents a fresh preview, and requires a new decision; the prior Capability is never reused. An in-flight read/state call also requires explicit confirmation before retry. Unknown write/execute/network state, multiple incomplete calls, missing context, and mismatched private/public facts fail closed. `session tui` is currently read-only; in-TUI command submission and approvals, Patch Journal, and REPL are not implemented yet. Redirected input/output must use `mengdie exec`.
+The interactive entry accepts one task of at most 64 KiB per process. Bare `mengdie` now opens the full-screen TUI with the logo, project, model, security level, multiline task input, a committed-fact timeline, and allow/reject/edit approval choices for the exact prepared tool call. Approval input does not issue a Capability; that remains the Policy Authorizer's responsibility. `Ctrl+C` or `q` during a run requests cancellation and waits for the Runtime to record a definite terminal fact. Reconstructable boundaries are committed to local SQLite before output, while streaming `message.delta` events remain transient. Committed public facts then enter a bounded in-process notification bus; a slow consumer receives a gap marker and catches up from EventStore with `afterSeq`, so the TUI never becomes another source of truth. `session resume` creates a new Run in the same Session and restores complete user, assistant, read-only tool, and Todo boundaries; write, execute, and network results are replaced by recovery-safe summaries. A pending approval can resume only in an interactive terminal: MengDie Code re-prepares against the current project state, presents a fresh preview, and requires a new decision; the prior Capability is never reused. An in-flight read/state call also requires explicit confirmation before retry. Unknown write/execute/network state, multiple incomplete calls, missing context, and mismatched private/public facts fail closed. `session tui` remains the read-only viewer for historical sessions. Multiple sequential tasks in one TUI process, Patch Journal, and a REPL are not implemented yet. Redirected input/output must use `mengdie exec`; `--plain` keeps the bounded legacy terminal flow available for diagnostics and simple terminals.
 
 The default data directory is `~/Library/Application Support/MengDie Code/` on macOS, `%LOCALAPPDATA%\MengDie Code\` on Windows, and `$XDG_STATE_HOME/mengdie/` on Linux (falling back to `~/.local/state/mengdie/`). `MENGDIE_DATA_DIR` may override it, while repository-local, network-share, OneDrive/iCloud-synchronized, and symlink/reparse-point roots are rejected.
 
