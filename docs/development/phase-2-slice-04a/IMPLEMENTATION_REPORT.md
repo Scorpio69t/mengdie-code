@@ -1,6 +1,6 @@
 # P2-04A 只读 Session TUI 实施报告
 
-> 状态：已实现，待 PR 审核  
+> 状态：已合并（PR #27）  
 > 日期：2026-08-10  
 > 范围：TUI 依赖准入、公开 SessionView 渲染和非 TTY 降级
 
@@ -18,7 +18,7 @@
 
 - 持久事实仍以 EventStore/Session Reducer 为唯一来源；UI 崩溃不回滚或篡改已提交事件。
 - 页面仅显示公开投影，不显示私有任务、工具输出、凭据或 Capability。
-- 本切片不实现 EventBus、实时订阅、序号补读、TUI 内命令提交、审批操作或 diff 展开；它们留给 P2-04B。
+- 本切片交付时不含 EventBus、实时订阅和序号补读；这些能力已由后续 [P2-04B](../phase-2-slice-04b/IMPLEMENTATION_REPORT.md) 补齐。TUI 内命令提交、审批操作或 diff 展开仍属于后续切片。
 
 ## 验证
 

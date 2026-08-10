@@ -6,6 +6,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -18,16 +19,45 @@ import (
 // SessionModel renders one public SessionView. Later slices may feed it replay
 // and subscription messages, but this model deliberately owns no persistence.
 type SessionModel struct {
-	view  session.SessionView
-	width int
-	color bool
+	view         session.SessionView
+	width        int
+	color        bool
+	factSource   SessionFactSource
+	subscription FactSubscription
+	feedError    error
 }
+
+// SessionFactSource is owned by the TUI consumer. Its implementation remains
+// behind the application/session service boundary and may use EventStore plus
+// a replaceable same-process notification bus.
+type SessionFactSource interface {
+	ReplayPublicFacts(context.Context, string, uint64, int) (session.PublicFactPage, error)
+	SubscribePublicFacts(string, uint64) (FactSubscription, error)
+}
+
+type FactSubscription interface {
+	Notifications() <-chan session.PublicFactNotification
+	Close()
+}
+
+const factReplayPageSize = 256
 
 func NewSessionModel(view session.SessionView, width int, color bool) SessionModel {
 	return SessionModel{view: view, width: width, color: color}
 }
 
-func (m SessionModel) Init() tea.Cmd { return nil }
+// NewSubscribedSessionModel adds committed-fact replay and notifications to
+// the read-only view. It still owns no persistence or execution capability.
+func NewSubscribedSessionModel(view session.SessionView, width int, color bool, source SessionFactSource) SessionModel {
+	return SessionModel{view: view, width: width, color: color, factSource: source}
+}
+
+func (m SessionModel) Init() tea.Cmd {
+	if m.factSource == nil {
+		return nil
+	}
+	return startFactFeed(m.factSource, m.view.ID, m.view.LastSeq)
+}
 
 func (m SessionModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch value := message.(type) {
@@ -35,14 +65,123 @@ func (m SessionModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = value.Width
 	case tea.KeyPressMsg:
 		if value.String() == "q" || value.String() == "ctrl+c" {
+			m.closeSubscription()
 			return m, tea.Quit
 		}
+	case factFeedStartedMsg:
+		m.subscription = value.subscription
+		return m.applyReplay(value.page)
+	case factReplayMsg:
+		return m.applyReplay(value.page)
+	case factNotificationMsg:
+		if !value.open {
+			m.subscription = nil
+			return m, nil
+		}
+		if value.notification.Fact.SessionSeq <= m.view.LastSeq {
+			return m, waitForFact(m.subscription)
+		}
+		if value.notification.Gap || value.notification.Fact.SessionSeq != m.view.LastSeq+1 {
+			return m, replayFacts(m.factSource, m.view.ID, m.view.LastSeq)
+		}
+		view, err := session.ReducePublicFacts(m.view, []session.PublicFact{value.notification.Fact})
+		if err != nil {
+			m.feedError = err
+			m.closeSubscription()
+			return m, nil
+		}
+		m.view, m.feedError = view, nil
+		return m, waitForFact(m.subscription)
+	case factFeedErrorMsg:
+		m.feedError = value.err
+		m.closeSubscription()
 	}
 	return m, nil
 }
 
+func (m SessionModel) applyReplay(page session.PublicFactPage) (tea.Model, tea.Cmd) {
+	facts := page.Facts[:0]
+	for _, fact := range page.Facts {
+		if fact.SessionSeq > m.view.LastSeq {
+			facts = append(facts, fact)
+		}
+	}
+	view, err := session.ReducePublicFacts(m.view, facts)
+	if err != nil {
+		m.feedError = err
+		m.closeSubscription()
+		return m, nil
+	}
+	if page.ThroughSeq > view.LastSeq {
+		view.LastSeq = page.ThroughSeq
+	}
+	m.view, m.feedError = view, nil
+	if page.More {
+		return m, replayFacts(m.factSource, m.view.ID, m.view.LastSeq)
+	}
+	return m, waitForFact(m.subscription)
+}
+
+func (m *SessionModel) closeSubscription() {
+	if m.subscription != nil {
+		m.subscription.Close()
+		m.subscription = nil
+	}
+}
+
+type factFeedStartedMsg struct {
+	subscription FactSubscription
+	page         session.PublicFactPage
+}
+
+type factReplayMsg struct{ page session.PublicFactPage }
+type factFeedErrorMsg struct{ err error }
+type factNotificationMsg struct {
+	notification session.PublicFactNotification
+	open         bool
+}
+
+func startFactFeed(source SessionFactSource, sessionID string, afterSeq uint64) tea.Cmd {
+	return func() tea.Msg {
+		subscription, err := source.SubscribePublicFacts(sessionID, afterSeq)
+		if err != nil {
+			return factFeedErrorMsg{err: err}
+		}
+		page, err := source.ReplayPublicFacts(context.Background(), sessionID, afterSeq, factReplayPageSize)
+		if err != nil {
+			subscription.Close()
+			return factFeedErrorMsg{err: err}
+		}
+		return factFeedStartedMsg{subscription: subscription, page: page}
+	}
+}
+
+func replayFacts(source SessionFactSource, sessionID string, afterSeq uint64) tea.Cmd {
+	return func() tea.Msg {
+		page, err := source.ReplayPublicFacts(context.Background(), sessionID, afterSeq, factReplayPageSize)
+		if err != nil {
+			return factFeedErrorMsg{err: err}
+		}
+		return factReplayMsg{page: page}
+	}
+}
+
+func waitForFact(subscription FactSubscription) tea.Cmd {
+	if subscription == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		notification, open := <-subscription.Notifications()
+		return factNotificationMsg{notification: notification, open: open}
+	}
+}
+
 func (m SessionModel) View() tea.View {
-	result := tea.NewView(RenderSession(m.view, m.width, m.color))
+	content := RenderSession(m.view, m.width, m.color)
+	if m.feedError != nil {
+		content += "\n\n实时事实流已停止，可退出后重新打开：" + clip(m.feedError.Error(), 72)
+	}
+	result := tea.NewView(content)
 	result.AltScreen = true
 	result.WindowTitle = "MengDie Code · 会话"
 	return result

@@ -48,6 +48,42 @@ func TestEventSinkPersistsBeforeBroadcastAndSkipsDelta(t *testing.T) {
 	}
 }
 
+func TestEventSinkPublishesOnlyAfterCommitWithoutAffectingRenderer(t *testing.T) {
+	order := []string{}
+	store := &fakeEventStore{onAppend: func() { order = append(order, "store") }}
+	publisher := committedFactPublisherFunc(func(fact PublicFact) {
+		order = append(order, "publisher")
+		if fact.SessionSeq != 1 || fact.Kind != events.KindWarning {
+			t.Fatalf("fact=%+v", fact)
+		}
+	})
+	sink, err := NewEventSink(
+		"session-1", 0, store,
+		eventSinkFunc(func(context.Context, events.Event) error {
+			order = append(order, "renderer")
+			return nil
+		}),
+		WithCommittedFactPublisher(publisher),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Emit(context.Background(), testPublicEvent(t, 1, events.KindWarning, events.Warning{Message: "ok"})); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(order, []string{"store", "publisher", "renderer"}) {
+		t.Fatalf("order=%v", order)
+	}
+	store.err = errors.New("store failed")
+	order = nil
+	if err := sink.Emit(context.Background(), testPublicEvent(t, 2, events.KindWarning, events.Warning{Message: "no"})); err == nil {
+		t.Fatal("Emit() unexpectedly succeeded")
+	}
+	if !reflect.DeepEqual(order, []string{"store"}) {
+		t.Fatalf("failure order=%v", order)
+	}
+}
+
 func TestEventSinkFailureSemantics(t *testing.T) {
 	wantStore := errors.New("database failed")
 	wantRenderer := errors.New("renderer failed")
@@ -146,3 +182,7 @@ type eventSinkFunc func(context.Context, events.Event) error
 func (function eventSinkFunc) Emit(ctx context.Context, event events.Event) error {
 	return function(ctx, event)
 }
+
+type committedFactPublisherFunc func(PublicFact)
+
+func (function committedFactPublisherFunc) PublishCommitted(fact PublicFact) { function(fact) }

@@ -186,7 +186,10 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化 Agent Runtime 失败：%v", err))
 	}
-	durableSink, err := session.NewCommandEventSink(sessionID, commandID, begin.AfterSeq, store, sink)
+	durableSink, err := session.NewCommandEventSink(
+		sessionID, commandID, begin.AfterSeq, store, sink,
+		session.WithCommittedFactPublisher(a.factBus),
+	)
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化持久事件流失败：%v", err))
 	}

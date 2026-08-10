@@ -103,6 +103,9 @@ func Reduce(base SessionView, records []Record) (SessionView, error) {
 		if record.Time.After(view.UpdatedAt) {
 			view.UpdatedAt = record.Time
 		}
+		if record.Visibility != VisibilityPublic {
+			continue
+		}
 		if err := reduceRecord(&view, record); err != nil {
 			return SessionView{}, fmt.Errorf("reduce %s at sequence %d: %w", record.Kind, record.SessionSeq, err)
 		}

@@ -32,15 +32,67 @@ type ListOptions struct {
 	Limit       int
 }
 
-// Service is the application-facing session boundary; CLI callers never use
-// SQL or cache details directly.
-type Service struct{ store *SQLiteStore }
+// Service is the application-facing session boundary; CLI/TUI callers never
+// use SQL, cache, or notification-bus details directly.
+type Service struct {
+	store   *SQLiteStore
+	factBus *PublicFactBus
+}
 
-func NewService(store *SQLiteStore) (*Service, error) {
+type ServiceOption func(*Service) error
+
+func WithPublicFactBus(bus *PublicFactBus) ServiceOption {
+	return func(service *Service) error {
+		if bus == nil {
+			return errors.New("session service public fact bus is required")
+		}
+		service.factBus = bus
+		return nil
+	}
+}
+
+func NewService(store *SQLiteStore, options ...ServiceOption) (*Service, error) {
 	if store == nil {
 		return nil, errors.New("session service store is required")
 	}
-	return &Service{store: store}, nil
+	service := &Service{store: store}
+	for _, option := range options {
+		if option == nil {
+			return nil, errors.New("session service option is required")
+		}
+		if err := option(service); err != nil {
+			return nil, err
+		}
+	}
+	return service, nil
+}
+
+func (s *Service) ReplayPublicFacts(ctx context.Context, sessionID string, afterSeq uint64, limit int) (PublicFactPage, error) {
+	if limit == 0 {
+		limit = defaultLoadLimit
+	}
+	if limit < 1 || limit > maximumLoadLimit {
+		return PublicFactPage{}, fmt.Errorf("public fact replay limit must be between 1 and %d", maximumLoadLimit)
+	}
+	records, err := s.store.Load(ctx, sessionID, afterSeq, limit)
+	if err != nil {
+		return PublicFactPage{}, err
+	}
+	page := PublicFactPage{Facts: make([]PublicFact, 0, len(records)), ThroughSeq: afterSeq, More: len(records) == limit}
+	for _, record := range records {
+		page.ThroughSeq = record.SessionSeq
+		if fact, public := publicFactFromRecord(record); public {
+			page.Facts = append(page.Facts, fact)
+		}
+	}
+	return page, nil
+}
+
+func (s *Service) SubscribePublicFacts(sessionID string, afterSeq uint64) (PublicFactSubscription, error) {
+	if s.factBus == nil {
+		return nil, errors.New("session service public fact subscription is unavailable")
+	}
+	return s.factBus.Subscribe(sessionID, afterSeq)
 }
 
 func (s *Service) List(ctx context.Context, options ListOptions) (result []SessionSummary, resultErr error) {
