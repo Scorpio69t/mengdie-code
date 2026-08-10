@@ -10,17 +10,20 @@ import (
 	"fmt"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/Scorpio69t/mengdie-code/internal/agent"
 	"github.com/Scorpio69t/mengdie-code/internal/config"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 	"github.com/Scorpio69t/mengdie-code/internal/policy"
 	"github.com/Scorpio69t/mengdie-code/internal/session"
+	"github.com/Scorpio69t/mengdie-code/internal/tui"
 	"github.com/Scorpio69t/mengdie-code/internal/ui/terminal"
 )
 
 func (a *App) runSession(ctx context.Context, args []string, interactive bool) int {
 	if len(args) == 0 {
-		if err := a.writeError("用法：mengdie session <list|show|resume|delete> [选项]\n"); err != nil {
+		if err := a.writeError("用法：mengdie session <list|show|resume|tui|delete> [选项]\n"); err != nil {
 			return ExitRunError
 		}
 		return ExitInvalidInput
@@ -32,6 +35,8 @@ func (a *App) runSession(ctx context.Context, args []string, interactive bool) i
 		return a.runSessionShow(ctx, args[1:])
 	case "resume":
 		return a.runSessionResume(ctx, args[1:], interactive)
+	case "tui":
+		return a.runSessionTUI(ctx, args[1:], interactive)
 	case "delete":
 		return a.runSessionDelete(ctx, args[1:])
 	default:
@@ -40,6 +45,42 @@ func (a *App) runSession(ctx context.Context, args []string, interactive bool) i
 		}
 		return ExitInvalidInput
 	}
+}
+
+func (a *App) runSessionTUI(ctx context.Context, args []string, interactive bool) int {
+	if !interactive {
+		if err := a.writeError("session tui 仅支持交互终端；请使用 session show --json 或 --plain 输出\n"); err != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+	flags, common := a.newCommonFlagSet("mengdie session tui")
+	noColor := flags.Bool("no-color", false, "禁用颜色")
+	if err := flags.Parse(args); err != nil {
+		return flagExitCode(err)
+	}
+	if flags.NArg() != 1 {
+		if err := a.writeError("用法：mengdie session tui [--no-color] <session-id>\n"); err != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+	_, store, service, code := a.openSessionService(ctx, common)
+	if code != ExitOK {
+		return code
+	}
+	view, err := service.View(ctx, flags.Arg(0))
+	if closeCode := a.closeSessionStore(store); closeCode != ExitOK {
+		return closeCode
+	}
+	if err != nil {
+		return a.runtimeStorageError(fmt.Sprintf("查看会话失败：%v", err))
+	}
+	program := tea.NewProgram(tui.NewSessionModel(view, 0, !*noColor), tea.WithInput(a.stdin), tea.WithOutput(a.stdout))
+	if _, err := program.Run(); err != nil {
+		return a.runtimeSetupError(fmt.Sprintf("运行会话 TUI 失败：%v", err))
+	}
+	return ExitOK
 }
 
 func (a *App) runSessionResume(ctx context.Context, args []string, interactive bool) int {

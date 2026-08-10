@@ -93,6 +93,7 @@ mengdie memory forget <id>
 - [x] 第二阶段 Slice 03A：Command Ledger、纯 Reducer/Snapshot 与会话 list/show/delete（[实施报告](./docs/development/phase-2-slice-03a/IMPLEMENTATION_REPORT.md)）
 - [x] 第二阶段 Slice 03B1：私有上下文日志与安全 Session Resume（[实施报告](./docs/development/phase-2-slice-03b1/IMPLEMENTATION_REPORT.md)）
 - [x] 第二阶段 Slice 03B2：中断审批重新确认与执行中只读工具重试（[实施报告](./docs/development/phase-2-slice-03b2/IMPLEMENTATION_REPORT.md)）
+- [ ] 第二阶段 Slice 04A：只读 Session TUI（实施中）
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal（[第二阶段详细设计](./docs/design/phase-2/DETAILED_DESIGN.md)）
@@ -136,6 +137,7 @@ go run ./cmd/mengdie exec --json --command-id ci-job-42 "检查当前项目"
 go run ./cmd/mengdie exec --allow-edit --allow-command go,test "修复失败测试"
 go run ./cmd/mengdie session list
 go run ./cmd/mengdie session show --json <session-id>
+go run ./cmd/mengdie session tui <session-id>
 go run ./cmd/mengdie session resume --message "继续检查" <session-id>
 go run ./cmd/mengdie session delete --yes <session-id>
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty

@@ -181,6 +181,14 @@ func TestInteractiveApprovesShellBeforeExecution(t *testing.T) {
 	}
 }
 
+func TestSessionTUIRejectsNonInteractiveEntry(t *testing.T) {
+	application, _, stderr := newTestApp(t, nil)
+	code := application.Run(context.Background(), []string{"session", "tui", "session-test"}, false)
+	if code != ExitInvalidInput || !strings.Contains(stderr.String(), "仅支持交互终端") {
+		t.Fatalf("code=%d output=%q", code, stderr.String())
+	}
+}
+
 func TestReadInteractiveTaskBoundsAndCancellation(t *testing.T) {
 	tests := []struct {
 		name   string
