@@ -39,6 +39,7 @@ type runtimeOptions struct {
 	Todos                  []tools.Todo
 	ExpectedSessionSeq     uint64
 	ExpectedContextOrdinal uint64
+	Recovery               *agent.RecoveryAction
 }
 
 func defaultProviderFactory(profile config.Profile, apiKey string) (provider.Provider, error) {
@@ -197,6 +198,7 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 		RunID: runID, Task: task, Model: profile.Model, DisplayModel: modelLabel(profile),
 		MaxTurns: loaded.Config.Context.MaxTurns, Security: options.Security,
 		History: options.History, Todos: options.Todos,
+		Recovery: options.Recovery,
 	}, emitter)
 	service, serviceErr := session.NewService(store)
 	if serviceErr == nil {

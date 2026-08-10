@@ -29,6 +29,7 @@ const (
 	KindApprovalResolved Kind = "approval.resolved"
 	KindToolStarted      Kind = "tool.started"
 	KindToolCompleted    Kind = "tool.completed"
+	KindRecoveryResolved Kind = "recovery.resolved"
 	KindUsageUpdated     Kind = "usage.updated"
 	KindWarning          Kind = "warning"
 	KindRunCompleted     Kind = "run.completed"
@@ -161,6 +162,16 @@ type ToolCompleted struct {
 	Success    bool   `json:"success"`
 	Summary    string `json:"summary,omitempty"`
 	DurationMS int64  `json:"duration_ms,omitempty"`
+}
+
+// RecoveryResolved binds a new-run tool result to an interrupted source tool
+// call. It intentionally contains only stable identities and an outcome, not
+// tool arguments, previews, source text, command output, or credentials.
+type RecoveryResolved struct {
+	SourceRunID string `json:"source_run_id"`
+	CallID      string `json:"call_id"`
+	Action      string `json:"action"`
+	Outcome     string `json:"outcome"`
 }
 
 type UsageUpdated struct {

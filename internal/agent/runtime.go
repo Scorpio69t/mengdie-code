@@ -68,6 +68,21 @@ type RunRequest struct {
 	Security     string
 	History      []provider.Message
 	Todos        []tools.Todo
+	Recovery     *RecoveryAction
+}
+
+const (
+	RecoveryReapprove = "reapprove"
+	RecoveryRetryRead = "retry_read"
+)
+
+// RecoveryAction is a previously interrupted tool call selected by the
+// Session safety analyzer. It is always re-prepared and re-authorized; the
+// old source Run's capability is never available to a new Run.
+type RecoveryAction struct {
+	SourceRunID string
+	Call        provider.ToolCall
+	Kind        string
 }
 
 type RunResult struct {
@@ -115,10 +130,9 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 	if err := validateRunRequest(request); err != nil {
 		return RunResult{}, err
 	}
-	userMessage := provider.Message{Role: provider.RoleUser, Content: request.Task}
 	state := &RunState{
 		RunID: request.RunID, StartedAt: a.now(),
-		Messages: append(cloneMessages(request.History), userMessage),
+		Messages: cloneMessages(request.History),
 		Todos:    append([]tools.Todo(nil), request.Todos...),
 	}
 	startContext := ctx
@@ -134,9 +148,43 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 	}); err != nil {
 		return RunResult{}, err
 	}
+	authorizer, err := policy.NewAuthorizer(policy.AuthorizerOptions{
+		Engine: a.policy, Broker: a.broker, Observer: policy.EventObserver{Emitter: emitter}, Now: a.now,
+	})
+	if err != nil {
+		return state.result(""), a.finishError(ctx, emitter, err)
+	}
+	if request.Recovery != nil {
+		outcome := a.executeRecovered(ctx, state, emitter, authorizer, *request.Recovery)
+		if outcome.fatal != nil {
+			return state.result(""), outcome.fatal
+		}
+		if outcome.denied {
+			state.recordDenial()
+		}
+		resumeMessage := provider.Message{
+			Role: provider.RoleTool, ToolCallID: request.Recovery.Call.ID,
+			Name: request.Recovery.Call.Name, Content: outcome.resumeMessage,
+		}
+		if err := a.recordContext(context.WithoutCancel(ctx), resumeMessage, outcome.resumeComplete); err != nil {
+			return state.result(""), a.finishError(ctx, emitter, err)
+		}
+		state.appendMessage(provider.Message{
+			Role: provider.RoleTool, ToolCallID: request.Recovery.Call.ID,
+			Name: request.Recovery.Call.Name, Content: outcome.message,
+		})
+		if _, err := emitter.Emit(ctx, events.KindRecoveryResolved, events.RecoveryResolved{
+			SourceRunID: request.Recovery.SourceRunID, CallID: request.Recovery.Call.ID,
+			Action: request.Recovery.Kind, Outcome: recoveryOutcome(outcome),
+		}); err != nil {
+			return state.result(""), err
+		}
+	}
+	userMessage := provider.Message{Role: provider.RoleUser, Content: request.Task}
 	if err := a.recordContext(startContext, userMessage, true); err != nil {
 		return state.result(""), a.finishError(ctx, emitter, err)
 	}
+	state.appendMessage(userMessage)
 	if err := ctx.Err(); err != nil {
 		return state.result(""), a.finishError(ctx, emitter, err)
 	}
@@ -150,12 +198,6 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 		MaxContextTokens: a.maxContextTokens, Capabilities: capabilities,
 		Tools:        a.registry.Specs(),
 		Instructions: a.instructions,
-	})
-	if err != nil {
-		return state.result(""), a.finishError(ctx, emitter, err)
-	}
-	authorizer, err := policy.NewAuthorizer(policy.AuthorizerOptions{
-		Engine: a.policy, Broker: a.broker, Observer: policy.EventObserver{Emitter: emitter}, Now: a.now,
 	})
 	if err != nil {
 		return state.result(""), a.finishError(ctx, emitter, err)
@@ -254,8 +296,26 @@ func validateRunRequest(request RunRequest) error {
 		if err := (provider.ChatRequest{Model: request.Model, Messages: messages}).Validate(); err != nil {
 			return fmt.Errorf("agent: invalid recovery history: %w", err)
 		}
+		if request.Recovery != nil {
+			if err := validateRecoveryAction(*request.Recovery); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
+}
+
+func validateRecoveryAction(action RecoveryAction) error {
+	if strings.TrimSpace(action.SourceRunID) == "" {
+		return errors.New("agent: recovery source run id is required")
+	}
+	if action.Kind != RecoveryReapprove && action.Kind != RecoveryRetryRead {
+		return fmt.Errorf("agent: unsupported recovery action %q", action.Kind)
+	}
+	if err := validateResponse(&provider.ChatResponse{Message: provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{action.Call}}}); err != nil {
+		return fmt.Errorf("agent: invalid recovery tool call: %w", err)
+	}
+	return nil
 }
 
 func (a *Agent) recordContext(ctx context.Context, message provider.Message, complete bool) error {
@@ -288,6 +348,88 @@ type toolOutcome struct {
 	failureKey     string
 	denied         bool
 	fatal          error
+}
+
+func recoveryOutcome(outcome toolOutcome) string {
+	if outcome.failed || outcome.denied {
+		return "failed"
+	}
+	return "completed"
+}
+
+func (a *Agent) executeRecovered(ctx context.Context, state *RunState, emitter *events.Emitter, authorizer *policy.Authorizer, recovery RecoveryAction) toolOutcome {
+	call := recovery.Call
+	tool, ok := a.registry.Lookup(call.Name)
+	if !ok {
+		if _, err := emitter.Emit(context.WithoutCancel(ctx), events.KindToolProposed, events.ToolProposed{
+			CallID: call.ID, Tool: call.Name, Summary: "恢复时发现未知工具",
+		}); err != nil {
+			return toolOutcome{fatal: err}
+		}
+		return a.failedTool(ctx, emitter, call, "unknown_tool", fmt.Errorf("unknown tool %q", call.Name))
+	}
+	environment := append([]string(nil), a.environment()...)
+	prepared, err := tool.Prepare(ctx, call.Arguments, tools.PrepareEnv{
+		CallID: call.ID, Guard: a.guard, Now: a.now, Environment: environment,
+		AllowedEnvironment: a.allowedEnvironment,
+	})
+	if err != nil {
+		spec := tool.Spec()
+		if _, emitErr := emitter.Emit(context.WithoutCancel(ctx), events.KindToolProposed, events.ToolProposed{
+			CallID: call.ID, Tool: call.Name, Summary: "恢复时重新准备失败", Effects: effectStrings(spec.Effects),
+		}); emitErr != nil {
+			return toolOutcome{fatal: emitErr}
+		}
+		return a.failedTool(ctx, emitter, call, "recovery_prepare_failed", err)
+	}
+	if _, err := emitter.Emit(ctx, events.KindToolProposed, events.ToolProposed{
+		CallID: call.ID, Tool: call.Name, Summary: "恢复：" + prepared.Preview.Title, Effects: effectStrings(prepared.Effects),
+	}); err != nil {
+		return toolOutcome{fatal: err}
+	}
+	prompt := "恢复前请确认当前预览；旧审批和旧 Capability 已失效。"
+	if recovery.Kind == RecoveryRetryRead {
+		prompt = "上次只读工具已开始但结果未知；请确认按当前状态重新执行。"
+	}
+	capability, err := authorizer.Reauthorize(ctx, state.RunID, a.guard.Root(), prepared, prompt)
+	if err != nil {
+		category := "recovery_authorization_failed"
+		if errors.Is(err, policy.ErrDenied) {
+			category = "denied"
+		} else if errors.Is(err, policy.ErrReprepare) {
+			category = "approval_edited"
+		}
+		outcome := a.failedTool(ctx, emitter, call, category, err)
+		outcome.denied = category == "denied"
+		return outcome
+	}
+	if _, err := emitter.Emit(ctx, events.KindToolStarted, events.ToolStarted{CallID: call.ID, Tool: call.Name}); err != nil {
+		return toolOutcome{fatal: err}
+	}
+	started := a.now()
+	result, runErr := tool.Execute(ctx, prepared, capability, tools.ExecEnv{
+		RunID: state.RunID, Guard: a.guard, CapabilityVerifier: authorizer.Verifier(),
+		Now: a.now, Environment: environment, TodoWriter: todoWriter{state: state, emitter: emitter},
+	})
+	duration := a.now().Sub(started)
+	if runErr != nil {
+		if _, err := emitter.Emit(context.WithoutCancel(ctx), events.KindToolCompleted, events.ToolCompleted{
+			CallID: call.ID, Tool: call.Name, Success: false, Summary: "恢复执行失败", DurationMS: duration.Milliseconds(),
+		}); err != nil {
+			return toolOutcome{fatal: err}
+		}
+		message := toolMessage(false, result, "recovery_execute_failed", runErr)
+		resumeMessage, complete := resumableToolMessage(message, prepared.Effects, false, "recovery_execute_failed")
+		return toolOutcome{message: message, resumeMessage: resumeMessage, resumeComplete: complete, failed: true, failureKey: "recovery_execute_failed:" + runErr.Error()}
+	}
+	if _, err := emitter.Emit(ctx, events.KindToolCompleted, events.ToolCompleted{
+		CallID: call.ID, Tool: call.Name, Success: true, Summary: "恢复执行完成", DurationMS: duration.Milliseconds(),
+	}); err != nil {
+		return toolOutcome{fatal: err}
+	}
+	message := toolMessage(true, result, "", nil)
+	resumeMessage, complete := resumableToolMessage(message, prepared.Effects, true, "")
+	return toolOutcome{message: message, resumeMessage: resumeMessage, resumeComplete: complete}
 }
 
 func (a *Agent) executeOne(ctx context.Context, state *RunState, emitter *events.Emitter, authorizer *policy.Authorizer, call provider.ToolCall) toolOutcome {

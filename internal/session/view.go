@@ -30,6 +30,7 @@ type SessionView struct {
 	Todos           []events.Todo     `json:"todos"`
 	Approvals       []ApprovalView    `json:"approvals"`
 	Tools           []ToolView        `json:"tools"`
+	Recoveries      []RecoveryView    `json:"recoveries"`
 	Usage           UsageView         `json:"usage"`
 	Warnings        []events.Warning  `json:"warnings"`
 	LastError       *events.RunFailed `json:"last_error,omitempty"`
@@ -68,6 +69,14 @@ type ToolView struct {
 	Phase      string   `json:"phase"`
 	Success    *bool    `json:"success,omitempty"`
 	DurationMS int64    `json:"duration_ms,omitempty"`
+}
+
+type RecoveryView struct {
+	RunID       string `json:"run_id"`
+	SourceRunID string `json:"source_run_id"`
+	CallID      string `json:"call_id"`
+	Action      string `json:"action"`
+	Outcome     string `json:"outcome"`
 }
 
 type UsageView struct {
@@ -163,6 +172,15 @@ func reduceRecord(view *SessionView, record Record) error {
 		tool := ensureTool(view, record.RunID, payload.CallID)
 		result := payload.Success
 		tool.Tool, tool.Summary, tool.Phase, tool.Success, tool.DurationMS = payload.Tool, payload.Summary, "completed", &result, payload.DurationMS
+	case events.KindRecoveryResolved:
+		payload, err := events.DecodePayload[events.RecoveryResolved](event)
+		if err != nil {
+			return err
+		}
+		view.Recoveries = append(view.Recoveries, RecoveryView{
+			RunID: record.RunID, SourceRunID: payload.SourceRunID, CallID: payload.CallID,
+			Action: payload.Action, Outcome: payload.Outcome,
+		})
 	case events.KindUsageUpdated:
 		payload, err := events.DecodePayload[events.UsageUpdated](event)
 		if err != nil {
@@ -269,6 +287,9 @@ func normalizeSessionView(view *SessionView) {
 	}
 	if view.Tools == nil {
 		view.Tools = []ToolView{}
+	}
+	if view.Recoveries == nil {
+		view.Recoveries = []RecoveryView{}
 	}
 	if view.Warnings == nil {
 		view.Warnings = []events.Warning{}

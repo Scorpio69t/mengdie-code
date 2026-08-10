@@ -4,11 +4,13 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/Scorpio69t/mengdie-code/internal/agent"
 	"github.com/Scorpio69t/mengdie-code/internal/config"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 	"github.com/Scorpio69t/mengdie-code/internal/policy"
@@ -16,7 +18,7 @@ import (
 	"github.com/Scorpio69t/mengdie-code/internal/ui/terminal"
 )
 
-func (a *App) runSession(ctx context.Context, args []string) int {
+func (a *App) runSession(ctx context.Context, args []string, interactive bool) int {
 	if len(args) == 0 {
 		if err := a.writeError("用法：mengdie session <list|show|resume|delete> [选项]\n"); err != nil {
 			return ExitRunError
@@ -29,7 +31,7 @@ func (a *App) runSession(ctx context.Context, args []string) int {
 	case "show":
 		return a.runSessionShow(ctx, args[1:])
 	case "resume":
-		return a.runSessionResume(ctx, args[1:])
+		return a.runSessionResume(ctx, args[1:], interactive)
 	case "delete":
 		return a.runSessionDelete(ctx, args[1:])
 	default:
@@ -40,7 +42,7 @@ func (a *App) runSession(ctx context.Context, args []string) int {
 	}
 }
 
-func (a *App) runSessionResume(ctx context.Context, args []string) int {
+func (a *App) runSessionResume(ctx context.Context, args []string, interactive bool) int {
 	flags, common := a.newCommonFlagSet("mengdie session resume")
 	jsonOutput := flags.Bool("json", false, "输出 JSON Lines 事件；安全门禁拒绝时输出 JSON 结果")
 	message := flags.String("message", session.DefaultResumeMessage, "追加到已有上下文的新指令")
@@ -99,6 +101,21 @@ func (a *App) runSessionResume(ctx context.Context, args []string) int {
 		}
 		return ExitPolicyDenied
 	}
+	if plan.Recovery != nil && (!interactive || *jsonOutput) {
+		plan.CanResume = false
+		plan.Reason = "该会话需在交互终端重新确认当前工具预览；无头和 JSON 模式不会复用旧审批"
+		if *jsonOutput {
+			if err := writeJSON(a.stdout, plan); err != nil {
+				return a.closeSessionAfterError(store, fmt.Sprintf("输出恢复门禁结果失败：%v", err))
+			}
+		} else if _, err := fmt.Fprintf(a.stdout, "无法安全恢复会话 %s：%s\n", plan.SessionID, plan.Reason); err != nil {
+			return a.closeSessionAfterError(store, fmt.Sprintf("输出恢复门禁结果失败：%v", err))
+		}
+		if closeCode := a.closeSessionStore(store); closeCode != ExitOK {
+			return closeCode
+		}
+		return ExitPolicyDenied
+	}
 	if closeCode := a.closeSessionStore(store); closeCode != ExitOK {
 		return closeCode
 	}
@@ -121,14 +138,26 @@ func (a *App) runSessionResume(ctx context.Context, args []string) int {
 		}
 		return ExitRunError
 	}
-	return a.runAgent(ctx, loaded, runID, strings.TrimSpace(*message), sink, runtimeOptions{
+	options := runtimeOptions{
 		Mode: policy.ModeHeadless, Security: "受控本地执行 · 安全恢复",
 		AllowEdit: *allowEdit, AllowCommands: allowCommands.Values(),
 		AllowedEnvironment: allowEnvironment.Values(), CommandID: *commandID,
 		SessionID: plan.SessionID, CommandKind: session.CommandKindResume,
 		History: plan.History, Todos: plan.Todos,
 		ExpectedSessionSeq: plan.ExpectedSessionSeq, ExpectedContextOrdinal: plan.ExpectedContextOrdinal,
-	})
+	}
+	if plan.Recovery != nil {
+		broker, brokerErr := policy.NewTextBroker(bufio.NewReader(a.stdin), a.stdout)
+		if brokerErr != nil {
+			return a.runtimeSetupError(fmt.Sprintf("初始化恢复审批输入失败：%v", brokerErr))
+		}
+		options.Mode, options.Broker = policy.ModeInteractive, broker
+		options.Security = "受控本地执行 · 恢复前重新审批"
+		options.Recovery = &agent.RecoveryAction{
+			SourceRunID: plan.Recovery.SourceRunID, Call: plan.Recovery.Call, Kind: plan.Recovery.Kind,
+		}
+	}
+	return a.runAgent(ctx, loaded, runID, strings.TrimSpace(*message), sink, options)
 }
 
 func (a *App) runSessionList(ctx context.Context, args []string) int {
@@ -283,6 +312,16 @@ func (a *App) writeHumanSession(view session.SessionView) error {
 		}
 		for _, tool := range view.Tools {
 			if _, err := fmt.Fprintf(a.stdout, "- %s (%s)\n", tool.Tool, tool.Phase); err != nil {
+				return err
+			}
+		}
+	}
+	if len(view.Recoveries) > 0 {
+		if _, err := fmt.Fprintln(a.stdout, "\n恢复："); err != nil {
+			return err
+		}
+		for _, recovery := range view.Recoveries {
+			if _, err := fmt.Fprintf(a.stdout, "- %s/%s：%s（%s）\n", recovery.SourceRunID, recovery.CallID, recovery.Action, recovery.Outcome); err != nil {
 				return err
 			}
 		}

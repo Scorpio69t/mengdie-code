@@ -626,4 +626,4 @@ TUI 只依赖 Application Service：
 
 ## 17. 当前实现状态
 
-截至本文更新：P2-03B1 已在 P2-03A 上实现带顺序/SHA-256 的私有上下文日志、store-first 模型边界、同 Session 新 Run、确定性 Resume Analyzer 和 `session resume`。完整 user/assistant/只读工具消息可恢复，副作用工具只保存脱敏摘要；无日志、上下文缺口、未决审批、未完成工具和跨项目请求均 fail-closed。重复恢复 Command ID 只回放该 Run 的公开事实。`message.delta` 仍不落库；pending Approval 重新确认、执行中只读工具重试、未知写状态处理、Artifact、Patch Journal、完整 TUI、成本持久化与 M2 退出评测均尚未实现。README 里的 M2 复选框必须保持未完成，直到上述退出条件全部满足。
+截至本文更新：P2-03B2 已在 P2-03B1 上实现带顺序/SHA-256 的私有上下文日志、store-first 模型边界、同 Session 新 Run、确定性 Resume Analyzer 和 `session resume`。完整 user/assistant/只读工具消息可恢复，副作用工具只保存脱敏摘要；无日志、上下文缺口、跨项目请求、多个未完成调用以及 write/execute/network 的未知状态均 fail-closed。pending Approval 和执行中的 read/state 会在交互终端重新 Prepare 并展示当前预览，要求新的用户确认和新的 one-shot Capability；旧 Capability 永不复用。重复恢复 Command ID 只回放该 Run 的公开事实。`message.delta` 仍不落库；模型中断解释、未知写状态处理、Artifact、Patch Journal、完整 TUI、成本持久化与 M2 退出评测均尚未实现。README 里的 M2 复选框必须保持未完成，直到上述退出条件全部满足。

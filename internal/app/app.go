@@ -93,7 +93,7 @@ func (a *App) Run(ctx context.Context, args []string, interactive bool) int {
 		case "exec":
 			return a.runExec(ctx, args[1:])
 		case "session":
-			return a.runSession(ctx, args[1:])
+			return a.runSession(ctx, args[1:], interactive)
 		}
 		if !strings.HasPrefix(args[0], "-") {
 			if err := a.writeError("未知命令 %q\n", args[0]); err != nil {

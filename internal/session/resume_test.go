@@ -169,6 +169,68 @@ func TestAnalyzeResumeFailsClosedForOldOrIncompleteBoundaries(t *testing.T) {
 	}
 }
 
+func TestAnalyzeResumeSelectsOnlySafeInterruptedRecovery(t *testing.T) {
+	for name, test := range map[string]struct {
+		effects  []string
+		approval bool
+		want     string
+		blocked  bool
+	}{
+		"pending approval is reapproved":    {effects: []string{"write"}, approval: true, want: RecoveryReapprove},
+		"in flight read retries":            {effects: []string{"read"}, want: RecoveryRetryRead},
+		"in flight state retries":           {effects: []string{"state"}, want: RecoveryRetryRead},
+		"in flight write remains blocked":   {effects: []string{"write"}, blocked: true},
+		"in flight command remains blocked": {effects: []string{"execute"}, blocked: true},
+		"in flight network remains blocked": {effects: []string{"network"}, blocked: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := openTestStore(t, t.TempDir(), 0)
+			defer closeTestStore(t, store)
+			root := filepath.Clean(t.TempDir())
+			seedInterruptedRecoverySession(t, store, root, test.effects, test.approval)
+			service, err := NewService(store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := service.AnalyzeResume(context.Background(), "session-resume", root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.blocked {
+				if plan.CanResume || !strings.Contains(plan.Reason, "保持阻断") {
+					t.Fatalf("plan=%+v", plan)
+				}
+				return
+			}
+			if !plan.CanResume || plan.Recovery == nil || plan.Recovery.Kind != test.want ||
+				plan.Recovery.SourceRunID != "run-resume-1" || plan.Recovery.Call.Name != "read_file" {
+				t.Fatalf("plan=%+v", plan)
+			}
+		})
+	}
+}
+
+func TestAnalyzeResumeBlocksMultipleInterruptedCalls(t *testing.T) {
+	store := openTestStore(t, t.TempDir(), 0)
+	defer closeTestStore(t, store)
+	root := filepath.Clean(t.TempDir())
+	seedInterruptedRecoverySession(t, store, root, []string{"read"}, false)
+	if err := store.Append(context.Background(), "session-resume", 4, []Record{
+		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 5, 5, events.KindToolProposed, events.ToolProposed{CallID: "call-2", Tool: "read_file", Effects: []string{"read"}}),
+		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 6, 6, events.KindToolStarted, events.ToolStarted{CallID: "call-2", Tool: "read_file"}),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service, _ := NewService(store)
+	plan, err := service.AnalyzeResume(context.Background(), "session-resume", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.CanResume || !strings.Contains(plan.Reason, "多个未完成") {
+		t.Fatalf("plan=%+v", plan)
+	}
+}
+
 func seedCompletedResumeSession(t *testing.T, store *SQLiteStore, root string) {
 	t.Helper()
 	payload, _ := TaskCommandPayload("初始任务")
@@ -220,6 +282,44 @@ func seedPendingToolResumeSession(t *testing.T, store *SQLiteStore, root string)
 		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 1, 1, events.KindRunStarted, events.RunStarted{Model: "model"}),
 		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 2, 2, events.KindMessageCompleted, events.MessageCompleted{}),
 		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 3, 3, events.KindToolProposed, events.ToolProposed{CallID: "call-1", Tool: "edit_file", Effects: []string{"write"}}),
+	}
+	if err := store.Append(context.Background(), "session-resume", 0, records); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedInterruptedRecoverySession(t *testing.T, store *SQLiteStore, root string, effects []string, approval bool) {
+	t.Helper()
+	payload, _ := TaskCommandPayload("初始任务")
+	_, err := store.BeginCommandRun(context.Background(), CommandRunMetadata{
+		SessionID: "session-resume", CommandID: "command-initial", CommandKind: CommandKindExec,
+		CommandPayload: payload, RunID: "run-resume-1", ProjectRoot: root,
+		Provider: "openai-compatible", Model: "model", StartedAt: storeTestTime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder, err := store.NewContextRecorder(context.Background(), "session-resume", "run-resume-1", "command-initial")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := recorder.RecordMessage(context.Background(), provider.Message{Role: provider.RoleUser, Content: "初始任务"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := recorder.RecordMessage(context.Background(), provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{
+		ID: "call-1", Type: "function", Name: "read_file", Arguments: json.RawMessage(`{"path":"a.txt"}`),
+	}}}, true); err != nil {
+		t.Fatal(err)
+	}
+	records := []Record{
+		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 1, 1, events.KindRunStarted, events.RunStarted{Model: "model"}),
+		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 2, 2, events.KindMessageCompleted, events.MessageCompleted{}),
+		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 3, 3, events.KindToolProposed, events.ToolProposed{CallID: "call-1", Tool: "read_file", Effects: effects}),
+	}
+	if approval {
+		records = append(records, resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 4, 4, events.KindApprovalNeeded, events.ApprovalNeeded{CallID: "call-1", Prompt: "确认"}))
+	} else {
+		records = append(records, resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 4, 4, events.KindToolStarted, events.ToolStarted{CallID: "call-1", Tool: "read_file"}))
 	}
 	if err := store.Append(context.Background(), "session-resume", 0, records); err != nil {
 		t.Fatal(err)
