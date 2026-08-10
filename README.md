@@ -93,7 +93,8 @@ mengdie memory forget <id>
 - [x] 第二阶段 Slice 03A：Command Ledger、纯 Reducer/Snapshot 与会话 list/show/delete（[实施报告](./docs/development/phase-2-slice-03a/IMPLEMENTATION_REPORT.md)）
 - [x] 第二阶段 Slice 03B1：私有上下文日志与安全 Session Resume（[实施报告](./docs/development/phase-2-slice-03b1/IMPLEMENTATION_REPORT.md)）
 - [x] 第二阶段 Slice 03B2：中断审批重新确认与执行中只读工具重试（[实施报告](./docs/development/phase-2-slice-03b2/IMPLEMENTATION_REPORT.md)）
-- [ ] 第二阶段 Slice 04A：只读 Session TUI（实施中）
+- [x] 第二阶段 Slice 04A：只读 Session TUI（[实施报告](./docs/development/phase-2-slice-04a/IMPLEMENTATION_REPORT.md)）
+- [x] 第二阶段 Slice 04B：已提交公开事实订阅、缺口补读与 TUI 回放适配（[实施报告](./docs/development/phase-2-slice-04b/IMPLEMENTATION_REPORT.md)）
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal（[第二阶段详细设计](./docs/design/phase-2/DETAILED_DESIGN.md)）
@@ -114,6 +115,8 @@ flowchart LR
     RUNTIME --> POLICY["Policy + Approval"]
     POLICY --> TOOLS["Read / Patch / Shell"]
     APP --> STORE[("SQLite\nsessions + commands + events + snapshots")]
+    STORE --> BUS["有界公开事实通知"]
+    BUS --> CLI
     TOOLS --> JOURNAL["Patch Journal"]
     STORE --> REFLECT["Reflect Worker\n默认只生成提案"]
 ```
@@ -143,7 +146,7 @@ go run ./cmd/mengdie session delete --yes <session-id>
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 ```
 
-交互入口每次启动只接收一个不超过 64 KiB 的任务；`run.started`、完成消息、警告和 Run 终态等可重建边界已持久化到本地 SQLite，流式 `message.delta` 仍只存在内存中。事实先提交再输出，因此输出器失败不会抹掉已提交事件；存储失败则不会把事件伪装成已发生。`session list/show/resume/delete` 通过 Session Service 工作，Snapshot 只作可丢弃缓存；`delete` 必须显式提供 `--yes`。`session resume` 在同一 Session 创建新 Run，恢复完整 user/assistant/只读工具边界和 Todo；写入、执行、网络工具只恢复脱敏摘要。中断在待审批时，只能在交互终端按当前项目状态重新 Prepare、查看新预览并重新确认，旧 Capability 永不复用；执行中的 read/state 也只能由用户显式确认后重试。write/execute/network 状态未知、多个未完成调用、旧版无上下文日志或私有/公开事实不一致时一律中文拒绝。Patch Journal、TUI 或 REPL 尚未实现；管道或重定向场景必须改用 `mengdie exec`。
+交互入口每次启动只接收一个不超过 64 KiB 的任务；`run.started`、完成消息、警告和 Run 终态等可重建边界已持久化到本地 SQLite，流式 `message.delta` 仍只存在内存中。事实先提交再输出，因此输出器失败不会抹掉已提交事件；存储失败则不会把事件伪装成已发生。已提交公开事实随后进入同进程有界通知总线；慢消费者会收到缺口标记，并通过 `afterSeq` 从 EventStore 补读，TUI 不会成为第二事实源。`session list/show/resume/delete` 通过 Session Service 工作，Snapshot 只作可丢弃缓存；`delete` 必须显式提供 `--yes`。`session resume` 在同一 Session 创建新 Run，恢复完整 user/assistant/只读工具边界和 Todo；写入、执行、网络工具只恢复脱敏摘要。中断在待审批时，只能在交互终端按当前项目状态重新 Prepare、查看新预览并重新确认，旧 Capability 永不复用；执行中的 read/state 也只能由用户显式确认后重试。write/execute/network 状态未知、多个未完成调用、旧版无上下文日志或私有/公开事实不一致时一律中文拒绝。当前 `session tui` 仍是只读界面；TUI 内命令提交、审批操作、Patch Journal 与 REPL 尚未实现，管道或重定向场景必须改用 `mengdie exec`。
 
 默认数据目录为 macOS 的 `~/Library/Application Support/MengDie Code/`、Windows 的 `%LOCALAPPDATA%\MengDie Code\`，Linux 使用 `$XDG_STATE_HOME/mengdie/`（未设置时为 `~/.local/state/mengdie/`）。可通过 `MENGDIE_DATA_DIR` 覆盖，但仓库内、网络共享、OneDrive/iCloud 同步目录以及 symlink/reparse point 会被拒绝。
 

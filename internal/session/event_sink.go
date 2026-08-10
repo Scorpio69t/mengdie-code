@@ -21,6 +21,7 @@ type EventSink struct {
 	mu         sync.Mutex
 	store      EventStore
 	downstream events.Sink
+	publisher  CommittedFactPublisher
 	sessionID  string
 	commandID  string
 	lastSeq    uint64
@@ -28,20 +29,32 @@ type EventSink struct {
 
 // NewEventSink constructs a store-first event adapter. afterSeq supports the
 // later resume reader without changing the current one-run session behavior.
-func NewEventSink(sessionID string, afterSeq uint64, store EventStore, downstream events.Sink) (*EventSink, error) {
-	return newEventSink(sessionID, "", afterSeq, store, downstream)
+func NewEventSink(sessionID string, afterSeq uint64, store EventStore, downstream events.Sink, options ...EventSinkOption) (*EventSink, error) {
+	return newEventSink(sessionID, "", afterSeq, store, downstream, options...)
 }
 
 // NewCommandEventSink associates every durable fact with its originating
 // command while preserving the store-first broadcast guarantee.
-func NewCommandEventSink(sessionID, commandID string, afterSeq uint64, store EventStore, downstream events.Sink) (*EventSink, error) {
+func NewCommandEventSink(sessionID, commandID string, afterSeq uint64, store EventStore, downstream events.Sink, options ...EventSinkOption) (*EventSink, error) {
 	if commandID == "" {
 		return nil, errors.New("durable event sink command id is required")
 	}
-	return newEventSink(sessionID, commandID, afterSeq, store, downstream)
+	return newEventSink(sessionID, commandID, afterSeq, store, downstream, options...)
 }
 
-func newEventSink(sessionID, commandID string, afterSeq uint64, store EventStore, downstream events.Sink) (*EventSink, error) {
+type EventSinkOption func(*EventSink) error
+
+func WithCommittedFactPublisher(publisher CommittedFactPublisher) EventSinkOption {
+	return func(sink *EventSink) error {
+		if publisher == nil {
+			return errors.New("committed fact publisher is required")
+		}
+		sink.publisher = publisher
+		return nil
+	}
+}
+
+func newEventSink(sessionID, commandID string, afterSeq uint64, store EventStore, downstream events.Sink, options ...EventSinkOption) (*EventSink, error) {
 	if sessionID == "" {
 		return nil, errors.New("durable event sink session id is required")
 	}
@@ -51,10 +64,19 @@ func newEventSink(sessionID, commandID string, afterSeq uint64, store EventStore
 	if downstream == nil {
 		return nil, errors.New("durable event sink downstream is required")
 	}
-	return &EventSink{
+	sink := &EventSink{
 		store: store, downstream: downstream, sessionID: sessionID,
 		commandID: commandID, lastSeq: afterSeq,
-	}, nil
+	}
+	for _, option := range options {
+		if option == nil {
+			return nil, errors.New("durable event sink option is required")
+		}
+		if err := option(sink); err != nil {
+			return nil, err
+		}
+	}
+	return sink, nil
 }
 
 // Emit commits one durable boundary before broadcasting it. A downstream
@@ -91,6 +113,12 @@ func (s *EventSink) Emit(ctx context.Context, event events.Event) error {
 			return fmt.Errorf("persist %s event: %w", event.Kind, err)
 		}
 		s.lastSeq++
+		if s.publisher != nil {
+			fact, public := publicFactFromRecord(record)
+			if public {
+				s.publisher.PublishCommitted(fact)
+			}
+		}
 	}
 	if err := s.downstream.Emit(ctx, event); err != nil {
 		return fmt.Errorf("broadcast %s event after commit: %w", event.Kind, err)

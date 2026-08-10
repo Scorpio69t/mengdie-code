@@ -70,17 +70,14 @@ func (a *App) runSessionTUI(ctx context.Context, args []string, interactive bool
 		return code
 	}
 	view, err := service.View(ctx, flags.Arg(0))
-	if closeCode := a.closeSessionStore(store); closeCode != ExitOK {
-		return closeCode
-	}
 	if err != nil {
-		return a.runtimeStorageError(fmt.Sprintf("查看会话失败：%v", err))
+		return a.closeSessionAfterError(store, fmt.Sprintf("查看会话失败：%v", err))
 	}
-	program := tea.NewProgram(tui.NewSessionModel(view, 0, !*noColor), tea.WithInput(a.stdin), tea.WithOutput(a.stdout))
+	program := tea.NewProgram(tui.NewSubscribedSessionModel(view, 0, !*noColor, tuiSessionSource{service: service}), tea.WithInput(a.stdin), tea.WithOutput(a.stdout))
 	if _, err := program.Run(); err != nil {
-		return a.runtimeSetupError(fmt.Sprintf("运行会话 TUI 失败：%v", err))
+		return a.closeSessionAfterError(store, fmt.Sprintf("运行会话 TUI 失败：%v", err))
 	}
-	return ExitOK
+	return a.closeSessionStore(store)
 }
 
 func (a *App) runSessionResume(ctx context.Context, args []string, interactive bool) int {
@@ -326,7 +323,7 @@ func (a *App) openSessionService(ctx context.Context, common *commonFlags) (conf
 	if err != nil {
 		return config.Loaded{}, nil, nil, a.runtimeStorageError(fmt.Sprintf("打开事件存储失败：%v", err))
 	}
-	service, err := session.NewService(store)
+	service, err := session.NewService(store, session.WithPublicFactBus(a.factBus))
 	if err != nil {
 		return config.Loaded{}, nil, nil, a.closeSessionAfterError(store, fmt.Sprintf("初始化会话服务失败：%v", err))
 	}

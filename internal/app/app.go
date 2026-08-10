@@ -21,6 +21,7 @@ import (
 	"github.com/Scorpio69t/mengdie-code/internal/config"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 	"github.com/Scorpio69t/mengdie-code/internal/policy"
+	"github.com/Scorpio69t/mengdie-code/internal/session"
 	"github.com/Scorpio69t/mengdie-code/internal/ui/terminal"
 )
 
@@ -62,6 +63,7 @@ type App struct {
 	dataDir       string
 	now           func() time.Time
 	newRunID      func() (string, error)
+	factBus       *session.PublicFactBus
 }
 
 // New constructs the production application service.
@@ -76,6 +78,7 @@ func New(build BuildInfo, stdout, stderr io.Writer) *App {
 		newProvider: defaultProviderFactory,
 		now:         time.Now,
 		newRunID:    events.NewRunID,
+		factBus:     session.NewPublicFactBus(session.DefaultPublicFactBuffer),
 	}
 }
 
