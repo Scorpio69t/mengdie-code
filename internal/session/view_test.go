@@ -48,6 +48,26 @@ func TestReduceBuildsPublicViewAndSkipsUnknownKinds(t *testing.T) {
 	}
 }
 
+func TestReduceKeepsSameToolCallIDIndependentAcrossRuns(t *testing.T) {
+	records := []Record{
+		viewRecordForSession(t, "session-view", "run-one", 1, events.KindRunStarted, events.RunStarted{Model: "model"}),
+		viewRecordForSession(t, "session-view", "run-one", 2, events.KindToolProposed, events.ToolProposed{CallID: "call-1", Tool: "read_file"}),
+		viewRecordForSession(t, "session-view", "run-one", 3, events.KindToolCompleted, events.ToolCompleted{CallID: "call-1", Tool: "read_file", Success: true}),
+		viewRecordForSession(t, "session-view", "run-one", 4, events.KindRunCompleted, events.RunCompleted{}),
+		viewRecordForSession(t, "session-view", "run-two", 5, events.KindRunStarted, events.RunStarted{Model: "model"}),
+		viewRecordForSession(t, "session-view", "run-two", 6, events.KindToolProposed, events.ToolProposed{CallID: "call-1", Tool: "shell"}),
+		viewRecordForSession(t, "session-view", "run-two", 7, events.KindToolCompleted, events.ToolCompleted{CallID: "call-1", Tool: "shell", Success: false}),
+		viewRecordForSession(t, "session-view", "run-two", 8, events.KindRunCompleted, events.RunCompleted{}),
+	}
+	view, err := Reduce(SessionView{ID: "session-view", Status: "active"}, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Tools) != 2 || view.Tools[0].RunID != "run-one" || view.Tools[1].RunID != "run-two" || view.Tools[1].Tool != "shell" {
+		t.Fatalf("tools=%+v", view.Tools)
+	}
+}
+
 func TestSnapshotCASAndCorruptFallbackToFacts(t *testing.T) {
 	store := openTestStore(t, t.TempDir(), 0)
 	defer closeTestStore(t, store)

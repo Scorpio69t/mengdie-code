@@ -43,11 +43,11 @@ const (
 )
 
 type Message struct {
-	Role       Role
-	Content    string
-	Name       string
-	ToolCallID string
-	ToolCalls  []ToolCall
+	Role       Role       `json:"role"`
+	Content    string     `json:"content,omitempty"`
+	Name       string     `json:"name,omitempty"`
+	ToolCallID string     `json:"tool_call_id,omitempty"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 }
 
 type Tool struct {
@@ -63,10 +63,10 @@ type FunctionDefinition struct {
 }
 
 type ToolCall struct {
-	ID        string
-	Type      string
-	Name      string
-	Arguments json.RawMessage
+	ID        string          `json:"id"`
+	Type      string          `json:"type"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
 }
 
 type ToolChoice string

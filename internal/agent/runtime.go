@@ -35,6 +35,13 @@ type Options struct {
 	Environment        func() []string
 	AllowedEnvironment []string
 	Instructions       []agentcontext.Instruction
+	ContextRecorder    ContextRecorder
+}
+
+// ContextRecorder persists private, model-visible message boundaries. The
+// bool is false when output-bearing fields were replaced by a safe summary.
+type ContextRecorder interface {
+	RecordMessage(context.Context, provider.Message, bool) error
 }
 
 type Agent struct {
@@ -49,6 +56,7 @@ type Agent struct {
 	environment        func() []string
 	allowedEnvironment []string
 	instructions       []agentcontext.Instruction
+	contextRecorder    ContextRecorder
 }
 
 type RunRequest struct {
@@ -58,6 +66,8 @@ type RunRequest struct {
 	DisplayModel string
 	MaxTurns     int
 	Security     string
+	History      []provider.Message
+	Todos        []tools.Todo
 }
 
 type RunResult struct {
@@ -94,6 +104,7 @@ func New(options Options) (*Agent, error) {
 		environment:        options.Environment,
 		allowedEnvironment: append([]string(nil), options.AllowedEnvironment...),
 		instructions:       append([]agentcontext.Instruction(nil), options.Instructions...),
+		contextRecorder:    options.ContextRecorder,
 	}, nil
 }
 
@@ -104,9 +115,11 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 	if err := validateRunRequest(request); err != nil {
 		return RunResult{}, err
 	}
+	userMessage := provider.Message{Role: provider.RoleUser, Content: request.Task}
 	state := &RunState{
 		RunID: request.RunID, StartedAt: a.now(),
-		Messages: []provider.Message{{Role: provider.RoleUser, Content: request.Task}},
+		Messages: append(cloneMessages(request.History), userMessage),
+		Todos:    append([]tools.Todo(nil), request.Todos...),
 	}
 	startContext := ctx
 	if ctx.Err() != nil {
@@ -120,6 +133,9 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 		Model: displayModel, CWD: a.guard.Root(), Security: request.Security,
 	}); err != nil {
 		return RunResult{}, err
+	}
+	if err := a.recordContext(startContext, userMessage, true); err != nil {
+		return state.result(""), a.finishError(ctx, emitter, err)
 	}
 	if err := ctx.Err(); err != nil {
 		return state.result(""), a.finishError(ctx, emitter, err)
@@ -169,6 +185,9 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 				return state.result(""), err
 			}
 		}
+		if err := a.recordContext(ctx, response.Message, true); err != nil {
+			return state.result(""), a.finishError(ctx, emitter, err)
+		}
 		state.appendMessage(response.Message)
 		if _, err := emitter.Emit(ctx, events.KindMessageCompleted, events.MessageCompleted{Text: response.Message.Content}); err != nil {
 			return state.result(""), err
@@ -199,6 +218,12 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 			if outcome.denied {
 				state.recordDenial()
 			}
+			resumeMessage := provider.Message{
+				Role: provider.RoleTool, ToolCallID: call.ID, Name: call.Name, Content: outcome.resumeMessage,
+			}
+			if err := a.recordContext(context.WithoutCancel(ctx), resumeMessage, outcome.resumeComplete); err != nil {
+				return state.result(""), a.finishError(ctx, emitter, err)
+			}
 			state.appendMessage(provider.Message{
 				Role: provider.RoleTool, ToolCallID: call.ID, Name: call.Name, Content: outcome.message,
 			})
@@ -225,8 +250,22 @@ func validateRunRequest(request RunRequest) error {
 	case request.MaxTurns < 1 || request.MaxTurns > 256:
 		return errors.New("agent: max turns must be between 1 and 256")
 	default:
+		messages := append(cloneMessages(request.History), provider.Message{Role: provider.RoleUser, Content: request.Task})
+		if err := (provider.ChatRequest{Model: request.Model, Messages: messages}).Validate(); err != nil {
+			return fmt.Errorf("agent: invalid recovery history: %w", err)
+		}
 		return nil
 	}
+}
+
+func (a *Agent) recordContext(ctx context.Context, message provider.Message, complete bool) error {
+	if a.contextRecorder == nil {
+		return nil
+	}
+	if err := a.contextRecorder.RecordMessage(ctx, message, complete); err != nil {
+		return fmt.Errorf("persist private %s context: %w", message.Role, err)
+	}
+	return nil
 }
 
 func validateResponse(response *provider.ChatResponse) error {
@@ -242,11 +281,13 @@ func validateResponse(response *provider.ChatResponse) error {
 }
 
 type toolOutcome struct {
-	message    string
-	failed     bool
-	failureKey string
-	denied     bool
-	fatal      error
+	message        string
+	resumeMessage  string
+	resumeComplete bool
+	failed         bool
+	failureKey     string
+	denied         bool
+	fatal          error
 }
 
 func (a *Agent) executeOne(ctx context.Context, state *RunState, emitter *events.Emitter, authorizer *policy.Authorizer, call provider.ToolCall) toolOutcome {
@@ -307,8 +348,10 @@ func (a *Agent) executeOne(ctx context.Context, state *RunState, emitter *events
 		}); err != nil {
 			return toolOutcome{fatal: err}
 		}
+		message := toolMessage(false, result, "execute_failed", runErr)
+		resumeMessage, complete := resumableToolMessage(message, prepared.Effects, false, "execute_failed")
 		return toolOutcome{
-			message: toolMessage(false, result, "execute_failed", runErr), failed: true,
+			message: message, resumeMessage: resumeMessage, resumeComplete: complete, failed: true,
 			failureKey: "execute_failed:" + runErr.Error(),
 		}
 	}
@@ -317,7 +360,9 @@ func (a *Agent) executeOne(ctx context.Context, state *RunState, emitter *events
 	}); err != nil {
 		return toolOutcome{fatal: err}
 	}
-	return toolOutcome{message: toolMessage(true, result, "", nil)}
+	message := toolMessage(true, result, "", nil)
+	resumeMessage, complete := resumableToolMessage(message, prepared.Effects, true, "")
+	return toolOutcome{message: message, resumeMessage: resumeMessage, resumeComplete: complete}
 }
 
 func (a *Agent) failedTool(ctx context.Context, emitter *events.Emitter, call provider.ToolCall, category string, cause error) toolOutcome {
@@ -327,10 +372,33 @@ func (a *Agent) failedTool(ctx context.Context, emitter *events.Emitter, call pr
 	if emitErr != nil {
 		return toolOutcome{fatal: emitErr}
 	}
+	message := toolMessage(false, nil, category, cause)
 	return toolOutcome{
-		message: toolMessage(false, nil, category, cause), failed: true,
+		message: message, resumeMessage: safeToolSummary(false, category), resumeComplete: false, failed: true,
 		failureKey: category + ":" + cause.Error(),
 	}
+}
+
+func resumableToolMessage(message string, effects []tools.Effect, success bool, category string) (string, bool) {
+	for _, effect := range effects {
+		if effect != tools.EffectRead && effect != tools.EffectState {
+			return safeToolSummary(success, category), false
+		}
+	}
+	return message, true
+}
+
+func safeToolSummary(success bool, category string) string {
+	envelope := toolMessageEnvelope{
+		Success: success, Category: category,
+		Output:   "恢复摘要：原始副作用工具输出未持久化；继续前必须依据当前仓库状态重新验证。",
+		Metadata: map[string]string{"recovery": "sanitized"},
+	}
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		return `{"success":false,"category":"recovery_summary_encoding_failed"}`
+	}
+	return string(raw)
 }
 
 type toolMessageEnvelope struct {

@@ -51,6 +51,7 @@ type MessageView struct {
 }
 
 type ApprovalView struct {
+	RunID    string `json:"run_id"`
 	CallID   string `json:"call_id"`
 	Prompt   string `json:"prompt,omitempty"`
 	Risk     string `json:"risk,omitempty"`
@@ -59,6 +60,7 @@ type ApprovalView struct {
 }
 
 type ToolView struct {
+	RunID      string   `json:"run_id"`
 	CallID     string   `json:"call_id"`
 	Tool       string   `json:"tool"`
 	Summary    string   `json:"summary,omitempty"`
@@ -130,35 +132,35 @@ func reduceRecord(view *SessionView, record Record) error {
 		if err != nil {
 			return err
 		}
-		tool := ensureTool(view, payload.CallID)
+		tool := ensureTool(view, record.RunID, payload.CallID)
 		tool.Tool, tool.Summary, tool.Effects, tool.Phase = payload.Tool, payload.Summary, append([]string(nil), payload.Effects...), "proposed"
 	case events.KindApprovalNeeded:
 		payload, err := events.DecodePayload[events.ApprovalNeeded](event)
 		if err != nil {
 			return err
 		}
-		approval := ensureApproval(view, payload.CallID)
+		approval := ensureApproval(view, record.RunID, payload.CallID)
 		approval.Prompt, approval.Risk = payload.Prompt, payload.Risk
 	case events.KindApprovalResolved:
 		payload, err := events.DecodePayload[events.ApprovalResolved](event)
 		if err != nil {
 			return err
 		}
-		approval := ensureApproval(view, payload.CallID)
+		approval := ensureApproval(view, record.RunID, payload.CallID)
 		approval.Decision, approval.Reason = payload.Decision, payload.Reason
 	case events.KindToolStarted:
 		payload, err := events.DecodePayload[events.ToolStarted](event)
 		if err != nil {
 			return err
 		}
-		tool := ensureTool(view, payload.CallID)
+		tool := ensureTool(view, record.RunID, payload.CallID)
 		tool.Tool, tool.Phase = payload.Tool, "running"
 	case events.KindToolCompleted:
 		payload, err := events.DecodePayload[events.ToolCompleted](event)
 		if err != nil {
 			return err
 		}
-		tool := ensureTool(view, payload.CallID)
+		tool := ensureTool(view, record.RunID, payload.CallID)
 		result := payload.Success
 		tool.Tool, tool.Summary, tool.Phase, tool.Success, tool.DurationMS = payload.Tool, payload.Summary, "completed", &result, payload.DurationMS
 	case events.KindUsageUpdated:
@@ -220,23 +222,23 @@ func finishRun(view *SessionView, id, status string, at time.Time) {
 	run.Status, run.FinishedAt = status, at
 }
 
-func ensureTool(view *SessionView, callID string) *ToolView {
+func ensureTool(view *SessionView, runID, callID string) *ToolView {
 	for index := range view.Tools {
-		if view.Tools[index].CallID == callID {
+		if view.Tools[index].RunID == runID && view.Tools[index].CallID == callID {
 			return &view.Tools[index]
 		}
 	}
-	view.Tools = append(view.Tools, ToolView{CallID: callID})
+	view.Tools = append(view.Tools, ToolView{RunID: runID, CallID: callID})
 	return &view.Tools[len(view.Tools)-1]
 }
 
-func ensureApproval(view *SessionView, callID string) *ApprovalView {
+func ensureApproval(view *SessionView, runID, callID string) *ApprovalView {
 	for index := range view.Approvals {
-		if view.Approvals[index].CallID == callID {
+		if view.Approvals[index].RunID == runID && view.Approvals[index].CallID == callID {
 			return &view.Approvals[index]
 		}
 	}
-	view.Approvals = append(view.Approvals, ApprovalView{CallID: callID})
+	view.Approvals = append(view.Approvals, ApprovalView{RunID: runID, CallID: callID})
 	return &view.Approvals[len(view.Approvals)-1]
 }
 

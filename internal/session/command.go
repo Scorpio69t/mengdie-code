@@ -14,7 +14,10 @@ import (
 
 const MaxCommandPayloadBytes = 1 << 20
 
-const CommandKindExec = "exec"
+const (
+	CommandKindExec   = "exec"
+	CommandKindResume = "session.resume"
+)
 
 var (
 	ErrCommandConflict = errors.New("command id already belongs to different input")
@@ -64,7 +67,17 @@ type CommandRunMetadata struct {
 type BeginCommandResult struct {
 	Command  Command
 	RunID    string
+	AfterSeq uint64
 	Existing bool
+}
+
+// ResumeCommandRunMetadata adds optimistic recovery positions to the normal
+// command/run identity. Both positions must still match when the new Run is
+// registered, otherwise resume fails closed.
+type ResumeCommandRunMetadata struct {
+	CommandRunMetadata
+	ExpectedSessionSeq     uint64
+	ExpectedContextOrdinal uint64
 }
 
 // TaskCommandPayload returns the canonical private payload used by the exec
@@ -80,6 +93,27 @@ func TaskCommandPayload(task string) (json.RawMessage, error) {
 	}{Task: task})
 	if err != nil {
 		return nil, fmt.Errorf("encode command task: %w", err)
+	}
+	return payload, nil
+}
+
+// ResumeCommandPayload binds idempotency to both the target Session and the
+// new user instruction without exposing either value through public views.
+func ResumeCommandPayload(sessionID, message string) (json.RawMessage, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	message = strings.TrimSpace(message)
+	if sessionID == "" {
+		return nil, errors.New("resume session id is required")
+	}
+	if message == "" {
+		return nil, errors.New("resume message is required")
+	}
+	payload, err := json.Marshal(struct {
+		SessionID string `json:"session_id"`
+		Message   string `json:"message"`
+	}{SessionID: sessionID, Message: message})
+	if err != nil {
+		return nil, fmt.Errorf("encode resume command: %w", err)
 	}
 	return payload, nil
 }

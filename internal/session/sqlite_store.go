@@ -134,6 +134,112 @@ INSERT INTO runs(
 	}, RunID: metadata.RunID}, nil
 }
 
+// BeginResumeCommandRun atomically interrupts any stale active Run and adds a
+// new Command/Run to an existing Session. The analyzer positions are checked
+// under the same write transaction, so state cannot change between safety
+// analysis and registration.
+func (s *SQLiteStore) BeginResumeCommandRun(ctx context.Context, metadata ResumeCommandRunMetadata) (result BeginCommandResult, resultErr error) {
+	if metadata.CommandKind != CommandKindResume {
+		return BeginCommandResult{}, errors.New("resume command kind is required")
+	}
+	if err := validateCommandRunMetadata(metadata.CommandRunMetadata); err != nil {
+		return BeginCommandResult{}, err
+	}
+	digest, err := commandPayloadDigest(metadata.CommandPayload)
+	if err != nil {
+		return BeginCommandResult{}, err
+	}
+	if metadata.ProjectIdentity == "" {
+		metadata.ProjectIdentity = projectIdentity(metadata.ProjectRoot)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return BeginCommandResult{}, classifySQLiteError("begin resume command run", err)
+	}
+	defer rollbackTransaction(tx, &resultErr, "rollback resume command run")
+
+	existing, existingRunID, existingProject, err := loadCommandTx(ctx, tx, metadata.CommandID)
+	if err == nil {
+		if existing.Kind != metadata.CommandKind || existing.PayloadSHA256 != digest || existingProject != metadata.ProjectIdentity {
+			return BeginCommandResult{}, ErrCommandConflict
+		}
+		if err := tx.Commit(); err != nil {
+			return BeginCommandResult{}, classifySQLiteError("commit existing resume command", err)
+		}
+		return BeginCommandResult{Command: existing, RunID: existingRunID, Existing: true}, nil
+	}
+	if !errors.Is(err, ErrCommandNotFound) {
+		return BeginCommandResult{}, err
+	}
+
+	stamp := formatTime(metadata.StartedAt)
+	claim, err := tx.ExecContext(ctx, `
+UPDATE sessions SET status='active', updated_at=?
+WHERE id=? AND project_identity=? AND last_seq=?`, stamp, metadata.SessionID, metadata.ProjectIdentity, metadata.ExpectedSessionSeq)
+	if err != nil {
+		return BeginCommandResult{}, classifySQLiteError("claim resume session", err)
+	}
+	claimed, err := claim.RowsAffected()
+	if err != nil {
+		return BeginCommandResult{}, fmt.Errorf("inspect resume session claim: %w", err)
+	}
+	if claimed != 1 {
+		var actualSeq uint64
+		var actualProject string
+		err := tx.QueryRowContext(ctx, `SELECT last_seq, project_identity FROM sessions WHERE id=?`, metadata.SessionID).Scan(&actualSeq, &actualProject)
+		if errors.Is(err, sql.ErrNoRows) {
+			return BeginCommandResult{}, ErrSessionNotFound
+		}
+		if err != nil {
+			return BeginCommandResult{}, classifySQLiteError("load resume session position", err)
+		}
+		if actualProject != metadata.ProjectIdentity {
+			return BeginCommandResult{}, ErrRunConflict
+		}
+		return BeginCommandResult{}, &SequenceConflictError{Expected: metadata.ExpectedSessionSeq, Actual: actualSeq}
+	}
+	var contextOrdinal uint64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(ordinal),0) FROM context_messages WHERE session_id=?`, metadata.SessionID).Scan(&contextOrdinal); err != nil {
+		return BeginCommandResult{}, classifySQLiteError("load resume context position", err)
+	}
+	if contextOrdinal != metadata.ExpectedContextOrdinal {
+		return BeginCommandResult{}, fmt.Errorf("%w: expected %d, actual %d", ErrContextConflict, metadata.ExpectedContextOrdinal, contextOrdinal)
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE runs SET status='interrupted', finished_at=?
+WHERE session_id=? AND status='running'`, stamp, metadata.SessionID); err != nil {
+		return BeginCommandResult{}, classifySQLiteError("interrupt stale resume runs", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE commands SET status='interrupted', updated_at=?
+WHERE session_id=? AND status IN ('accepted','running')`, stamp, metadata.SessionID); err != nil {
+		return BeginCommandResult{}, classifySQLiteError("interrupt stale resume commands", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO commands(id, session_id, kind, payload_json, payload_sha256, status, result_seq, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, 'accepted', NULL, ?, ?)`,
+		metadata.CommandID, metadata.SessionID, metadata.CommandKind, []byte(metadata.CommandPayload), digest, stamp, stamp,
+	); err != nil {
+		return BeginCommandResult{}, classifySQLiteError("create resume command", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO runs(
+    id, session_id, command_id, status, provider, model, last_run_seq, started_at, finished_at
+) VALUES (?, ?, ?, 'running', ?, ?, 0, ?, NULL)`,
+		metadata.RunID, metadata.SessionID, metadata.CommandID, metadata.Provider, metadata.Model, stamp,
+	); err != nil {
+		return BeginCommandResult{}, classifySQLiteError("create resume run", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return BeginCommandResult{}, classifySQLiteError("commit resume command run", err)
+	}
+	return BeginCommandResult{Command: Command{
+		ID: metadata.CommandID, SessionID: metadata.SessionID, Kind: metadata.CommandKind,
+		Payload: append(json.RawMessage(nil), metadata.CommandPayload...), PayloadSHA256: digest,
+		Status: CommandAccepted, CreatedAt: metadata.StartedAt.UTC(), UpdatedAt: metadata.StartedAt.UTC(),
+	}, RunID: metadata.RunID, AfterSeq: metadata.ExpectedSessionSeq}, nil
+}
+
 func validateCommandRunMetadata(metadata CommandRunMetadata) error {
 	if strings.TrimSpace(metadata.CommandID) == "" {
 		return errors.New("command id is required")

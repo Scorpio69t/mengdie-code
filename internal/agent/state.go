@@ -27,9 +27,22 @@ type RunState struct {
 func (s *RunState) snapshot() ([]provider.Message, []tools.Todo) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	messages := append([]provider.Message(nil), s.Messages...)
+	messages := cloneMessages(s.Messages)
 	todos := append([]tools.Todo(nil), s.Todos...)
 	return messages, todos
+}
+
+func cloneMessages(messages []provider.Message) []provider.Message {
+	result := make([]provider.Message, len(messages))
+	for index, message := range messages {
+		result[index] = message
+		result[index].ToolCalls = make([]provider.ToolCall, len(message.ToolCalls))
+		for callIndex, call := range message.ToolCalls {
+			result[index].ToolCalls[callIndex] = call
+			result[index].ToolCalls[callIndex].Arguments = append([]byte(nil), call.Arguments...)
+		}
+	}
+	return result
 }
 
 func (s *RunState) appendMessage(message provider.Message) {

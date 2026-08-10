@@ -26,6 +26,24 @@ type scriptedProvider struct {
 	requests  []provider.ChatRequest
 }
 
+type recordedContext struct {
+	message  provider.Message
+	complete bool
+}
+
+type memoryContextRecorder struct {
+	records []recordedContext
+	errAt   int
+}
+
+func (recorder *memoryContextRecorder) RecordMessage(_ context.Context, message provider.Message, complete bool) error {
+	if recorder.errAt > 0 && len(recorder.records)+1 == recorder.errAt {
+		return errors.New("context store unavailable")
+	}
+	recorder.records = append(recorder.records, recordedContext{message: message, complete: complete})
+	return nil
+}
+
 func (fake *scriptedProvider) ID() string { return "fake" }
 
 func (fake *scriptedProvider) Capabilities(context.Context, string) (provider.Capabilities, error) {
@@ -190,7 +208,73 @@ func TestAgentEmitsCancelledTerminalEvent(t *testing.T) {
 	assertEventKinds(t, sink.Events(), []events.Kind{events.KindRunStarted, events.KindRunCancelled})
 }
 
+func TestAgentPersistsRecoverableContextBeforeNextModelCall(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "value.txt"), []byte("recoverable read value"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake := &scriptedProvider{responses: []*provider.ChatResponse{
+		assistantTool("read", "read_file", map[string]any{"path": "value.txt"}),
+		assistantTool("edit", "edit_file", map[string]any{
+			"path": "value.txt", "old_text": "recoverable read value", "new_text": "changed value", "expected_replacements": 1,
+		}),
+		assistantFinal("恢复链完整。", provider.Usage{}),
+	}}
+	recorder := &memoryContextRecorder{}
+	runtime, emitter, _ := newAgentTestHarnessWithRecorder(t, root, fake, []policy.Rule{{
+		Name: "allow-edit", Tool: "edit_file", Effects: []tools.Effect{tools.EffectWrite}, Decision: policy.DecisionAllow,
+	}}, recorder)
+	history := []provider.Message{{Role: provider.RoleUser, Content: "旧任务"}, {Role: provider.RoleAssistant, Content: "旧回答"}}
+	_, err := runtime.Run(context.Background(), RunRequest{
+		RunID: "run-test", Task: "继续", Model: "fake:model", MaxTurns: 4, History: history,
+	}, emitter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.requests) != 3 || len(fake.requests[0].Messages) < 3 {
+		t.Fatalf("provider requests=%+v", fake.requests)
+	}
+	providerMessages := fake.requests[0].Messages
+	if providerMessages[len(providerMessages)-3].Content != "旧任务" || providerMessages[len(providerMessages)-2].Content != "旧回答" || providerMessages[len(providerMessages)-1].Content != "继续" {
+		t.Fatalf("history was not restored in order: %+v", providerMessages)
+	}
+	if len(recorder.records) != 6 {
+		t.Fatalf("context records=%d want=6: %+v", len(recorder.records), recorder.records)
+	}
+	if recorder.records[0].message.Role != provider.RoleUser || recorder.records[0].message.Content != "继续" || !recorder.records[0].complete {
+		t.Fatalf("new user boundary=%+v", recorder.records[0])
+	}
+	if recorder.records[2].message.Role != provider.RoleTool || !recorder.records[2].complete || !strings.Contains(recorder.records[2].message.Content, "recoverable read value") {
+		t.Fatalf("read result must be complete: %+v", recorder.records[2])
+	}
+	if recorder.records[4].message.Role != provider.RoleTool || recorder.records[4].complete || !strings.Contains(recorder.records[4].message.Content, `"recovery":"sanitized"`) {
+		t.Fatalf("write result must be sanitized: %+v", recorder.records[4])
+	}
+	if strings.Contains(recorder.records[4].message.Content, "changed value") {
+		t.Fatalf("sanitized write result leaked original output: %s", recorder.records[4].message.Content)
+	}
+}
+
+func TestAgentStopsBeforeModelWhenContextPersistenceFails(t *testing.T) {
+	root := t.TempDir()
+	fake := &scriptedProvider{responses: []*provider.ChatResponse{assistantFinal("不应调用", provider.Usage{})}}
+	recorder := &memoryContextRecorder{errAt: 1}
+	runtime, emitter, sink := newAgentTestHarnessWithRecorder(t, root, fake, nil, recorder)
+	_, err := runtime.Run(context.Background(), RunRequest{RunID: "run-test", Task: "任务", Model: "fake:model", MaxTurns: 2}, emitter)
+	if err == nil || !strings.Contains(err.Error(), "persist private user context") {
+		t.Fatalf("Run() error=%v", err)
+	}
+	if len(fake.requests) != 0 {
+		t.Fatalf("provider was called after context failure: %+v", fake.requests)
+	}
+	assertEventKinds(t, sink.Events(), []events.Kind{events.KindRunStarted, events.KindRunFailed})
+}
+
 func newAgentTestHarness(t *testing.T, root string, fake provider.Provider, rules []policy.Rule) (*Agent, *events.Emitter, *events.MemorySink) {
+	return newAgentTestHarnessWithRecorder(t, root, fake, rules, nil)
+}
+
+func newAgentTestHarnessWithRecorder(t *testing.T, root string, fake provider.Provider, rules []policy.Rule, recorder ContextRecorder) (*Agent, *events.Emitter, *events.MemorySink) {
 	t.Helper()
 	guard, err := platform.NewPathGuard(root)
 	if err != nil {
@@ -207,7 +291,7 @@ func newAgentTestHarness(t *testing.T, root string, fake provider.Provider, rule
 	now := time.Now
 	runtime, err := New(Options{
 		Provider: fake, Registry: registry, Guard: guard, Policy: engine,
-		Now: now, MaxContextTokens: 64_000,
+		Now: now, MaxContextTokens: 64_000, ContextRecorder: recorder,
 	})
 	if err != nil {
 		t.Fatal(err)

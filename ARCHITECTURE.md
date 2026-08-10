@@ -692,7 +692,7 @@ Reflect Worker 的工具集只有：
 ```text
 mengdie                         # 在当前项目启动交互会话
 mengdie exec "修复这个测试"     # 无头单任务模式
-mengdie resume [session]        # 恢复会话
+mengdie session resume [session] # 安全恢复会话
 mengdie memory ...              # 记忆查看与控制
 mengdie reflect ...             # 生成和审核复盘提案
 mengdie rewind [turn]           # 回滚 MengDie Code 的修改
