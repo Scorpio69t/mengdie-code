@@ -134,17 +134,18 @@ go run ./cmd/mengdie exec --json --command-id ci-job-42 "检查当前项目"
 go run ./cmd/mengdie exec --allow-edit --allow-command go,test "修复失败测试"
 go run ./cmd/mengdie session list
 go run ./cmd/mengdie session show --json <session-id>
+go run ./cmd/mengdie session resume --message "继续检查" <session-id>
 go run ./cmd/mengdie session delete --yes <session-id>
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 ```
 
-交互入口每次启动只接收一个不超过 64 KiB 的任务；`run.started`、完成消息、警告和 Run 终态等可重建边界已持久化到本地 SQLite，流式 `message.delta` 仍只存在内存中。事实先提交再输出，因此输出器失败不会抹掉已提交事件；存储失败则不会把事件伪装成已发生。`session list/show/delete` 通过同一个纯 Reducer 投影历史公开事实，Snapshot 只作可丢弃缓存；`delete` 必须显式提供 `--yes`。编辑、写入和未被配置规则预先允许的 Shell 会在执行前显示本地预览并请求批准。当前仍没有 resume、可恢复审批、TUI 或 REPL，已存事件尚不能恢复模型上下文；管道或重定向场景必须改用 `mengdie exec`。
+交互入口每次启动只接收一个不超过 64 KiB 的任务；`run.started`、完成消息、警告和 Run 终态等可重建边界已持久化到本地 SQLite，流式 `message.delta` 仍只存在内存中。事实先提交再输出，因此输出器失败不会抹掉已提交事件；存储失败则不会把事件伪装成已发生。`session list/show/resume/delete` 通过 Session Service 工作，Snapshot 只作可丢弃缓存；`delete` 必须显式提供 `--yes`。`session resume` 在同一 Session 创建新 Run，恢复完整 user/assistant/只读工具边界和 Todo；写入、执行、网络工具只恢复脱敏摘要。旧版无上下文日志、未决审批、未完成工具或私有/公开事实不一致时一律中文拒绝。当前仍没有审批重新确认、执行中只读工具重试、Patch Journal、TUI 或 REPL；管道或重定向场景必须改用 `mengdie exec`。
 
 默认数据目录为 macOS 的 `~/Library/Application Support/MengDie Code/`、Windows 的 `%LOCALAPPDATA%\MengDie Code\`，Linux 使用 `$XDG_STATE_HOME/mengdie/`（未设置时为 `~/.local/state/mengdie/`）。可通过 `MENGDIE_DATA_DIR` 覆盖，但仓库内、网络共享、OneDrive/iCloud 同步目录以及 symlink/reparse point 会被拒绝。
 
-`exec --json` 输出完整 JSON Lines 运行事件。`--command-id` 可为自动化提供幂等键：同 ID、同任务只回放已经提交的公开事实，不再调用 Provider 或工具；同 ID、不同任务直接冲突，运行中或中断状态在 resume 实现前安全阻断。无头模式默认拒绝 edit/write/shell；`--allow-edit` 只放行项目内修改，`--allow-command go,test` 只放行无控制操作符的 `go test` 命令前缀，`--allow-env NAME` 才允许 shell 继承对应敏感环境变量。
+`exec --json` 输出完整 JSON Lines 运行事件。`--command-id` 可为自动化提供幂等键：同 ID、同任务只回放已经提交的公开事实，不再调用 Provider 或工具；同 ID、不同任务直接冲突，运行中或中断状态不会由 `exec` 自动续跑，需要显式通过安全门禁调用 `session resume`。恢复命令也支持独立的 `--command-id`，重复 ID 只回放该恢复 Run 的公开事实。无头模式默认拒绝 edit/write/shell；`--allow-edit` 只放行项目内修改，`--allow-command go,test` 只放行无控制操作符的 `go test` 命令前缀，`--allow-env NAME` 才允许 shell 继承对应敏感环境变量。
 
-公开事件、`session` 输出和日志不包含完整用户任务、密钥或隐藏推理。为进行 Command 幂等校验，完整任务会作为 `commands.payload_json` 私有事实保存在上述本地 SQLite 中；当前仅依赖目录/文件权限，尚未静态加密。不要把 `MENGDIE_DATA_DIR` 指向共享或同步目录，并使用 `session delete --yes` 删除不再需要的本地会话。API Key、环境变量值和可重放审批授权不会写入账本。
+公开事件、`session` 输出和日志不包含完整用户任务、密钥或隐藏推理。为进行 Command 幂等与上下文恢复，完整任务和模型可见消息会作为私有事实保存在上述本地 SQLite 中；副作用工具结果只保存安全摘要，API Key、允许继承的环境变量值和可重放审批授权不会写入。私有事实当前仅依赖目录/文件权限，尚未静态加密；不要把 `MENGDIE_DATA_DIR` 指向共享或同步目录，并使用 `session delete --yes` 删除不再需要的本地会话。
 
 需要 Go 1.26 或更高版本。
 

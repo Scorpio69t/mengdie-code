@@ -453,6 +453,73 @@ func TestSessionCommandsExposeOnlyPublicProjectionAndRequireDeleteConfirmation(t
 	}
 }
 
+func TestSessionResumeRestoresHistoryInSameSessionAndReplaysIdempotently(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeConfig(t, root)
+	application, stdout, stderr := newTestApp(t, nil)
+	ids := []string{"run-first", "run-resume", "run-replay"}
+	application.newRunID = func() (string, error) {
+		id := ids[0]
+		ids = ids[1:]
+		return id, nil
+	}
+	firstProvider := &appFakeProvider{responses: []*provider.ChatResponse{{
+		Message: provider.Message{Role: provider.RoleAssistant, Content: "第一轮完成"},
+	}}}
+	resumeProvider := &appFakeProvider{responses: []*provider.ChatResponse{{
+		Message: provider.Message{Role: provider.RoleAssistant, Content: "恢复完成"},
+	}}}
+	providerCreations := 0
+	application.newProvider = func(config.Profile, string) (provider.Provider, error) {
+		providerCreations++
+		if providerCreations == 1 {
+			return firstProvider, nil
+		}
+		return resumeProvider, nil
+	}
+	if code := application.Run(context.Background(), []string{"exec", "--cwd", root, "--json", "初始私有任务"}, false); code != ExitOK {
+		t.Fatalf("first code=%d stderr=%s", code, stderr.String())
+	}
+	stdout.Reset()
+	resumeArgs := []string{
+		"session", "resume", "--cwd", root, "--json", "--command-id", "resume-stable",
+		"--message", "继续检查当前仓库", "ses_run-first",
+	}
+	if code := application.Run(context.Background(), resumeArgs, false); code != ExitOK {
+		t.Fatalf("resume code=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if len(resumeProvider.requests) != 1 {
+		t.Fatalf("resume provider requests=%d", len(resumeProvider.requests))
+	}
+	contents := make([]string, 0, len(resumeProvider.requests[0].Messages))
+	for _, message := range resumeProvider.requests[0].Messages {
+		contents = append(contents, message.Content)
+	}
+	joined := strings.Join(contents, "\n")
+	for _, want := range []string{"初始私有任务", "第一轮完成", "继续检查当前仓库"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("restored request missing %q: %+v", want, resumeProvider.requests[0].Messages)
+		}
+	}
+	stdout.Reset()
+	if code := application.Run(context.Background(), resumeArgs, false); code != ExitOK {
+		t.Fatalf("resume replay code=%d stderr=%s", code, stderr.String())
+	}
+	if providerCreations != 2 || len(resumeProvider.requests) != 1 {
+		t.Fatalf("idempotent replay called provider: creations=%d requests=%d", providerCreations, len(resumeProvider.requests))
+	}
+	if strings.Contains(stdout.String(), "初始私有任务") || strings.Contains(stdout.String(), "继续检查当前仓库") {
+		t.Fatalf("replay leaked private context: %s", stdout.String())
+	}
+	stdout.Reset()
+	if code := application.Run(context.Background(), []string{"session", "show", "--cwd", root, "--json", "ses_run-first"}, false); code != ExitOK {
+		t.Fatalf("show resumed code=%d stderr=%s", code, stderr.String())
+	}
+	if strings.Count(stdout.String(), `"status":"completed"`) < 3 || !strings.Contains(stdout.String(), "恢复完成") {
+		t.Fatalf("resumed view=%s", stdout.String())
+	}
+}
+
 func TestExecHumanOutputUsesEventRenderer(t *testing.T) {
 	root := t.TempDir()
 	writeRuntimeConfig(t, root)

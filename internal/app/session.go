@@ -10,12 +10,15 @@ import (
 	"strings"
 
 	"github.com/Scorpio69t/mengdie-code/internal/config"
+	"github.com/Scorpio69t/mengdie-code/internal/events"
+	"github.com/Scorpio69t/mengdie-code/internal/policy"
 	"github.com/Scorpio69t/mengdie-code/internal/session"
+	"github.com/Scorpio69t/mengdie-code/internal/ui/terminal"
 )
 
 func (a *App) runSession(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		if err := a.writeError("用法：mengdie session <list|show|delete> [选项]\n"); err != nil {
+		if err := a.writeError("用法：mengdie session <list|show|resume|delete> [选项]\n"); err != nil {
 			return ExitRunError
 		}
 		return ExitInvalidInput
@@ -25,6 +28,8 @@ func (a *App) runSession(ctx context.Context, args []string) int {
 		return a.runSessionList(ctx, args[1:])
 	case "show":
 		return a.runSessionShow(ctx, args[1:])
+	case "resume":
+		return a.runSessionResume(ctx, args[1:])
 	case "delete":
 		return a.runSessionDelete(ctx, args[1:])
 	default:
@@ -33,6 +38,97 @@ func (a *App) runSession(ctx context.Context, args []string) int {
 		}
 		return ExitInvalidInput
 	}
+}
+
+func (a *App) runSessionResume(ctx context.Context, args []string) int {
+	flags, common := a.newCommonFlagSet("mengdie session resume")
+	jsonOutput := flags.Bool("json", false, "输出 JSON Lines 事件；安全门禁拒绝时输出 JSON 结果")
+	message := flags.String("message", session.DefaultResumeMessage, "追加到已有上下文的新指令")
+	allowEdit := flags.Bool("allow-edit", false, "允许本次无头恢复修改项目文件")
+	commandID := flags.String("command-id", "", "幂等恢复命令 ID；重复 ID 只回放已提交结果")
+	var allowCommands commandPrefixFlag
+	var allowEnvironment stringListFlag
+	flags.Var(&allowCommands, "allow-command", "允许的非交互命令前缀，可重复；go,test 表示 go test")
+	flags.Var(&allowEnvironment, "allow-env", "允许 shell 继承的敏感环境变量名，可重复或用逗号分隔")
+	if err := flags.Parse(args); err != nil {
+		return flagExitCode(err)
+	}
+	if flags.NArg() != 1 {
+		if err := a.writeError("用法：mengdie session resume [--json] [--message 文本] <session-id>\n"); err != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+	if strings.TrimSpace(*message) == "" {
+		if err := a.writeError("--message 不能为空\n"); err != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+	if *commandID != "" && !validOpaqueCommandID(*commandID) {
+		if err := a.writeError("--command-id 仅允许 1-128 个 ASCII 字母、数字及 . _ : -\n"); err != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+	loaded, store, service, code := a.openSessionService(ctx, common)
+	if code != ExitOK {
+		return code
+	}
+	matched, err := service.MatchResumeCommand(ctx, *commandID, flags.Arg(0), strings.TrimSpace(*message), loaded.ProjectRoot)
+	if err != nil {
+		return a.closeSessionAfterError(store, fmt.Sprintf("校验恢复命令失败：%v", err))
+	}
+	plan := session.ResumePlan{SessionID: flags.Arg(0), CanResume: matched}
+	if !matched {
+		plan, err = service.AnalyzeResume(ctx, flags.Arg(0), loaded.ProjectRoot)
+		if err != nil {
+			return a.closeSessionAfterError(store, fmt.Sprintf("分析会话恢复失败：%v", err))
+		}
+	}
+	if !plan.CanResume {
+		if *jsonOutput {
+			if err := writeJSON(a.stdout, plan); err != nil {
+				return a.closeSessionAfterError(store, fmt.Sprintf("输出恢复门禁结果失败：%v", err))
+			}
+		} else if _, err := fmt.Fprintf(a.stdout, "无法安全恢复会话 %s：%s\n", plan.SessionID, plan.Reason); err != nil {
+			return a.closeSessionAfterError(store, fmt.Sprintf("输出恢复门禁结果失败：%v", err))
+		}
+		if closeCode := a.closeSessionStore(store); closeCode != ExitOK {
+			return closeCode
+		}
+		return ExitPolicyDenied
+	}
+	if closeCode := a.closeSessionStore(store); closeCode != ExitOK {
+		return closeCode
+	}
+	runID, err := a.newRunID()
+	if err != nil {
+		if writeErr := a.writeError("创建恢复 Run 失败：%v\n", err); writeErr != nil {
+			return ExitRunError
+		}
+		return ExitRunError
+	}
+	var sink events.Sink
+	if *jsonOutput {
+		sink, err = terminal.NewJSONRenderer(a.stdout)
+	} else {
+		sink, err = terminal.NewHumanRenderer(a.stderr)
+	}
+	if err != nil {
+		if writeErr := a.writeError("初始化输出失败：%v\n", err); writeErr != nil {
+			return ExitRunError
+		}
+		return ExitRunError
+	}
+	return a.runAgent(ctx, loaded, runID, strings.TrimSpace(*message), sink, runtimeOptions{
+		Mode: policy.ModeHeadless, Security: "受控本地执行 · 安全恢复",
+		AllowEdit: *allowEdit, AllowCommands: allowCommands.Values(),
+		AllowedEnvironment: allowEnvironment.Values(), CommandID: *commandID,
+		SessionID: plan.SessionID, CommandKind: session.CommandKindResume,
+		History: plan.History, Todos: plan.Todos,
+		ExpectedSessionSeq: plan.ExpectedSessionSeq, ExpectedContextOrdinal: plan.ExpectedContextOrdinal,
+	})
 }
 
 func (a *App) runSessionList(ctx context.Context, args []string) int {

@@ -26,13 +26,19 @@ import (
 type providerFactory func(config.Profile, string) (provider.Provider, error)
 
 type runtimeOptions struct {
-	Mode               policy.Mode
-	Broker             policy.Broker
-	Security           string
-	AllowEdit          bool
-	AllowCommands      []string
-	AllowedEnvironment []string
-	CommandID          string
+	Mode                   policy.Mode
+	Broker                 policy.Broker
+	Security               string
+	AllowEdit              bool
+	AllowCommands          []string
+	AllowedEnvironment     []string
+	CommandID              string
+	SessionID              string
+	CommandKind            string
+	History                []provider.Message
+	Todos                  []tools.Todo
+	ExpectedSessionSeq     uint64
+	ExpectedContextOrdinal uint64
 }
 
 func defaultProviderFactory(profile config.Profile, apiKey string) (provider.Provider, error) {
@@ -55,7 +61,21 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	if strings.TrimSpace(profile.Provider) == "" || strings.TrimSpace(profile.Model) == "" {
 		return a.runtimeSetupError("Provider 未配置；请先运行 mengdie doctor 并配置 profile")
 	}
-	commandPayload, err := session.TaskCommandPayload(task)
+	commandKind := strings.TrimSpace(options.CommandKind)
+	if commandKind == "" {
+		commandKind = session.CommandKindExec
+	}
+	sessionID := strings.TrimSpace(options.SessionID)
+	if sessionID == "" {
+		sessionID = "ses_" + runID
+	}
+	var commandPayload []byte
+	var err error
+	if commandKind == session.CommandKindResume {
+		commandPayload, err = session.ResumeCommandPayload(sessionID, task)
+	} else {
+		commandPayload, err = session.TaskCommandPayload(task)
+	}
 	if err != nil {
 		return a.runtimeSetupError(fmt.Sprintf("创建命令载荷失败：%v", err))
 	}
@@ -63,7 +83,6 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	if commandID == "" {
 		commandID = "cmd_" + runID
 	}
-	sessionID := "ses_" + runID
 	dataDir, err := session.ResolveDataDir(session.DataDirOptions{
 		Override: a.dataDir, ProjectRoot: loaded.ProjectRoot, LookupEnv: a.lookupEnv,
 	})
@@ -76,11 +95,20 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	if err != nil {
 		return a.runtimeStorageError(fmt.Sprintf("打开事件存储失败：%v", err))
 	}
-	begin, err := store.BeginCommandRun(ctx, session.CommandRunMetadata{
-		SessionID: sessionID, CommandID: commandID, CommandKind: session.CommandKindExec,
+	metadata := session.CommandRunMetadata{
+		SessionID: sessionID, CommandID: commandID, CommandKind: commandKind,
 		CommandPayload: commandPayload, RunID: runID, ProjectRoot: loaded.ProjectRoot,
 		Provider: profile.Provider, Model: profile.Model, StartedAt: a.now(),
-	})
+	}
+	var begin session.BeginCommandResult
+	if commandKind == session.CommandKindResume {
+		begin, err = store.BeginResumeCommandRun(ctx, session.ResumeCommandRunMetadata{
+			CommandRunMetadata: metadata, ExpectedSessionSeq: options.ExpectedSessionSeq,
+			ExpectedContextOrdinal: options.ExpectedContextOrdinal,
+		})
+	} else {
+		begin, err = store.BeginCommandRun(ctx, metadata)
+	}
 	if err != nil {
 		closeErr := store.Close()
 		if closeErr != nil {
@@ -91,6 +119,7 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	if begin.Existing {
 		return a.replayExistingCommand(ctx, store, begin, sink)
 	}
+	sessionID = begin.Command.SessionID
 	rejectSetup := func(message string) int {
 		rejectErr := store.RejectUnstartedCommand(context.WithoutCancel(ctx), commandID)
 		closeErr := store.Close()
@@ -138,16 +167,25 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	for index, instruction := range instructions {
 		contextInstructions[index] = agentcontext.Instruction{Source: instruction.Path, Content: instruction.Content}
 	}
+	var contextRecorder *session.ContextRecorder
+	if commandKind == session.CommandKindResume {
+		contextRecorder, err = store.NewContextRecorderAt(ctx, sessionID, runID, commandID, options.ExpectedContextOrdinal)
+	} else {
+		contextRecorder, err = store.NewContextRecorder(ctx, sessionID, runID, commandID)
+	}
+	if err != nil {
+		return rejectSetup(fmt.Sprintf("初始化私有上下文日志失败：%v", err))
+	}
 	runtime, err := agent.New(agent.Options{
 		Provider: modelProvider, Registry: registry, Guard: guard, Policy: engine, Broker: options.Broker,
 		Now: a.now, MaxContextTokens: profile.MaxContextTokens,
 		Environment: a.environment, AllowedEnvironment: options.AllowedEnvironment,
-		Instructions: contextInstructions,
+		Instructions: contextInstructions, ContextRecorder: contextRecorder,
 	})
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化 Agent Runtime 失败：%v", err))
 	}
-	durableSink, err := session.NewCommandEventSink(sessionID, commandID, 0, store, sink)
+	durableSink, err := session.NewCommandEventSink(sessionID, commandID, begin.AfterSeq, store, sink)
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化持久事件流失败：%v", err))
 	}
@@ -158,6 +196,7 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	result, err := runtime.Run(ctx, agent.RunRequest{
 		RunID: runID, Task: task, Model: profile.Model, DisplayModel: modelLabel(profile),
 		MaxTurns: loaded.Config.Context.MaxTurns, Security: options.Security,
+		History: options.History, Todos: options.Todos,
 	}, emitter)
 	service, serviceErr := session.NewService(store)
 	if serviceErr == nil {
@@ -243,12 +282,12 @@ func (a *App) replayExistingCommand(ctx context.Context, store *session.SQLiteSt
 		if begin.Command.ResultSeq > 0 {
 			return replayedFailureExit(terminal)
 		}
-		if err := a.writeError("命令 %s 状态为 interrupted；P2-03A 不会自动续跑，避免重复副作用\n", begin.Command.ID); err != nil {
+		if err := a.writeError("命令 %s 状态为 interrupted；同一幂等 ID 不会自动续跑，请先检查会话并使用新 ID 恢复\n", begin.Command.ID); err != nil {
 			return ExitRunError
 		}
 		return ExitRunError
 	default:
-		if err := a.writeError("命令 %s 状态为 %s；P2-03A 不会自动续跑，避免重复副作用\n", begin.Command.ID, begin.Command.Status); err != nil {
+		if err := a.writeError("命令 %s 状态为 %s；同一幂等 ID 不会自动续跑，避免重复副作用\n", begin.Command.ID, begin.Command.Status); err != nil {
 			return ExitRunError
 		}
 		return ExitRunError
