@@ -90,6 +90,7 @@ go run ./cmd/mengdie exec --json --command-id ci-job-42 "inspect this project"
 go run ./cmd/mengdie exec --allow-edit --allow-command go,test "fix the failing test"
 go run ./cmd/mengdie session list
 go run ./cmd/mengdie session show --json <session-id>
+go run ./cmd/mengdie session tui <session-id>
 go run ./cmd/mengdie session resume --message "continue checking" <session-id>
 go run ./cmd/mengdie session delete --yes <session-id>
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
