@@ -10,18 +10,52 @@ import (
 	"unicode/utf8"
 )
 
-// Mark is the compact terminal representation of the MengDie butterfly.
-// Generated offline from assets/brand/mengdie-mark.svg: rasterize at 512x512,
-// then map per-cell ink (distance from white) onto the " ░▒▓█" block ramp at
-// 18 columns with a 0.5 cell aspect ratio. Regenerate when the SVG changes.
-const Mark = `     ░    ░
-░▓▓▒░ ░  ░ ░▒▓▓░
-░█▓▒▓▓░▒▒░▓▓▒▓█░
-░▓▓▒░▒▒▓▓▒▒░▒▓▓░
- ▓██▓▓▒▓▓▒▓▓██▓
-░██▒▓█▓▓▓▓█▓▒██░
- ▓███▒ ▒▒ ▒███▓
-  ▒░        ░▒`
+// Mark is the color-free fallback used by plain output. The interactive TUI
+// renders TerminalLogoRows instead, preserving the vector mark's silhouette.
+const Mark = "<>|<>"
+
+var terminalLogoRows = [...]string{
+	" #                 #  ",
+	"####     @@      ###  ",
+	"######   @@#   #####  ",
+	"##  #### @@  #### ##  ",
+	"###   ###@@####   ##  ",
+	"###      @@#      ##  ",
+	" ####     @     ####  ",
+	"   ####  @@   ####    ",
+	"   ####  @@#  ####    ",
+	"  ###    @@     ###   ",
+	"  ###   #@@##   ##    ",
+	"   ## ###@@#### ##    ",
+	"   #####     #####    ",
+	"    ##         ##     ",
+}
+
+var terminalCompactLogoRows = [...]string{
+	" ###    @    ### ",
+	" #####  @  ##### ",
+	" ##  ##@@###  ## ",
+	" ##   #@@##   ## ",
+	"  ##    @    ##  ",
+	"   ###  @  ###   ",
+	"   ##   @   ##   ",
+	"   #   @@#   #   ",
+	"   ####@@#####   ",
+	"   ###     ###   ",
+	"    #       #    ",
+	"                 ",
+}
+
+// TerminalLogoRows returns a rasterized form of the vector mark. '#' denotes
+// the jade wings and '@' the light insertion caret. The TUI packs two rows into
+// one half-block terminal cell, preserving the logo's aspect ratio without a
+// terminal-specific bitmap protocol.
+func TerminalLogoRows(compact bool) []string {
+	if compact {
+		return append([]string(nil), terminalCompactLogoRows[:]...)
+	}
+	return append([]string(nil), terminalLogoRows[:]...)
+}
 
 // Info contains the runtime facts shown on the interactive welcome screen.
 // Values must already be safe for display; secrets never belong here.

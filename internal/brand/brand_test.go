@@ -42,3 +42,35 @@ func TestWriteWelcomeIncludesIdentityAndRuntimeFacts(t *testing.T) {
 		}
 	}
 }
+
+func TestTerminalLogoRowsAreRectangularAndDefensive(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		compact bool
+		width   int
+		height  int
+	}{
+		{name: "full", width: 22, height: 14},
+		{name: "compact", compact: true, width: 17, height: 12},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rows := TerminalLogoRows(test.compact)
+			if len(rows) != test.height {
+				t.Fatalf("row count=%d, want %d", len(rows), test.height)
+			}
+			for index, row := range rows {
+				if len(row) != test.width {
+					t.Fatalf("row %d width=%d, want %d", index, len(row), test.width)
+				}
+				if strings.Trim(row, " #@") != "" {
+					t.Fatalf("row %d contains unsupported raster symbols: %q", index, row)
+				}
+			}
+
+			rows[0] = "mutated"
+			if TerminalLogoRows(test.compact)[0] == "mutated" {
+				t.Fatal("TerminalLogoRows returned mutable shared storage")
+			}
+		})
+	}
+}

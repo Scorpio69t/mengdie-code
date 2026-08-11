@@ -36,7 +36,7 @@ MengDie Code 不用“依赖越多”证明现代化。现代化意味着：
 | HTTP / SSE | `net/http`、`bufio.Reader` | 已确定；便于精确控制国内兼容端点与流式错误 |
 | 结构化日志 | `log/slog` | 已确定；标准库、结构化、可替换 Handler |
 | TOML | [`pelletier/go-toml/v2`](https://github.com/pelletier/go-toml) | P1-01 候选；成熟且 v2 API 清晰，需先做严格解析测试 |
-| 完整 TUI | [`charm.land/bubbletea/v2`](https://github.com/charmbracelet/bubbletea) v2.0.8 + [`charm.land/lipgloss/v2`](https://github.com/charmbracelet/lipgloss) v2.0.5 | P2-04A 已采用：稳定 v2 API、MIT、无 CGO；只用于 `internal/tui` 的公开 SessionView 渲染。Bubbles v2 暂未引入，待实际需要组件时再评估；四目标构建、无颜色/窄屏/中文测试与漏洞门禁为准入证据 |
+| 完整 TUI | [`charm.land/bubbletea/v2`](https://github.com/charmbracelet/bubbletea) v2.0.8 + [`charm.land/bubbles/v2`](https://github.com/charmbracelet/bubbles) v2.1.1 + [`charm.land/lipgloss/v2`](https://github.com/charmbracelet/lipgloss) v2.0.5 | P2-04A/C 已采用：稳定 v2 API、MIT、无 CGO；Bubble Tea 只管理消息循环，Bubbles 提供维护中的 textarea/viewport，Lip Gloss 只处理终端样式。第三方类型限制在 `internal/tui`，任务、事实、审批与 Capability 仍由 Application/Session/Policy 接口拥有；四目标构建、无颜色/窄屏/中文、粘贴上限、取消与漏洞门禁为准入证据 |
 | SQLite | [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) v1.56.0 | P2-02 已采用；`database/sql`、纯 Go、BSD-3-Clause，四目标 `CGO_ENABLED=0` 构建、WAL/busy/事务回滚、许可证与漏洞门禁通过；Windows stripped CLI 由 7,857,152 B 增至 11,836,928 B（+50.7%），接受该基础设施成本并持续监控；driver 类型封装在 `internal/session` |
 | 系统凭据 | OS 原生适配器，评估 [`zalando/go-keyring`](https://github.com/zalando/go-keyring) | M1 小版本候选；必须验证 Keychain 与 Credential Manager 的失败语义 |
 | 终端能力 | `golang.org/x/term` | 需要 TTY、尺寸或安全输入时采用，避免自行维护平台探测 |

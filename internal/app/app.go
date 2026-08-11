@@ -17,6 +17,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	tea "charm.land/bubbletea/v2"
+
 	"github.com/Scorpio69t/mengdie-code/internal/brand"
 	"github.com/Scorpio69t/mengdie-code/internal/config"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
@@ -64,6 +66,7 @@ type App struct {
 	now           func() time.Time
 	newRunID      func() (string, error)
 	factBus       *session.PublicFactBus
+	runTUI        func(tea.Model, io.Reader, io.Writer) (tea.Model, error)
 }
 
 // New constructs the production application service.
@@ -79,6 +82,9 @@ func New(build BuildInfo, stdout, stderr io.Writer) *App {
 		now:         time.Now,
 		newRunID:    events.NewRunID,
 		factBus:     session.NewPublicFactBus(session.DefaultPublicFactBuffer),
+		runTUI: func(model tea.Model, input io.Reader, output io.Writer) (tea.Model, error) {
+			return tea.NewProgram(model, tea.WithInput(input), tea.WithOutput(output)).Run()
+		},
 	}
 }
 
@@ -110,6 +116,8 @@ func (a *App) Run(ctx context.Context, args []string, interactive bool) int {
 
 func (a *App) runInteractive(ctx context.Context, args []string, interactive bool) int {
 	flags, common := a.newCommonFlagSet("mengdie")
+	plain := flags.Bool("plain", false, "使用传统单次文本交互界面")
+	noColor := flags.Bool("no-color", false, "禁用 TUI 颜色")
 	if err := flags.Parse(args); err != nil {
 		return flagExitCode(err)
 	}
@@ -132,6 +140,13 @@ func (a *App) runInteractive(ctx context.Context, args []string, interactive boo
 		}
 		return ExitInvalidInput
 	}
+	if !*plain {
+		return a.runInteractiveTUI(ctx, loaded, !*noColor && !environmentIsSet(a.lookupEnv, "NO_COLOR"))
+	}
+	return a.runPlainInteractive(ctx, loaded)
+}
+
+func (a *App) runPlainInteractive(ctx context.Context, loaded config.Loaded) int {
 	profile := loaded.Profile()
 	if err := brand.WriteWelcome(a.stdout, brand.Info{
 		Version:   a.build.Version,

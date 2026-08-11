@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
-
 	"github.com/Scorpio69t/mengdie-code/internal/agent"
 	"github.com/Scorpio69t/mengdie-code/internal/config"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
@@ -73,8 +71,7 @@ func (a *App) runSessionTUI(ctx context.Context, args []string, interactive bool
 	if err != nil {
 		return a.closeSessionAfterError(store, fmt.Sprintf("查看会话失败：%v", err))
 	}
-	program := tea.NewProgram(tui.NewSubscribedSessionModel(view, 0, !*noColor, tuiSessionSource{service: service}), tea.WithInput(a.stdin), tea.WithOutput(a.stdout))
-	if _, err := program.Run(); err != nil {
+	if _, err := a.runTUI(tui.NewSubscribedSessionModel(view, 0, !*noColor, tuiSessionSource{service: service}), a.stdin, a.stdout); err != nil {
 		return a.closeSessionAfterError(store, fmt.Sprintf("运行会话 TUI 失败：%v", err))
 	}
 	return a.closeSessionStore(store)
@@ -315,19 +312,24 @@ func (a *App) openSessionService(ctx context.Context, common *commonFlags) (conf
 		}
 		return config.Loaded{}, nil, nil, ExitInvalidInput
 	}
+	store, service, code := a.openSessionServiceForLoaded(ctx, loaded)
+	return loaded, store, service, code
+}
+
+func (a *App) openSessionServiceForLoaded(ctx context.Context, loaded config.Loaded) (*session.SQLiteStore, *session.Service, int) {
 	dataDir, err := session.ResolveDataDir(session.DataDirOptions{Override: a.dataDir, ProjectRoot: loaded.ProjectRoot, LookupEnv: a.lookupEnv})
 	if err != nil {
-		return config.Loaded{}, nil, nil, a.runtimeStorageError(fmt.Sprintf("解析数据目录失败：%v", err))
+		return nil, nil, a.runtimeStorageError(fmt.Sprintf("解析数据目录失败：%v", err))
 	}
 	store, err := session.OpenSQLite(ctx, session.OpenOptions{DataDir: dataDir, ProjectRoot: loaded.ProjectRoot, Now: a.now})
 	if err != nil {
-		return config.Loaded{}, nil, nil, a.runtimeStorageError(fmt.Sprintf("打开事件存储失败：%v", err))
+		return nil, nil, a.runtimeStorageError(fmt.Sprintf("打开事件存储失败：%v", err))
 	}
 	service, err := session.NewService(store, session.WithPublicFactBus(a.factBus))
 	if err != nil {
-		return config.Loaded{}, nil, nil, a.closeSessionAfterError(store, fmt.Sprintf("初始化会话服务失败：%v", err))
+		return nil, nil, a.closeSessionAfterError(store, fmt.Sprintf("初始化会话服务失败：%v", err))
 	}
-	return loaded, store, service, ExitOK
+	return store, service, ExitOK
 }
 
 func (a *App) writeHumanSession(view session.SessionView) error {
