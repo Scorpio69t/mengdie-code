@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Scorpio69t/mengdie-code/internal/events"
+	"github.com/Scorpio69t/mengdie-code/internal/platform"
 	"github.com/Scorpio69t/mengdie-code/internal/provider"
 	"github.com/Scorpio69t/mengdie-code/internal/tools"
 )
@@ -34,7 +35,11 @@ func TestAnalyzeResumeUsesPatchJournalForInterruptedWrite(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := openTestStore(t, t.TempDir(), 0)
 			defer closeTestStore(t, store)
-			root := filepath.Clean(t.TempDir())
+			guard, err := platform.NewPathGuard(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := guard.Root()
 			path := filepath.Join(root, "value.txt")
 			if err := os.WriteFile(path, []byte("before\n"), 0o600); err != nil {
 				t.Fatal(err)
