@@ -40,6 +40,32 @@ type memoryContextRecorder struct {
 	position    int
 }
 
+type memoryMutationJournal struct {
+	intents map[string]tools.MutationIntent
+	next    int
+}
+
+func (journal *memoryMutationJournal) Prepare(_ context.Context, intent tools.MutationIntent) (tools.MutationReceipt, error) {
+	journal.next++
+	id := fmt.Sprintf("journal-%d", journal.next)
+	journal.intents[id] = intent
+	return tools.MutationReceipt{JournalID: id}, nil
+}
+
+func (*memoryMutationJournal) MarkApplied(context.Context, tools.MutationReceipt) error { return nil }
+
+func (journal *memoryMutationJournal) VerifyPost(_ context.Context, receipt tools.MutationReceipt) error {
+	intent := journal.intents[receipt.JournalID]
+	digest, err := tools.FileSHA256(intent.Path)
+	if err != nil {
+		return err
+	}
+	if digest != intent.PostSHA256 {
+		return tools.ErrMutationConflict
+	}
+	return nil
+}
+
 func (recorder *memoryContextRecorder) RecordCompaction(_ context.Context, record agentcontext.CompactionRecord) (agentcontext.CompactionReceipt, error) {
 	recorder.compactions = append(recorder.compactions, record)
 	return agentcontext.CompactionReceipt{SourceStart: 2, SourceEnd: uint64(recorder.position - record.RetainedTailMessages)}, nil
@@ -158,6 +184,42 @@ func TestAgentReturnsPolicyDenialToModelWithoutSideEffect(t *testing.T) {
 	if len(fake.requests) != 2 || !lastToolResultContains(fake.requests[1], `"category":"denied"`) {
 		t.Fatalf("denial was not returned to model: %+v", fake.requests)
 	}
+}
+
+func TestAgentAcknowledgesVerifiedWriteRecoveryWithoutReexecution(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "value.txt")
+	if err := os.WriteFile(path, []byte("written once\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake := &scriptedProvider{responses: []*provider.ChatResponse{
+		assistantFinal("已根据核验结果继续。", provider.Usage{}),
+	}}
+	runtime, emitter, sink := newAgentTestHarness(t, root, fake, nil)
+	result, err := runtime.Run(context.Background(), RunRequest{
+		RunID: "run-test", Task: "继续", Model: "fake:model", MaxTurns: 2,
+		Recovery: &RecoveryAction{
+			SourceRunID: "run-old", Kind: RecoveryVerifyWrite,
+			Call: provider.ToolCall{
+				ID: "write-1", Type: "function", Name: "write_file",
+				Arguments: json.RawMessage(`{"path":"value.txt","content":"must not run","overwrite":true}`),
+			},
+		},
+	}, emitter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Summary != "已根据核验结果继续。" {
+		t.Fatalf("result=%+v", result)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil || string(content) != "written once\n" {
+		t.Fatalf("content=%q err=%v", content, err)
+	}
+	assertEventKinds(t, sink.Events(), []events.Kind{
+		events.KindRunStarted, events.KindToolProposed, events.KindToolCompleted,
+		events.KindRecoveryResolved, events.KindMessageDelta, events.KindMessageCompleted, events.KindRunCompleted,
+	})
 }
 
 func TestAgentStopsRepeatedCallsFailuresAndMaxTurns(t *testing.T) {
@@ -479,6 +541,7 @@ func newAgentTestHarnessWithRecorderAndBudget(t *testing.T, root string, fake pr
 	runtime, err := New(Options{
 		Provider: fake, Registry: registry, Guard: guard, Policy: engine,
 		Now: now, MaxContextTokens: maxContextTokens, ContextRecorder: recorder,
+		MutationJournal: &memoryMutationJournal{intents: make(map[string]tools.MutationIntent)},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -546,6 +609,7 @@ func newInteractiveRecoveryHarness(t *testing.T, root string, fake provider.Prov
 	runtime, err := New(Options{
 		Provider: fake, Registry: registry, Guard: guard, Policy: engine, Broker: broker,
 		Now: now, MaxContextTokens: 64_000, ContextRecorder: recorder,
+		MutationJournal: &memoryMutationJournal{intents: make(map[string]tools.MutationIntent)},
 	})
 	if err != nil {
 		t.Fatal(err)

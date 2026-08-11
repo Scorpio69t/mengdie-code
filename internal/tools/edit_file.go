@@ -143,8 +143,31 @@ func (editFileTool) Execute(ctx context.Context, call *PreparedCall, cap Capabil
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := atomicWriteFile(env.Guard.Root(), resolved.Path, updated, mode, true, call.Preconditions); err != nil {
+	if env.MutationJournal == nil {
+		return nil, ErrMutationJournalMissing
+	}
+	var receipt MutationReceipt
+	prepareJournal := func() error {
+		var journalErr error
+		receipt, journalErr = env.MutationJournal.Prepare(ctx, MutationIntent{
+			ToolCallID: call.ID, ToolName: call.ToolName, CallDigest: call.Digest,
+			Path: resolved.Path, PreExists: true, PreSHA256: preconditionsHash(call.Preconditions), PreMode: mode,
+			PostExists: true, PostSHA256: bytesSHA256(updated), PostMode: mode,
+		})
+		if journalErr == nil {
+			journalErr = ctx.Err()
+		}
+		return journalErr
+	}
+	if err := atomicWriteFile(env.Guard.Root(), resolved.Path, updated, mode, true, call.Preconditions, prepareJournal); err != nil {
 		return nil, fmt.Errorf("edit_file: %w", err)
+	}
+	journalContext := context.WithoutCancel(ctx)
+	if err := env.MutationJournal.MarkApplied(journalContext, receipt); err != nil {
+		return nil, fmt.Errorf("edit_file: record applied write: %w", err)
+	}
+	if err := env.MutationJournal.VerifyPost(journalContext, receipt); err != nil {
+		return nil, fmt.Errorf("edit_file: verify applied write: %w", err)
 	}
 	return &ToolResult{
 		Output: fmt.Sprintf("已修改 %s（%d 处精确替换）", resolved.Path, replacements),

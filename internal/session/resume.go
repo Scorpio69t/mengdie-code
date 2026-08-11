@@ -45,8 +45,10 @@ type RecoveryAction struct {
 }
 
 const (
-	RecoveryReapprove = "reapprove"
-	RecoveryRetryRead = "retry_read"
+	RecoveryReapprove   = "reapprove"
+	RecoveryRetryRead   = "retry_read"
+	RecoveryRetryWrite  = "retry_write"
+	RecoveryVerifyWrite = "verify_write"
 )
 
 // MatchResumeCommand lets the application honor an already-registered
@@ -110,6 +112,18 @@ func (s *Service) AnalyzeResume(ctx context.Context, sessionID, projectRoot stri
 	if view.ProjectIdentity != projectIdentity(filepath.Clean(absoluteRoot)) {
 		return blockResume(plan, "该会话属于另一个项目，拒绝跨项目恢复"), nil
 	}
+	patchFacts, err := s.store.RecoverPatchJournals(ctx, sessionID, absoluteRoot)
+	if err != nil {
+		return ResumePlan{}, err
+	}
+	patchByCall := make(map[string]PatchRecovery, len(patchFacts))
+	for _, item := range patchFacts {
+		key := resumeCallKey(item.RunID, item.ToolCallID)
+		if _, duplicate := patchByCall[key]; duplicate {
+			return blockResume(plan, fmt.Sprintf("工具调用 %s 存在多个 Patch Journal", item.ToolCallID)), nil
+		}
+		patchByCall[key] = item
+	}
 
 	contextMessages, err := s.store.LoadContext(ctx, sessionID)
 	if err != nil {
@@ -128,7 +142,7 @@ func (s *Service) AnalyzeResume(ctx context.Context, sessionID, projectRoot stri
 	if err != nil {
 		return blockResume(plan, err.Error()), nil
 	}
-	recovery, err := selectRecovery(view, recovered)
+	recovery, err := selectRecovery(view, recovered, patchByCall)
 	if err != nil {
 		return blockResume(plan, err.Error()), nil
 	}
@@ -200,6 +214,14 @@ func (s *Service) AnalyzeResume(ctx context.Context, sessionID, projectRoot stri
 			}
 		} else {
 			recovery.Call = cloneToolCall(call)
+			if recovery.Kind == RecoveryRetryWrite || recovery.Kind == RecoveryVerifyWrite {
+				journal := patchByCall[resumeCallKey(recovery.SourceRunID, recovery.Call.ID)]
+				canonical, digestErr := tools.Canonicalize(recovery.Call.Arguments)
+				if digestErr != nil || journal.ToolName != recovery.Call.Name ||
+					journal.CallDigest != tools.ComputeDigest(recovery.Call.Name, canonical) {
+					return blockResume(plan, "Patch Journal 与私有工具调用摘要不一致"), nil
+				}
+			}
 			plan.Recovery = recovery
 		}
 	}
@@ -293,7 +315,8 @@ func recoveryFacts(view SessionView) (map[string]RecoveryView, map[string]string
 		if strings.TrimSpace(item.RunID) == "" || strings.TrimSpace(item.SourceRunID) == "" || strings.TrimSpace(item.CallID) == "" {
 			return nil, nil, errors.New("恢复公开事实缺少身份")
 		}
-		if item.Action != RecoveryReapprove && item.Action != RecoveryRetryRead {
+		if item.Action != RecoveryReapprove && item.Action != RecoveryRetryRead &&
+			item.Action != RecoveryRetryWrite && item.Action != RecoveryVerifyWrite {
 			return nil, nil, fmt.Errorf("恢复公开事实包含未知动作 %s", item.Action)
 		}
 		if item.Outcome != "completed" && item.Outcome != "failed" {
@@ -310,7 +333,7 @@ func recoveryFacts(view SessionView) (map[string]RecoveryView, map[string]string
 	return bySource, byRun, nil
 }
 
-func selectRecovery(view SessionView, recovered map[string]RecoveryView) (*RecoveryAction, error) {
+func selectRecovery(view SessionView, recovered map[string]RecoveryView, patchByCall map[string]PatchRecovery) (*RecoveryAction, error) {
 	candidates := make([]RecoveryAction, 0, 1)
 	pendingApprovals := make(map[string]struct{})
 	add := func(action RecoveryAction) error {
@@ -344,17 +367,43 @@ func selectRecovery(view SessionView, recovered map[string]RecoveryView) (*Recov
 		if tool.Phase != "running" {
 			return nil, fmt.Errorf("run %s 的工具调用 %s 状态为 %s，无法确认副作用边界", tool.RunID, tool.CallID, tool.Phase)
 		}
-		if !recoveryReadOnly(tool.Effects) {
-			return nil, fmt.Errorf("run %s 的工具调用 %s 包含副作用，恢复时保持阻断", tool.RunID, tool.CallID)
+		if recoveryReadOnly(tool.Effects) {
+			if err := add(RecoveryAction{SourceRunID: tool.RunID, Call: provider.ToolCall{ID: tool.CallID}, Kind: RecoveryRetryRead}); err != nil {
+				return nil, err
+			}
+			continue
 		}
-		if err := add(RecoveryAction{SourceRunID: tool.RunID, Call: provider.ToolCall{ID: tool.CallID}, Kind: RecoveryRetryRead}); err != nil {
-			return nil, err
+		if recoveryWriteOnly(tool.Effects) {
+			journal, ok := patchByCall[key]
+			if !ok {
+				return nil, fmt.Errorf("run %s 的写工具调用 %s 缺少 Patch Journal，恢复时保持阻断", tool.RunID, tool.CallID)
+			}
+			switch journal.Status {
+			case PatchVerified:
+				if err := add(RecoveryAction{SourceRunID: tool.RunID, Call: provider.ToolCall{ID: tool.CallID}, Kind: RecoveryVerifyWrite}); err != nil {
+					return nil, err
+				}
+			case PatchAborted:
+				if err := add(RecoveryAction{SourceRunID: tool.RunID, Call: provider.ToolCall{ID: tool.CallID}, Kind: RecoveryRetryWrite}); err != nil {
+					return nil, err
+				}
+			case PatchConflict:
+				return nil, fmt.Errorf("run %s 的写工具调用 %s 与当前文件冲突：%s", tool.RunID, tool.CallID, journal.ConflictMsg)
+			default:
+				return nil, fmt.Errorf("run %s 的写工具调用 %s 的 Patch Journal 状态为 %s，恢复时保持阻断", tool.RunID, tool.CallID, journal.Status)
+			}
+			continue
 		}
+		return nil, fmt.Errorf("run %s 的工具调用 %s 包含副作用，恢复时保持阻断", tool.RunID, tool.CallID)
 	}
 	if len(candidates) == 0 {
 		return nil, nil
 	}
 	return &candidates[0], nil
+}
+
+func recoveryWriteOnly(effects []string) bool {
+	return len(effects) == 1 && effects[0] == string(tools.EffectWrite)
 }
 
 func hasResumeTool(items []ToolView, runID, callID string) bool {

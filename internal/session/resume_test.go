@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,7 +15,55 @@ import (
 
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 	"github.com/Scorpio69t/mengdie-code/internal/provider"
+	"github.com/Scorpio69t/mengdie-code/internal/tools"
 )
+
+func TestAnalyzeResumeUsesPatchJournalForInterruptedWrite(t *testing.T) {
+	tests := []struct {
+		name         string
+		current      string
+		canResume    bool
+		recoveryKind string
+		reason       string
+	}{
+		{name: "pre retries only after approval", current: "before\n", canResume: true, recoveryKind: RecoveryRetryWrite},
+		{name: "post is acknowledged without replay", current: "after\n", canResume: true, recoveryKind: RecoveryVerifyWrite},
+		{name: "neither blocks", current: "manual edit\n", reason: "既不匹配"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := openTestStore(t, t.TempDir(), 0)
+			defer closeTestStore(t, store)
+			root := filepath.Clean(t.TempDir())
+			path := filepath.Join(root, "value.txt")
+			if err := os.WriteFile(path, []byte("before\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			seedInterruptedWriteSession(t, store, root, path)
+			if err := os.WriteFile(path, []byte(test.current), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			service, err := NewService(store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, err := service.AnalyzeResume(context.Background(), "session-resume", root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.CanResume != test.canResume {
+				t.Fatalf("plan=%+v", plan)
+			}
+			if test.canResume {
+				if plan.Recovery == nil || plan.Recovery.Kind != test.recoveryKind {
+					t.Fatalf("recovery=%+v", plan.Recovery)
+				}
+			} else if !strings.Contains(plan.Reason, test.reason) {
+				t.Fatalf("reason=%q", plan.Reason)
+			}
+		})
+	}
+}
 
 func TestAnalyzeResumeAndBeginResumeCommandRun(t *testing.T) {
 	store := openTestStore(t, t.TempDir(), 0)
@@ -282,6 +331,58 @@ func seedPendingToolResumeSession(t *testing.T, store *SQLiteStore, root string)
 		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 1, 1, events.KindRunStarted, events.RunStarted{Model: "model"}),
 		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 2, 2, events.KindMessageCompleted, events.MessageCompleted{}),
 		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 3, 3, events.KindToolProposed, events.ToolProposed{CallID: "call-1", Tool: "edit_file", Effects: []string{"write"}}),
+	}
+	if err := store.Append(context.Background(), "session-resume", 0, records); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedInterruptedWriteSession(t *testing.T, store *SQLiteStore, root, path string) {
+	t.Helper()
+	payload, err := TaskCommandPayload("修改文件")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.BeginCommandRun(context.Background(), CommandRunMetadata{
+		SessionID: "session-resume", CommandID: "command-initial", CommandKind: CommandKindExec,
+		CommandPayload: payload, RunID: "run-resume-1", ProjectRoot: root,
+		Provider: "openai-compatible", Model: "model", StartedAt: storeTestTime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments := json.RawMessage(`{"path":"value.txt","old_text":"before","new_text":"after"}`)
+	call := provider.ToolCall{ID: "call-1", Type: "function", Name: "edit_file", Arguments: arguments}
+	contextRecorder, err := store.NewContextRecorder(context.Background(), "session-resume", "run-resume-1", "command-initial")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := contextRecorder.RecordMessage(context.Background(), provider.Message{Role: provider.RoleUser, Content: "修改文件"}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := contextRecorder.RecordMessage(context.Background(), provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{call}}, true); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := tools.Canonicalize(arguments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal, err := store.NewPatchJournalRecorder(context.Background(), "session-resume", "run-resume-1", "command-initial", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := journal.Prepare(context.Background(), tools.MutationIntent{
+		ToolCallID: call.ID, ToolName: call.Name, CallDigest: tools.ComputeDigest(call.Name, canonical),
+		Path: path, PreExists: true, PreSHA256: bytesDigest("before\n"), PreMode: 0o600,
+		PostExists: true, PostSHA256: bytesDigest("after\n"), PostMode: 0o600,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	records := []Record{
+		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 1, 1, events.KindRunStarted, events.RunStarted{Model: "model"}),
+		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 2, 2, events.KindMessageCompleted, events.MessageCompleted{}),
+		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 3, 3, events.KindToolProposed, events.ToolProposed{CallID: call.ID, Tool: call.Name, Effects: []string{"write"}}),
+		resumeTestRecord(t, "session-resume", "run-resume-1", "command-initial", 4, 4, events.KindToolStarted, events.ToolStarted{CallID: call.ID, Tool: call.Name}),
 	}
 	if err := store.Append(context.Background(), "session-resume", 0, records); err != nil {
 		t.Fatal(err)

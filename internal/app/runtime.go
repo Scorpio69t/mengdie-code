@@ -183,11 +183,15 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化私有上下文日志失败：%v", err))
 	}
+	patchJournal, err := store.NewPatchJournalRecorder(ctx, sessionID, runID, commandID, guard.Root())
+	if err != nil {
+		return rejectSetup(fmt.Sprintf("初始化 Patch Journal 失败：%v", err))
+	}
 	runtime, err := agent.New(agent.Options{
 		Provider: modelProvider, Registry: registry, Guard: guard, Policy: engine, Broker: options.Broker,
 		Now: a.now, MaxContextTokens: profile.MaxContextTokens,
 		Environment: a.environment, AllowedEnvironment: options.AllowedEnvironment,
-		Instructions: contextInstructions, ContextRecorder: contextRecorder,
+		Instructions: contextInstructions, ContextRecorder: contextRecorder, MutationJournal: patchJournal,
 	})
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化 Agent Runtime 失败：%v", err))

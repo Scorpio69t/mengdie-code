@@ -36,6 +36,7 @@ type Options struct {
 	AllowedEnvironment []string
 	Instructions       []agentcontext.Instruction
 	ContextRecorder    ContextRecorder
+	MutationJournal    tools.MutationJournal
 }
 
 // ContextRecorder persists private, model-visible message boundaries. The
@@ -58,6 +59,7 @@ type Agent struct {
 	allowedEnvironment []string
 	instructions       []agentcontext.Instruction
 	contextRecorder    ContextRecorder
+	mutationJournal    tools.MutationJournal
 }
 
 type RunRequest struct {
@@ -74,8 +76,10 @@ type RunRequest struct {
 }
 
 const (
-	RecoveryReapprove = "reapprove"
-	RecoveryRetryRead = "retry_read"
+	RecoveryReapprove   = "reapprove"
+	RecoveryRetryRead   = "retry_read"
+	RecoveryRetryWrite  = "retry_write"
+	RecoveryVerifyWrite = "verify_write"
 )
 
 // RecoveryAction is a previously interrupted tool call selected by the
@@ -122,6 +126,7 @@ func New(options Options) (*Agent, error) {
 		allowedEnvironment: append([]string(nil), options.AllowedEnvironment...),
 		instructions:       append([]agentcontext.Instruction(nil), options.Instructions...),
 		contextRecorder:    options.ContextRecorder,
+		mutationJournal:    options.MutationJournal,
 	}, nil
 }
 
@@ -417,7 +422,8 @@ func validateRecoveryAction(action RecoveryAction) error {
 	if strings.TrimSpace(action.SourceRunID) == "" {
 		return errors.New("agent: recovery source run id is required")
 	}
-	if action.Kind != RecoveryReapprove && action.Kind != RecoveryRetryRead {
+	if action.Kind != RecoveryReapprove && action.Kind != RecoveryRetryRead &&
+		action.Kind != RecoveryRetryWrite && action.Kind != RecoveryVerifyWrite {
 		return fmt.Errorf("agent: unsupported recovery action %q", action.Kind)
 	}
 	if err := validateResponse(&provider.ChatResponse{Message: provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{action.Call}}}); err != nil {
@@ -467,6 +473,21 @@ func recoveryOutcome(outcome toolOutcome) string {
 
 func (a *Agent) executeRecovered(ctx context.Context, state *RunState, emitter *events.Emitter, authorizer *policy.Authorizer, recovery RecoveryAction) toolOutcome {
 	call := recovery.Call
+	if recovery.Kind == RecoveryVerifyWrite {
+		if _, err := emitter.Emit(ctx, events.KindToolProposed, events.ToolProposed{
+			CallID: call.ID, Tool: call.Name, Summary: "Patch Journal 已核验上次写入", Effects: []string{string(tools.EffectWrite)},
+		}); err != nil {
+			return toolOutcome{fatal: err}
+		}
+		if _, err := emitter.Emit(ctx, events.KindToolCompleted, events.ToolCompleted{
+			CallID: call.ID, Tool: call.Name, Success: true, Summary: "已确认上次写入完成，未重复执行",
+		}); err != nil {
+			return toolOutcome{fatal: err}
+		}
+		message := toolMessage(true, &tools.ToolResult{Output: "Patch Journal 已确认上次写入完成；本次恢复没有重复修改文件。"}, "", nil)
+		resumeMessage, complete := resumableToolMessage(message, []tools.Effect{tools.EffectWrite}, true, "")
+		return toolOutcome{message: message, resumeMessage: resumeMessage, resumeComplete: complete}
+	}
 	tool, ok := a.registry.Lookup(call.Name)
 	if !ok {
 		if _, err := emitter.Emit(context.WithoutCancel(ctx), events.KindToolProposed, events.ToolProposed{
@@ -496,8 +517,11 @@ func (a *Agent) executeRecovered(ctx context.Context, state *RunState, emitter *
 		return toolOutcome{fatal: err}
 	}
 	prompt := "恢复前请确认当前预览；旧审批和旧 Capability 已失效。"
-	if recovery.Kind == RecoveryRetryRead {
+	switch recovery.Kind {
+	case RecoveryRetryRead:
 		prompt = "上次只读工具已开始但结果未知；请确认按当前状态重新执行。"
+	case RecoveryRetryWrite:
+		prompt = "Patch Journal 已确认上次写入未发生；请按当前文件状态重新检查预览并确认是否执行。"
 	}
 	capability, err := authorizer.Reauthorize(ctx, state.RunID, a.guard.Root(), prepared, prompt)
 	if err != nil {
@@ -518,6 +542,7 @@ func (a *Agent) executeRecovered(ctx context.Context, state *RunState, emitter *
 	result, runErr := tool.Execute(ctx, prepared, capability, tools.ExecEnv{
 		RunID: state.RunID, Guard: a.guard, CapabilityVerifier: authorizer.Verifier(),
 		Now: a.now, Environment: environment, TodoWriter: todoWriter{state: state, emitter: emitter},
+		MutationJournal: a.mutationJournal,
 	})
 	duration := a.now().Sub(started)
 	if runErr != nil {
@@ -589,7 +614,8 @@ func (a *Agent) executeOne(ctx context.Context, state *RunState, emitter *events
 	result, runErr := tool.Execute(ctx, prepared, capability, tools.ExecEnv{
 		RunID: state.RunID, Guard: a.guard, CapabilityVerifier: authorizer.Verifier(),
 		Now: a.now, Environment: environment,
-		TodoWriter: todoWriter{state: state, emitter: emitter},
+		TodoWriter:      todoWriter{state: state, emitter: emitter},
+		MutationJournal: a.mutationJournal,
 	})
 	duration := a.now().Sub(started)
 	if runErr != nil {
