@@ -22,7 +22,7 @@ func TestInteractiveModelWelcomeIsChineseFirstResponsiveAndColorFree(t *testing.
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 36, Height: 22})
 	model = updated.(InteractiveModel)
 	content := model.View().Content
-	for _, want := range []string{"梦蝶 CODE", "不是记得更多", "梦蝶", "openai-compatible", "受控本地执行", "输入任务", "Ctrl+S"} {
+	for _, want := range []string{"梦蝶 Code", "开始一个任务", "不是记得更多", "openai-compatible", "受控本地执行", "编码任务", "Ctrl+S"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("welcome missing %q:\n%s", want, content)
 		}
@@ -41,12 +41,38 @@ func TestInteractiveModelWideLayoutPrioritizesTimelineAndContextSidebar(t *testi
 	updated, _ := model.Update(tea.WindowSizeMsg{Width: 120, Height: 34})
 	model = updated.(InteractiveModel)
 	content := model.View().Content
-	for _, want := range []string{"梦蝶 CODE", "工作区", "会话", "模型", "安全", "进度", "D:/项目/梦蝶"} {
+	for _, want := range []string{"梦蝶 Code", "工作区", "会话", "模型", "安全", "进度", "D:/项目/梦蝶"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("wide layout missing %q:\n%s", want, content)
 		}
 	}
 	assertViewWidth(t, content, 120)
+}
+
+func TestInteractiveModelUltraWideLayoutIsCenteredAndContained(t *testing.T) {
+	model := NewInteractiveModel(interactiveTestInfo(), &fakeTaskRunner{}, nil, nil, false)
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 200, Height: 60})
+	model = updated.(InteractiveModel)
+	content := model.View().Content
+
+	if model.contentWidth() != maxCanvasWidth {
+		t.Fatalf("content width=%d, want max canvas width=%d", model.contentWidth(), maxCanvasWidth)
+	}
+	if model.canvasMargin() != 28 {
+		t.Fatalf("canvas margin=%d, want 28", model.canvasMargin())
+	}
+	if strings.Contains(content, "╲") || strings.Count(content, "梦蝶 Code") != 1 {
+		t.Fatalf("ultra-wide view retained unstable or repeated branding:\n%s", content)
+	}
+	if !strings.Contains(content, "openai-compatible:test-…") {
+		t.Fatalf("sidebar model was not kept on one readable line:\n%s", content)
+	}
+	for lineNumber, line := range strings.Split(ansi.Strip(model.renderWelcome()), "\n") {
+		if actual := ansi.StringWidth(line); actual > maxReadingWidth {
+			t.Errorf("welcome line %d width=%d exceeds reading width=%d: %q", lineNumber+1, actual, maxReadingWidth, line)
+		}
+	}
+	assertViewWidth(t, content, 200)
 }
 
 func assertViewWidth(t *testing.T, content string, width int) {

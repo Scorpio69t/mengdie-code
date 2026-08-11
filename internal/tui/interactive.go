@@ -24,6 +24,8 @@ const MaxInteractiveTaskBytes = 64 << 10
 const (
 	wideLayoutWidth = 96
 	sidebarWidth    = 31
+	maxCanvasWidth  = 144
+	maxReadingWidth = 88
 )
 
 type TaskResult struct {
@@ -81,11 +83,11 @@ type InteractiveModel struct {
 func NewInteractiveModel(info brand.Info, runner TaskRunner, factSource SessionFactSource, approvals ApprovalSource, color bool) InteractiveModel {
 	input := textarea.New()
 	input.Prompt = ""
-	input.Placeholder = "输入任务，可以直接粘贴代码、报错或目标……"
+	input.Placeholder = "描述要完成的编码任务……"
 	input.ShowLineNumbers = false
 	input.CharLimit = MaxInteractiveTaskBytes
 	input.MaxContentHeight = MaxInteractiveTaskBytes
-	input.SetHeight(3)
+	input.SetHeight(2)
 	input.SetWidth(76)
 	input.SetStyles(textarea.Styles{})
 	_ = input.Focus()
@@ -348,7 +350,7 @@ func (m *InteractiveModel) resize() {
 	contentWidth := m.contentWidth()
 	mainWidth, _ := m.layoutWidths()
 	m.input.SetWidth(max(16, contentWidth-6))
-	m.input.SetHeight(3)
+	m.input.SetHeight(2)
 	m.viewport.SetWidth(mainWidth)
 	height := m.height
 	if height <= 0 {
@@ -363,6 +365,8 @@ func (m *InteractiveModel) refreshViewport(forceBottom bool) {
 	wasBottom := forceBottom || m.viewport.AtBottom()
 	if m.view.ID == "" {
 		m.viewport.SetContent(m.renderWelcome())
+		m.viewport.GotoTop()
+		return
 	} else {
 		m.viewport.SetContent(m.renderConversation())
 	}
@@ -374,7 +378,7 @@ func (m *InteractiveModel) refreshViewport(forceBottom bool) {
 func (m InteractiveModel) View() tea.View {
 	content := strings.Join([]string{m.renderHeader(), m.renderMain(), m.renderAction()}, "\n")
 	if m.width > 4 {
-		content = lipgloss.NewStyle().MarginLeft(2).Render(content)
+		content = lipgloss.NewStyle().MarginLeft(m.canvasMargin()).Render(content)
 	}
 	result := tea.NewView(content)
 	result.AltScreen = true
@@ -387,7 +391,7 @@ func (m InteractiveModel) renderHeader() string {
 	width := m.contentWidth()
 	title := strings.Join([]string{
 		styles.accent.Render(brand.CompactMark),
-		styles.strong.Render("梦蝶 CODE"),
+		styles.strong.Render("梦蝶 Code"),
 	}, "  ")
 	right := styles.status.Render(statusSymbol(m.phase) + " " + interactiveStatus(m.phase))
 	if width < 60 {
@@ -398,7 +402,7 @@ func (m InteractiveModel) renderHeader() string {
 			styles.muted.Render(truncateLine("安全  "+m.info.Security, width)),
 		}, "\n")
 	}
-	left := title + "  " + styles.muted.Render("MENGDIE · "+m.info.Version)
+	left := title + "  " + styles.muted.Render(m.info.Version)
 	first := padBetween(left, right, width)
 	if width >= wideLayoutWidth {
 		return first
@@ -465,40 +469,44 @@ func (m InteractiveModel) renderMain() string {
 		return main
 	}
 	styles := newInteractiveStyles(m.color)
-	sidebar := styles.sidebar.Width(max(16, sideWidth-4)).Height(m.viewport.Height()).Render(m.renderSidebar(sideWidth - 4))
+	sidebarContentWidth := max(12, sideWidth-7)
+	sidebar := styles.sidebar.Width(max(16, sideWidth-4)).Height(m.viewport.Height()).Render(m.renderSidebar(sidebarContentWidth))
 	return lipgloss.JoinHorizontal(lipgloss.Top, main, "  ", sidebar)
 }
 
 func (m InteractiveModel) renderWelcome() string {
 	styles := newInteractiveStyles(m.color)
-	if m.viewport.Width() < 48 {
+	width := min(maxReadingWidth, max(20, m.viewport.Width()-2))
+	if m.viewport.Width() < 48 || m.viewport.Height() < 14 {
 		return strings.Join([]string{
-			styles.accent.Render(brand.CompactMark) + "  " + styles.strong.Render("梦蝶 CODE"),
-			styles.muted.Render("MENGDIE CODE"),
+			styles.label.Render("开始一个任务"),
+			styles.strong.Render("把目标说清楚，剩下的交给梦蝶。"),
 			"",
-			styles.strong.Render("不是记得更多，而是记得更对。"),
+			ansi.Wrap("描述目标、报错或验收条件；梦蝶会在当前项目的受控边界内工作。", width, " "),
 			"",
-			ansi.Wrap("描述一个明确的编码任务。梦蝶会在受控边界内读取、修改并验证当前项目。", max(20, m.viewport.Width()), " "),
+			styles.accent.Render("不是记得更多，而是记得更对。"),
 		}, "\n")
 	}
-	wordmark := strings.Join([]string{
-		styles.strong.Render("梦蝶 CODE"),
-		styles.muted.Render("MENGDIE CODE"),
+	lines := []string{
+		styles.label.Render("开始一个任务"),
+		styles.strong.Render("把目标说清楚，剩下的交给梦蝶。"),
+		ansi.Wrap("可以附上报错、文件名或验收条件。梦蝶会在当前项目的受控边界内读取、修改并验证；界面始终以已提交事实为准。", width, " "),
+		"",
+		styles.label.Render("试试这样说"),
+		styles.muted.Render("  修复当前失败的测试"),
+		styles.muted.Render("  解释这个报错，并给出最小修改"),
+		styles.muted.Render("  检查最近改动并补充测试"),
 		"",
 		styles.accent.Render("不是记得更多，而是记得更对。"),
-	}, "\n")
-	logo := lipgloss.JoinHorizontal(lipgloss.Center, styles.accent.Render(brand.Mark), "    ", wordmark)
-	return strings.Join([]string{
-		logo,
-		"",
-		styles.strong.Render("准备好了。"),
-		ansi.Wrap("在下方描述一个明确任务，可以附上报错、文件名或验收条件。梦蝶会在本地受控边界内工作；界面来自已提交事实，缺口可以从 EventStore 重建。", max(24, m.viewport.Width()), " "),
-	}, "\n")
+	}
+	topPadding := min(14, max(1, (m.viewport.Height()-len(lines))/2))
+	lines = append(make([]string, topPadding), lines...)
+	return strings.Join(lines, "\n")
 }
 
 func (m InteractiveModel) renderConversation() string {
 	styles := newInteractiveStyles(m.color)
-	width := max(20, m.viewport.Width()-1)
+	width := min(maxReadingWidth, max(20, m.viewport.Width()-1))
 	var sections []string
 	if strings.TrimSpace(m.task) != "" {
 		sections = append(sections, styles.muted.Render("你")+"\n"+ansi.Wrap(strings.TrimSpace(m.task), width, " "))
@@ -567,7 +575,15 @@ func (m InteractiveModel) contentWidth() int {
 	if width <= 0 {
 		width = 100
 	}
-	return max(20, width-4)
+	return min(maxCanvasWidth, max(20, width-4))
+}
+
+func (m InteractiveModel) canvasMargin() int {
+	width := m.width
+	if width <= 0 {
+		width = 100
+	}
+	return max(0, (width-m.contentWidth())/2)
 }
 
 func (m InteractiveModel) layoutWidths() (int, int) {

@@ -10,20 +10,14 @@ import (
 	"unicode/utf8"
 )
 
-// Mark is the terminal counterpart of assets/brand/mengdie-mark.svg. Two
-// angle-bracket wings surround a split insertion caret: code on both sides,
-// with an evidence boundary in the middle. It intentionally uses line art so
-// it remains crisp in macOS and Windows terminals without half-block shading.
-const Mark = `╲╲      ╱╱
- ╲╲  ╷ ╱╱
-  ╲╲ │╱╱
-  ╱╱ │╲╲
- ╱╱  ╵ ╲╲
-╱╱      ╲╲`
+// Mark is the terminal counterpart of assets/brand/mengdie-mark.svg. The two
+// pairs of ASCII angle brackets are code-shaped wings; the center bar is the
+// split insertion caret and evidence boundary. It intentionally avoids Unicode
+// diagonal art, whose alignment varies across macOS and Windows terminal fonts.
+const Mark = "<>|<>"
 
-// CompactMark is used in dense headers where the full six-line mark would
-// compete with the conversation.
-const CompactMark = "╲╱│╲╱"
+// CompactMark names the header-safe form explicitly for UI call sites.
+const CompactMark = Mark
 
 // Info contains the runtime facts shown on the interactive welcome screen.
 // Values must already be safe for display; secrets never belong here.
