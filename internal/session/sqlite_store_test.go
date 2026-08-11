@@ -22,7 +22,7 @@ var storeTestTime = time.Date(2026, 8, 6, 10, 30, 0, 123, time.UTC)
 func TestOpenSQLiteAppliesSchemaAndConnectionSettings(t *testing.T) {
 	store := openTestStore(t, t.TempDir(), 250*time.Millisecond)
 	defer closeTestStore(t, store)
-	for _, table := range []string{"schema_migrations", "sessions", "runs", "events", "commands", "snapshots", "context_messages"} {
+	for _, table := range []string{"schema_migrations", "sessions", "runs", "events", "commands", "snapshots", "context_messages", "artifacts"} {
 		var count int
 		if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil {
 			t.Fatal(err)
@@ -35,7 +35,7 @@ func TestOpenSQLiteAppliesSchemaAndConnectionSettings(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 3 {
+	if migrationCount != 4 {
 		t.Fatalf("migration count=%d", migrationCount)
 	}
 	if _, err := os.Stat(store.Path()); err != nil {
@@ -196,6 +196,53 @@ func TestMigrationChecksumAndFutureVersionFailClosed(t *testing.T) {
 			t.Fatalf("applyMigrations(future)=%v", err)
 		}
 	})
+}
+
+func TestArtifactMigrationUpgradesExistingContextLedger(t *testing.T) {
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, databaseFilename)
+	db, err := sql.Open("sqlite", sqliteDSN(databasePath, defaultBusyTimeout))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	legacy := fstest.MapFS{}
+	for _, name := range []string{
+		"001_session_event_store.sql",
+		"002_command_ledger_snapshot.sql",
+		"003_context_messages.sql",
+	} {
+		content, err := embeddedMigrations.ReadFile("migrations/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		legacy["migrations/"+name] = &fstest.MapFile{Data: content}
+	}
+	if err := applyMigrations(context.Background(), db, legacy, func() time.Time { return storeTestTime }); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenSQLite(context.Background(), OpenOptions{
+		DataDir: directory, ProjectRoot: filepath.Join(t.TempDir(), "project"),
+		BusyTimeout: 250 * time.Millisecond, Now: func() time.Time { return storeTestTime },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTestStore(t, store)
+	var migrationCount, artifactColumnCount int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('context_messages') WHERE name='artifact_id'`).Scan(&artifactColumnCount); err != nil {
+		t.Fatal(err)
+	}
+	if migrationCount != 4 || artifactColumnCount != 1 {
+		t.Fatalf("migration count=%d artifact columns=%d", migrationCount, artifactColumnCount)
+	}
 }
 
 func TestFailedMigrationRollsBackItsSchemaChanges(t *testing.T) {

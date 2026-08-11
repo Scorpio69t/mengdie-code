@@ -20,8 +20,9 @@ import (
 )
 
 const (
-	MaxContextMessageBytes = 1 << 20
-	maximumContextMessages = 4096
+	MaxContextMessageBytes    = maxArtifactBytes
+	inlineContextMessageBytes = 64 << 10
+	maximumContextMessages    = 4096
 )
 
 var (
@@ -116,28 +117,56 @@ func (r *ContextRecorder) RecordMessage(ctx context.Context, message provider.Me
 	idDigest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s", r.sessionID, ordinal, checksum)))
 	id := fmt.Sprintf("ctx_%x", idDigest[:])
 	createdAt := formatTime(r.store.now().UTC())
+	storedMessage := encoded
+	var cleanupArtifact func()
+	if len(encoded) > inlineContextMessageBytes {
+		artifactKey := contextArtifactID(id, checksum)
+		relative, cleanup, err := r.store.stageArtifactFile(artifactKey, encoded)
+		if err != nil {
+			return err
+		}
+		cleanupArtifact = cleanup
+		storedMessage, err = json.Marshal(struct {
+			ArtifactID string `json:"artifact_id"`
+			Role       string `json:"role"`
+		}{ArtifactID: artifactKey, Role: string(message.Role)})
+		if err != nil {
+			cleanupArtifact()
+			return fmt.Errorf("encode context artifact reference: %w", err)
+		}
+		defer func() {
+			if resultErr != nil && cleanupArtifact != nil {
+				cleanupArtifact()
+			}
+		}()
+
+		tx, err := r.store.db.BeginTx(ctx, nil)
+		if err != nil {
+			return classifySQLiteError("begin context append", err)
+		}
+		defer rollbackTransaction(tx, &resultErr, "rollback context append")
+		if err := r.appendContextTx(ctx, tx, ordinal, id, message.Role, completeness, storedMessage, checksum, createdAt, artifactMetadata{
+			ID: artifactKey, SessionID: r.sessionID, RunID: r.runID, Kind: "context-message",
+			MIME: "application/json", Sensitivity: VisibilityPrivate, RelativePath: relative,
+			SHA256: checksum, SizeBytes: int64(len(encoded)),
+		}); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return classifySQLiteError("commit context message", err)
+		}
+		cleanupArtifact = nil
+		r.last = ordinal
+		return nil
+	}
 
 	tx, err := r.store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return classifySQLiteError("begin context append", err)
 	}
 	defer rollbackTransaction(tx, &resultErr, "rollback context append")
-	var actual uint64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(ordinal),0) FROM context_messages WHERE session_id=?`, r.sessionID).Scan(&actual); err != nil {
-		return classifySQLiteError("load context position", err)
-	}
-	if actual != r.last {
-		return fmt.Errorf("%w: expected %d, actual %d", ErrContextConflict, r.last, actual)
-	}
-	if _, err := tx.ExecContext(ctx, `
-INSERT INTO context_messages(
-    id, session_id, ordinal, run_id, command_id, role, completeness,
-    message_json, message_sha256, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, r.sessionID, ordinal, r.runID, r.commandID, string(message.Role), string(completeness),
-		encoded, checksum, createdAt,
-	); err != nil {
-		return classifySQLiteError("insert context message", err)
+	if err := r.appendContextTx(ctx, tx, ordinal, id, message.Role, completeness, storedMessage, checksum, createdAt, artifactMetadata{}); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return classifySQLiteError("commit context message", err)
@@ -146,13 +175,56 @@ INSERT INTO context_messages(
 	return nil
 }
 
+func (r *ContextRecorder) appendContextTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	ordinal uint64,
+	id string,
+	role provider.Role,
+	completeness ContextCompleteness,
+	storedMessage []byte,
+	checksum string,
+	createdAt string,
+	artifact artifactMetadata,
+) error {
+	var actual uint64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(ordinal),0) FROM context_messages WHERE session_id=?`, r.sessionID).Scan(&actual); err != nil {
+		return classifySQLiteError("load context position", err)
+	}
+	if actual != r.last {
+		return fmt.Errorf("%w: expected %d, actual %d", ErrContextConflict, r.last, actual)
+	}
+	var artifactID any
+	if artifact.ID != "" {
+		if err := r.store.insertArtifactTx(ctx, tx, artifact); err != nil {
+			return err
+		}
+		artifactID = artifact.ID
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO context_messages(
+    id, session_id, ordinal, run_id, command_id, role, completeness,
+    message_json, message_sha256, created_at, artifact_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, r.sessionID, ordinal, r.runID, r.commandID, string(role), string(completeness),
+		storedMessage, checksum, createdAt, artifactID,
+	); err != nil {
+		return classifySQLiteError("insert context message", err)
+	}
+	return nil
+}
+
 func (s *SQLiteStore) LoadContext(ctx context.Context, sessionID string) (result []ContextMessage, resultErr error) {
 	if strings.TrimSpace(sessionID) == "" {
 		return nil, errors.New("context session id is required")
 	}
 	rows, err := s.db.QueryContext(ctx, `
-SELECT id, session_id, ordinal, run_id, command_id, role, completeness, message_json, message_sha256, created_at
-FROM context_messages WHERE session_id=? ORDER BY ordinal LIMIT ?`, sessionID, maximumContextMessages+1)
+SELECT cm.id, cm.session_id, cm.ordinal, cm.run_id, cm.command_id, cm.role, cm.completeness,
+       cm.message_json, cm.message_sha256, cm.created_at, cm.artifact_id,
+       a.relative_path, a.sha256, a.size_bytes
+FROM context_messages cm
+LEFT JOIN artifacts a ON a.id=cm.artifact_id AND a.deleted_at IS NULL
+WHERE cm.session_id=? ORDER BY cm.ordinal LIMIT ?`, sessionID, maximumContextMessages+1)
 	if err != nil {
 		return nil, classifySQLiteError("load context messages", err)
 	}
@@ -162,9 +234,12 @@ FROM context_messages WHERE session_id=? ORDER BY ordinal LIMIT ?`, sessionID, m
 		var item ContextMessage
 		var encoded []byte
 		var persistedRole, checksum, createdAt string
+		var artifactID, artifactPath, artifactSHA sql.NullString
+		var artifactSize sql.NullInt64
 		if err := rows.Scan(
 			&item.ID, &item.SessionID, &item.Ordinal, &item.RunID, &item.CommandID,
 			&persistedRole, &item.Completeness, &encoded, &checksum, &createdAt,
+			&artifactID, &artifactPath, &artifactSHA, &artifactSize,
 		); err != nil {
 			return nil, fmt.Errorf("scan context message: %w", err)
 		}
@@ -173,6 +248,18 @@ FROM context_messages WHERE session_id=? ORDER BY ordinal LIMIT ?`, sessionID, m
 		}
 		if item.Ordinal != uint64(len(result)+1) {
 			return nil, fmt.Errorf("%w: ordinal gap at %d", ErrContextCorrupt, item.Ordinal)
+		}
+		if artifactID.Valid {
+			if !artifactPath.Valid || !artifactSHA.Valid || !artifactSize.Valid {
+				return nil, fmt.Errorf("%w: artifact index missing at %d", ErrContextCorrupt, item.Ordinal)
+			}
+			encoded, err = s.readArtifactFile(artifactMetadata{
+				ID: artifactID.String, SessionID: item.SessionID, RunID: item.RunID,
+				RelativePath: artifactPath.String, SHA256: artifactSHA.String, SizeBytes: artifactSize.Int64,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("%w: message %d: %w", ErrContextCorrupt, item.Ordinal, err)
+			}
 		}
 		digest := sha256.Sum256(encoded)
 		if checksum != fmt.Sprintf("sha256:%x", digest[:]) {

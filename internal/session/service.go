@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -195,7 +196,31 @@ func (s *Service) Delete(ctx context.Context, sessionID string) error {
 	if strings.TrimSpace(sessionID) == "" {
 		return errors.New("session id is required")
 	}
-	result, err := s.store.db.ExecContext(ctx, `DELETE FROM sessions WHERE id=?`, sessionID)
+	tx, err := s.store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return classifySQLiteError("begin session delete", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	rows, err := tx.QueryContext(ctx, `SELECT relative_path FROM artifacts WHERE session_id=? AND deleted_at IS NULL`, sessionID)
+	if err != nil {
+		return classifySQLiteError("list session artifacts", err)
+	}
+	paths := make([]string, 0)
+	for rows.Next() {
+		var relative string
+		if err := rows.Scan(&relative); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan session artifact: %w", err)
+		}
+		paths = append(paths, relative)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close session artifacts: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate session artifacts: %w", err)
+	}
+	result, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE id=?`, sessionID)
 	if err != nil {
 		return classifySQLiteError("delete session", err)
 	}
@@ -205,6 +230,27 @@ func (s *Service) Delete(ctx context.Context, sessionID string) error {
 	}
 	if count == 0 {
 		return ErrSessionNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return classifySQLiteError("commit session delete", err)
+	}
+	var cleanupErr error
+	remaining := make([]string, 0)
+	for _, relative := range paths {
+		full, err := s.store.resolveArtifactPath(relative)
+		if err == nil {
+			err = os.Remove(full)
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			remaining = append(remaining, relative)
+			cleanupErr = errors.Join(cleanupErr, err)
+		}
+	}
+	if cleanupErr != nil {
+		return &ArtifactCleanupError{Paths: remaining, Err: cleanupErr}
 	}
 	return nil
 }

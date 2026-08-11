@@ -48,6 +48,13 @@ func TestContextRecorderRoundTripAndOptimisticConflict(t *testing.T) {
 	if len(loaded) != 3 || loaded[0].Message.Content != "私有任务" || loaded[2].Completeness != ContextSanitized {
 		t.Fatalf("loaded=%+v", loaded)
 	}
+	var artifactCount int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM artifacts`).Scan(&artifactCount); err != nil {
+		t.Fatal(err)
+	}
+	if artifactCount != 0 {
+		t.Fatalf("small context unexpectedly created %d artifacts", artifactCount)
+	}
 	loaded[1].Message.ToolCalls[0].Arguments[0] = 'x'
 	again, err := store.LoadContext(context.Background(), "session-context")
 	if err != nil || string(again[1].Message.ToolCalls[0].Arguments) != `{"command":"secret"}` {

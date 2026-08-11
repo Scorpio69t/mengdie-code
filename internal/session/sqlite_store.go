@@ -22,10 +22,12 @@ import (
 )
 
 const (
-	databaseFilename   = "state.db"
-	defaultLoadLimit   = 200
-	maximumLoadLimit   = 1000
-	defaultBusyTimeout = 5 * time.Second
+	databaseFilename                 = "state.db"
+	defaultLoadLimit                 = 200
+	maximumLoadLimit                 = 1000
+	defaultBusyTimeout               = 5 * time.Second
+	defaultSessionArtifactQuotaBytes = 128 << 20
+	defaultGlobalArtifactQuotaBytes  = 512 << 20
 )
 
 var (
@@ -49,10 +51,12 @@ func (e *SequenceConflictError) Error() string {
 
 // OpenOptions configures one local SQLite fact store.
 type OpenOptions struct {
-	DataDir     string
-	ProjectRoot string
-	BusyTimeout time.Duration
-	Now         func() time.Time
+	DataDir                   string
+	ProjectRoot               string
+	BusyTimeout               time.Duration
+	SessionArtifactQuotaBytes int64
+	GlobalArtifactQuotaBytes  int64
+	Now                       func() time.Time
 }
 
 // RunMetadata describes the transitional one-run session created by P2-02.
@@ -362,9 +366,13 @@ WHERE id=(SELECT session_id FROM commands WHERE id=?)`, stamp, commandID); err !
 // SQLiteStore is the local M2 EventStore adapter. It deliberately exposes no
 // database/sql types to callers.
 type SQLiteStore struct {
-	db   *sql.DB
-	path string
-	now  func() time.Time
+	db                        *sql.DB
+	path                      string
+	dataDir                   string
+	artifactDir               string
+	sessionArtifactQuotaBytes int64
+	globalArtifactQuotaBytes  int64
+	now                       func() time.Time
 }
 
 // OpenSQLite opens, verifies and migrates the local event database.
@@ -378,6 +386,17 @@ func OpenSQLite(ctx context.Context, options OpenOptions) (*SQLiteStore, error) 
 	directory, err := filepath.Abs(options.DataDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve session data directory: %w", err)
+	}
+	sessionQuota := options.SessionArtifactQuotaBytes
+	if sessionQuota == 0 {
+		sessionQuota = defaultSessionArtifactQuotaBytes
+	}
+	globalQuota := options.GlobalArtifactQuotaBytes
+	if globalQuota == 0 {
+		globalQuota = defaultGlobalArtifactQuotaBytes
+	}
+	if sessionQuota <= 0 || globalQuota <= 0 || sessionQuota > globalQuota {
+		return nil, errors.New("artifact quotas must be positive and session quota cannot exceed global quota")
 	}
 	if err := validateDataDir(filepath.Clean(directory), options.ProjectRoot); err != nil {
 		return nil, err
@@ -404,7 +423,12 @@ func OpenSQLite(ctx context.Context, options OpenOptions) (*SQLiteStore, error) 
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)
-	store := &SQLiteStore{db: db, path: databasePath, now: now}
+	store := &SQLiteStore{
+		db: db, path: databasePath, dataDir: directory,
+		artifactDir:               filepath.Join(directory, artifactDirectoryName),
+		sessionArtifactQuotaBytes: sessionQuota, globalArtifactQuotaBytes: globalQuota,
+		now: now,
+	}
 	if err := db.PingContext(ctx); err != nil {
 		return nil, closeDatabaseAfterError(db, classifySQLiteError("connect session database", err))
 	}
@@ -415,6 +439,12 @@ func OpenSQLite(ctx context.Context, options OpenOptions) (*SQLiteStore, error) 
 		return nil, closeDatabaseAfterError(db, err)
 	}
 	if err := protectDataFile(databasePath); err != nil {
+		return nil, closeDatabaseAfterError(db, err)
+	}
+	if err := store.prepareArtifactDirectory(); err != nil {
+		return nil, closeDatabaseAfterError(db, err)
+	}
+	if _, err := store.reconcileArtifacts(ctx); err != nil {
 		return nil, closeDatabaseAfterError(db, err)
 	}
 	return store, nil
