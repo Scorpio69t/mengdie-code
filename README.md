@@ -96,6 +96,7 @@ mengdie memory forget <id>
 - [x] 第二阶段 Slice 04A：只读 Session TUI（[实施报告](./docs/development/phase-2-slice-04a/IMPLEMENTATION_REPORT.md)）
 - [x] 第二阶段 Slice 04B：已提交公开事实订阅、缺口补读与 TUI 回放适配（[实施报告](./docs/development/phase-2-slice-04b/IMPLEMENTATION_REPORT.md)）
 - [x] 第二阶段 Slice 04C：裸命令默认全屏 TUI、任务提交、实时事实与交互审批闭环（[实施报告](./docs/development/phase-2-slice-04c/IMPLEMENTATION_REPORT.md)）
+- [x] 第二阶段 Slice 05A：受控 Artifact Store 与大上下文离线恢复（[实施报告](./docs/development/phase-2-slice-05a/IMPLEMENTATION_REPORT.md)）
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal（[第二阶段详细设计](./docs/design/phase-2/DETAILED_DESIGN.md)）
@@ -154,7 +155,7 @@ go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 
 `exec --json` 输出完整 JSON Lines 运行事件。`--command-id` 可为自动化提供幂等键：同 ID、同任务只回放已经提交的公开事实，不再调用 Provider 或工具；同 ID、不同任务直接冲突，运行中或中断状态不会由 `exec` 自动续跑，需要显式通过安全门禁调用 `session resume`。恢复命令也支持独立的 `--command-id`，重复 ID 只回放该恢复 Run 的公开事实。无头模式默认拒绝 edit/write/shell；`--allow-edit` 只放行项目内修改，`--allow-command go,test` 只放行无控制操作符的 `go test` 命令前缀，`--allow-env NAME` 才允许 shell 继承对应敏感环境变量。
 
-公开事件、`session` 输出和日志不包含完整用户任务、密钥或隐藏推理。为进行 Command 幂等与上下文恢复，完整任务和模型可见消息会作为私有事实保存在上述本地 SQLite 中；副作用工具结果只保存安全摘要，API Key、允许继承的环境变量值和可重放审批授权不会写入。私有事实当前仅依赖目录/文件权限，尚未静态加密；不要把 `MENGDIE_DATA_DIR` 指向共享或同步目录，并使用 `session delete --yes` 删除不再需要的本地会话。
+公开事件、`session` 输出和日志不包含完整用户任务、密钥或隐藏推理。为进行 Command 幂等与上下文恢复，完整任务和模型可见消息会作为私有事实保存；超过 64 KiB 的单条上下文改存到数据目录下受控的 `artifacts/`，SQLite 只登记相对路径、大小和 SHA-256，恢复时必须重新校验。默认配额为每个 Session 128 MiB、全局 512 MiB，超限拒绝新 Artifact，不静默删除仍在使用的数据。副作用工具结果只保存安全摘要，API Key、允许继承的环境变量值和可重放审批授权不会写入。私有事实当前仅依赖目录/文件权限，尚未静态加密；不要把 `MENGDIE_DATA_DIR` 指向共享或同步目录，并使用 `session delete --yes` 删除不再需要的本地会话及所属 Artifact。
 
 需要 Go 1.26 或更高版本。
 
