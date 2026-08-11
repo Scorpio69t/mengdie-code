@@ -5,6 +5,7 @@ package tui
 
 import (
 	"fmt"
+	stdcolor "image/color"
 	"strings"
 	"unicode/utf8"
 
@@ -389,10 +390,7 @@ func (m InteractiveModel) View() tea.View {
 func (m InteractiveModel) renderHeader() string {
 	styles := newInteractiveStyles(m.color)
 	width := m.contentWidth()
-	title := strings.Join([]string{
-		styles.accent.Render(brand.CompactMark),
-		styles.strong.Render("梦蝶 Code"),
-	}, "  ")
+	title := styles.accent.Render("梦蝶") + " " + styles.strong.Render("Code")
 	right := styles.status.Render(statusSymbol(m.phase) + " " + interactiveStatus(m.phase))
 	if width < 60 {
 		return strings.Join([]string{
@@ -476,17 +474,22 @@ func (m InteractiveModel) renderMain() string {
 
 func (m InteractiveModel) renderWelcome() string {
 	styles := newInteractiveStyles(m.color)
-	width := min(maxReadingWidth, max(20, m.viewport.Width()-2))
 	if m.viewport.Width() < 48 || m.viewport.Height() < 14 {
+		logo := renderTerminalLogo(brand.TerminalLogoRows(true), m.color)
+		logoWidth := lipgloss.Width(logo)
+		if offset := (m.viewport.Width() - logoWidth) / 2; offset > 0 {
+			logo = lipgloss.NewStyle().MarginLeft(offset).Render(logo)
+		}
 		return strings.Join([]string{
+			logo,
+			"",
 			styles.label.Render("开始一个任务"),
 			styles.strong.Render("把目标说清楚，剩下的交给梦蝶。"),
-			"",
-			ansi.Wrap("描述目标、报错或验收条件；梦蝶会在当前项目的受控边界内工作。", width, " "),
-			"",
 			styles.accent.Render("不是记得更多，而是记得更对。"),
 		}, "\n")
 	}
+	logo := renderTerminalLogo(brand.TerminalLogoRows(false), m.color)
+	width := min(maxReadingWidth, max(28, m.viewport.Width()-lipgloss.Width(logo)-5))
 	lines := []string{
 		styles.label.Render("开始一个任务"),
 		styles.strong.Render("把目标说清楚，剩下的交给梦蝶。"),
@@ -499,9 +502,9 @@ func (m InteractiveModel) renderWelcome() string {
 		"",
 		styles.accent.Render("不是记得更多，而是记得更对。"),
 	}
-	topPadding := min(14, max(1, (m.viewport.Height()-len(lines))/2))
-	lines = append(make([]string, topPadding), lines...)
-	return strings.Join(lines, "\n")
+	welcome := lipgloss.JoinHorizontal(lipgloss.Center, logo, "     ", strings.Join(lines, "\n"))
+	topPadding := min(14, max(1, (m.viewport.Height()-lipgloss.Height(welcome))/2))
+	return strings.Repeat("\n", topPadding) + welcome
 }
 
 func (m InteractiveModel) renderConversation() string {
@@ -516,7 +519,7 @@ func (m InteractiveModel) renderConversation() string {
 		if text == "" {
 			continue
 		}
-		sections = append(sections, styles.accent.Render(brand.CompactMark+"  梦蝶")+"\n"+ansi.Wrap(text, width, " "))
+		sections = append(sections, styles.accent.Render("梦蝶")+"\n"+ansi.Wrap(text, width, " "))
 	}
 	if len(m.view.Tools) > 0 {
 		lines := []string{styles.muted.Render("工具活动")}
@@ -656,6 +659,59 @@ func truncateLine(value string, width int) string {
 		return ""
 	}
 	return ansi.Truncate(value, width, "…")
+}
+
+func renderTerminalLogo(rows []string, color bool) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	width := len(rows[0])
+	var lines []string
+	for row := 0; row < len(rows); row += 2 {
+		top := rows[row]
+		bottom := strings.Repeat(" ", width)
+		if row+1 < len(rows) {
+			bottom = rows[row+1]
+		}
+		var line strings.Builder
+		for column := 0; column < width; column++ {
+			line.WriteString(renderLogoCell(top[column], bottom[column], color))
+		}
+		lines = append(lines, strings.TrimRight(line.String(), " "))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderLogoCell(top, bottom byte, color bool) string {
+	if top == ' ' && bottom == ' ' {
+		return " "
+	}
+	if !color {
+		switch {
+		case top == ' ':
+			return "▄"
+		case bottom == ' ':
+			return "▀"
+		default:
+			return "█"
+		}
+	}
+	cellColor := func(pixel byte) stdcolor.Color {
+		if pixel == '@' {
+			return lipgloss.Color("#E6EDF3")
+		}
+		return lipgloss.Color("#2CC7A1")
+	}
+	switch {
+	case top == ' ':
+		return lipgloss.NewStyle().Foreground(cellColor(bottom)).Render("▄")
+	case bottom == ' ':
+		return lipgloss.NewStyle().Foreground(cellColor(top)).Render("▀")
+	case top == bottom:
+		return lipgloss.NewStyle().Foreground(cellColor(top)).Render("█")
+	default:
+		return lipgloss.NewStyle().Foreground(cellColor(top)).Background(cellColor(bottom)).Render("▀")
+	}
 }
 
 func projectName(path string) string {

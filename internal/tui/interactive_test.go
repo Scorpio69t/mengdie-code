@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Scorpio69t/mengdie-code/internal/brand"
@@ -68,11 +69,51 @@ func TestInteractiveModelUltraWideLayoutIsCenteredAndContained(t *testing.T) {
 		t.Fatalf("sidebar model was not kept on one readable line:\n%s", content)
 	}
 	for lineNumber, line := range strings.Split(ansi.Strip(model.renderWelcome()), "\n") {
-		if actual := ansi.StringWidth(line); actual > maxReadingWidth {
-			t.Errorf("welcome line %d width=%d exceeds reading width=%d: %q", lineNumber+1, actual, maxReadingWidth, line)
+		if actual := ansi.StringWidth(line); actual > model.viewport.Width() {
+			t.Errorf("welcome line %d width=%d exceeds viewport width=%d: %q", lineNumber+1, actual, model.viewport.Width(), line)
 		}
 	}
 	assertViewWidth(t, content, 200)
+}
+
+func TestTerminalLogoUsesPortableHalfBlockRaster(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		compact bool
+		width   int
+		height  int
+	}{
+		{name: "full", width: 22, height: 7},
+		{name: "compact", compact: true, width: 17, height: 6},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rows := brand.TerminalLogoRows(test.compact)
+			plain := renderTerminalLogo(rows, false)
+			if strings.Contains(plain, "\x1b[") {
+				t.Fatalf("no-color logo contains ANSI sequence: %q", plain)
+			}
+			if !strings.ContainsAny(plain, "▀▄█") {
+				t.Fatalf("logo does not contain half-block cells: %q", plain)
+			}
+			if got := lipgloss.Width(plain); got > test.width {
+				t.Fatalf("logo width=%d, want <=%d", got, test.width)
+			}
+			if got := lipgloss.Height(plain); got != test.height {
+				t.Fatalf("logo height=%d, want %d", got, test.height)
+			}
+
+			colored := renderTerminalLogo(rows, true)
+			if !strings.Contains(colored, "\x1b[") {
+				t.Fatalf("colored logo does not contain ANSI styling: %q", colored)
+			}
+			if got := lipgloss.Width(colored); got > test.width {
+				t.Fatalf("colored logo width=%d, want <=%d", got, test.width)
+			}
+			if got := lipgloss.Height(colored); got != test.height {
+				t.Fatalf("colored logo height=%d, want %d", got, test.height)
+			}
+		})
+	}
 }
 
 func assertViewWidth(t *testing.T, content string, width int) {

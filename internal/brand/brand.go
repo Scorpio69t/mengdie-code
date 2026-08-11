@@ -10,14 +10,52 @@ import (
 	"unicode/utf8"
 )
 
-// Mark is the terminal counterpart of assets/brand/mengdie-mark.svg. The two
-// pairs of ASCII angle brackets are code-shaped wings; the center bar is the
-// split insertion caret and evidence boundary. It intentionally avoids Unicode
-// diagonal art, whose alignment varies across macOS and Windows terminal fonts.
+// Mark is the color-free fallback used by plain output. The interactive TUI
+// renders TerminalLogoRows instead, preserving the vector mark's silhouette.
 const Mark = "<>|<>"
 
-// CompactMark names the header-safe form explicitly for UI call sites.
-const CompactMark = Mark
+var terminalLogoRows = [...]string{
+	" #                 #  ",
+	"####     @@      ###  ",
+	"######   @@#   #####  ",
+	"##  #### @@  #### ##  ",
+	"###   ###@@####   ##  ",
+	"###      @@#      ##  ",
+	" ####     @     ####  ",
+	"   ####  @@   ####    ",
+	"   ####  @@#  ####    ",
+	"  ###    @@     ###   ",
+	"  ###   #@@##   ##    ",
+	"   ## ###@@#### ##    ",
+	"   #####     #####    ",
+	"    ##         ##     ",
+}
+
+var terminalCompactLogoRows = [...]string{
+	" ###    @    ### ",
+	" #####  @  ##### ",
+	" ##  ##@@###  ## ",
+	" ##   #@@##   ## ",
+	"  ##    @    ##  ",
+	"   ###  @  ###   ",
+	"   ##   @   ##   ",
+	"   #   @@#   #   ",
+	"   ####@@#####   ",
+	"   ###     ###   ",
+	"    #       #    ",
+	"                 ",
+}
+
+// TerminalLogoRows returns a rasterized form of the vector mark. '#' denotes
+// the jade wings and '@' the light insertion caret. The TUI packs two rows into
+// one half-block terminal cell, preserving the logo's aspect ratio without a
+// terminal-specific bitmap protocol.
+func TerminalLogoRows(compact bool) []string {
+	if compact {
+		return append([]string(nil), terminalCompactLogoRows[:]...)
+	}
+	return append([]string(nil), terminalLogoRows[:]...)
+}
 
 // Info contains the runtime facts shown on the interactive welcome screen.
 // Values must already be safe for display; secrets never belong here.
