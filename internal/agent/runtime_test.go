@@ -7,12 +7,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	agentcontext "github.com/Scorpio69t/mengdie-code/internal/context"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 	"github.com/Scorpio69t/mengdie-code/internal/platform"
 	"github.com/Scorpio69t/mengdie-code/internal/policy"
@@ -32,8 +34,15 @@ type recordedContext struct {
 }
 
 type memoryContextRecorder struct {
-	records []recordedContext
-	errAt   int
+	records     []recordedContext
+	compactions []agentcontext.CompactionRecord
+	errAt       int
+	position    int
+}
+
+func (recorder *memoryContextRecorder) RecordCompaction(_ context.Context, record agentcontext.CompactionRecord) (agentcontext.CompactionReceipt, error) {
+	recorder.compactions = append(recorder.compactions, record)
+	return agentcontext.CompactionReceipt{SourceStart: 2, SourceEnd: uint64(recorder.position - record.RetainedTailMessages)}, nil
 }
 
 func (recorder *memoryContextRecorder) RecordMessage(_ context.Context, message provider.Message, complete bool) error {
@@ -41,6 +50,7 @@ func (recorder *memoryContextRecorder) RecordMessage(_ context.Context, message 
 		return errors.New("context store unavailable")
 	}
 	recorder.records = append(recorder.records, recordedContext{message: message, complete: complete})
+	recorder.position++
 	return nil
 }
 
@@ -270,6 +280,101 @@ func TestAgentStopsBeforeModelWhenContextPersistenceFails(t *testing.T) {
 	assertEventKinds(t, sink.Events(), []events.Kind{events.KindRunStarted, events.KindRunFailed})
 }
 
+func TestAgentCompactsContextBeforeMainModelCall(t *testing.T) {
+	root := t.TempDir()
+	history := []provider.Message{{Role: provider.RoleUser, Content: "原始任务：保留兼容性和安全约束"}}
+	for index := 0; index < 16; index++ {
+		history = append(history, provider.Message{
+			Role: provider.RoleAssistant, Content: fmt.Sprintf("历史片段-%d-%s", index, strings.Repeat("证据", 300)),
+		})
+	}
+	fake := &scriptedProvider{responses: []*provider.ChatResponse{
+		{Model: "fake:model", Message: provider.Message{Role: provider.RoleAssistant, Content: validAgentSummary()}, Usage: provider.Usage{InputTokens: 900, OutputTokens: 80}},
+		assistantFinal("压缩后继续完成。", provider.Usage{InputTokens: 1200, OutputTokens: 20}),
+	}}
+	recorder := &memoryContextRecorder{position: len(history)}
+	runtime, emitter, sink := newAgentTestHarnessWithRecorderAndBudget(t, root, fake, nil, recorder, 9000)
+	_, err := runtime.Run(context.Background(), RunRequest{
+		RunID: "run-test", Task: "当前任务：继续验证", Model: "fake:model", MaxTurns: 2, History: history,
+		Todos: []tools.Todo{{ID: "verify", Content: "保留未完成验收", Status: tools.TodoInProgress}},
+	}, emitter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.requests) != 2 || len(fake.requests[0].Tools) != 0 || fake.requests[0].ToolChoice != "" || fake.requests[1].ToolChoice != provider.ToolChoiceAuto {
+		t.Fatalf("requests=%+v", fake.requests)
+	}
+	if len(recorder.compactions) != 1 || recorder.compactions[0].GeneratorVersion != agentcontext.SummaryProtocolVersion {
+		t.Fatalf("compactions=%+v", recorder.compactions)
+	}
+	compaction := recorder.compactions[0]
+	if compaction.EstimatedAfterUpperBound >= compaction.EstimatedBefore || compaction.EstimatedAfterUpperBound > 9000 {
+		t.Fatalf("compaction budget=%+v", compaction)
+	}
+	t.Logf("estimated tokens before=%d after_upper_bound=%d", compaction.EstimatedBefore, compaction.EstimatedAfterUpperBound)
+	mainMessages := fake.requests[1].Messages
+	joined := ""
+	for _, message := range mainMessages {
+		joined += message.Content
+	}
+	if !strings.Contains(joined, "原始任务") || !strings.Contains(joined, "当前任务") ||
+		!strings.Contains(joined, "不是原始事实证据") || !strings.Contains(joined, "保留未完成验收") ||
+		strings.Contains(joined, "历史片段-0-") {
+		t.Fatalf("main request did not preserve the expected boundaries")
+	}
+	kinds := make([]events.Kind, 0)
+	for _, event := range sink.Events() {
+		kinds = append(kinds, event.Kind)
+	}
+	if countKind(kinds, events.KindContextCompacted) != 1 || countKind(kinds, events.KindMessageCompleted) != 1 {
+		t.Fatalf("event kinds=%v", kinds)
+	}
+}
+
+func TestAgentFailsClosedWhenSummaryProviderFails(t *testing.T) {
+	root := t.TempDir()
+	history := []provider.Message{{Role: provider.RoleUser, Content: "原始任务"}}
+	for index := 0; index < 16; index++ {
+		history = append(history, provider.Message{Role: provider.RoleAssistant, Content: strings.Repeat("历史证据", 150)})
+	}
+	fake := &scriptedProvider{errors: []error{errors.New("summary unavailable")}}
+	recorder := &memoryContextRecorder{position: len(history)}
+	runtime, emitter, sink := newAgentTestHarnessWithRecorderAndBudget(t, root, fake, nil, recorder, 9000)
+	_, err := runtime.Run(context.Background(), RunRequest{
+		RunID: "run-test", Task: "当前任务", Model: "fake:model", MaxTurns: 2, History: history,
+	}, emitter)
+	if err == nil || !strings.Contains(err.Error(), "generate context summary") {
+		t.Fatalf("Run() error=%v", err)
+	}
+	if len(fake.requests) != 1 || len(recorder.compactions) != 0 {
+		t.Fatalf("requests=%d compactions=%+v", len(fake.requests), recorder.compactions)
+	}
+	if eventsFound := sink.Events(); eventsFound[len(eventsFound)-1].Kind != events.KindRunFailed {
+		t.Fatalf("events=%+v", eventsFound)
+	}
+}
+
+func TestAgentCancellationDuringSummaryDoesNotPersistCompaction(t *testing.T) {
+	root := t.TempDir()
+	history := []provider.Message{{Role: provider.RoleUser, Content: "原始任务"}}
+	for index := 0; index < 16; index++ {
+		history = append(history, provider.Message{Role: provider.RoleAssistant, Content: strings.Repeat("历史证据", 150)})
+	}
+	fake := &scriptedProvider{errors: []error{context.Canceled}}
+	recorder := &memoryContextRecorder{position: len(history)}
+	runtime, emitter, sink := newAgentTestHarnessWithRecorderAndBudget(t, root, fake, nil, recorder, 9000)
+	_, err := runtime.Run(context.Background(), RunRequest{
+		RunID: "run-test", Task: "当前任务", Model: "fake:model", MaxTurns: 2, History: history,
+	}, emitter)
+	if !errors.Is(err, context.Canceled) || len(recorder.compactions) != 0 {
+		t.Fatalf("error=%v compactions=%+v", err, recorder.compactions)
+	}
+	eventsFound := sink.Events()
+	if eventsFound[len(eventsFound)-1].Kind != events.KindRunCancelled {
+		t.Fatalf("events=%+v", eventsFound)
+	}
+}
+
 func TestAgentRecoveryRepreparesAndReauthorizesBeforeProviderCall(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "value.txt"), []byte("current value\n"), 0o644); err != nil {
@@ -342,6 +447,10 @@ func newAgentTestHarness(t *testing.T, root string, fake provider.Provider, rule
 }
 
 func newAgentTestHarnessWithRecorder(t *testing.T, root string, fake provider.Provider, rules []policy.Rule, recorder ContextRecorder) (*Agent, *events.Emitter, *events.MemorySink) {
+	return newAgentTestHarnessWithRecorderAndBudget(t, root, fake, rules, recorder, 64_000)
+}
+
+func newAgentTestHarnessWithRecorderAndBudget(t *testing.T, root string, fake provider.Provider, rules []policy.Rule, recorder ContextRecorder, maxContextTokens int) (*Agent, *events.Emitter, *events.MemorySink) {
 	t.Helper()
 	guard, err := platform.NewPathGuard(root)
 	if err != nil {
@@ -358,7 +467,7 @@ func newAgentTestHarnessWithRecorder(t *testing.T, root string, fake provider.Pr
 	now := time.Now
 	runtime, err := New(Options{
 		Provider: fake, Registry: registry, Guard: guard, Policy: engine,
-		Now: now, MaxContextTokens: 64_000, ContextRecorder: recorder,
+		Now: now, MaxContextTokens: maxContextTokens, ContextRecorder: recorder,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -369,6 +478,20 @@ func newAgentTestHarnessWithRecorder(t *testing.T, root string, fake provider.Pr
 		t.Fatal(err)
 	}
 	return runtime, emitter, sink
+}
+
+func countKind(kinds []events.Kind, want events.Kind) int {
+	count := 0
+	for _, kind := range kinds {
+		if kind == want {
+			count++
+		}
+	}
+	return count
+}
+
+func validAgentSummary() string {
+	return `{"objective_and_constraints":["保留兼容和安全约束"],"decisions":[],"verified_evidence":["历史测试通过"],"unresolved_errors":["仍需验证"],"todo_approval_tool_state":["验收进行中"],"continuation_pointers":["继续运行测试"]}`
 }
 
 func newInteractiveRecoveryHarness(t *testing.T, root string, fake provider.Provider, input string, recorder ContextRecorder) (*Agent, *events.Emitter, *events.MemorySink) {

@@ -5,6 +5,7 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -17,23 +18,24 @@ const SnapshotSchemaVersion uint16 = 1
 // SessionView is the public, deterministic projection consumed by CLI and a
 // later TUI. It deliberately excludes private command payloads.
 type SessionView struct {
-	ID              string            `json:"id"`
-	ProjectRoot     string            `json:"project_root"`
-	ProjectIdentity string            `json:"project_identity"`
-	Title           string            `json:"title,omitempty"`
-	Status          string            `json:"status"`
-	LastSeq         uint64            `json:"last_seq"`
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
-	Runs            []RunView         `json:"runs"`
-	Messages        []MessageView     `json:"messages"`
-	Todos           []events.Todo     `json:"todos"`
-	Approvals       []ApprovalView    `json:"approvals"`
-	Tools           []ToolView        `json:"tools"`
-	Recoveries      []RecoveryView    `json:"recoveries"`
-	Usage           UsageView         `json:"usage"`
-	Warnings        []events.Warning  `json:"warnings"`
-	LastError       *events.RunFailed `json:"last_error,omitempty"`
+	ID              string                  `json:"id"`
+	ProjectRoot     string                  `json:"project_root"`
+	ProjectIdentity string                  `json:"project_identity"`
+	Title           string                  `json:"title,omitempty"`
+	Status          string                  `json:"status"`
+	LastSeq         uint64                  `json:"last_seq"`
+	CreatedAt       time.Time               `json:"created_at"`
+	UpdatedAt       time.Time               `json:"updated_at"`
+	Runs            []RunView               `json:"runs"`
+	Messages        []MessageView           `json:"messages"`
+	Todos           []events.Todo           `json:"todos"`
+	Approvals       []ApprovalView          `json:"approvals"`
+	Tools           []ToolView              `json:"tools"`
+	Recoveries      []RecoveryView          `json:"recoveries"`
+	Compactions     []ContextCompactionView `json:"context_compactions"`
+	Usage           UsageView               `json:"usage"`
+	Warnings        []events.Warning        `json:"warnings"`
+	LastError       *events.RunFailed       `json:"last_error,omitempty"`
 }
 
 type RunView struct {
@@ -77,6 +79,16 @@ type RecoveryView struct {
 	CallID      string `json:"call_id"`
 	Action      string `json:"action"`
 	Outcome     string `json:"outcome"`
+}
+
+type ContextCompactionView struct {
+	RunID                    string `json:"run_id"`
+	SourceStart              uint64 `json:"source_start"`
+	SourceEnd                uint64 `json:"source_end"`
+	EstimatedBefore          int    `json:"estimated_before"`
+	EstimatedAfterUpperBound int    `json:"estimated_after_upper_bound"`
+	GeneratorModel           string `json:"generator_model"`
+	GeneratorVersion         string `json:"generator_version"`
 }
 
 type UsageView struct {
@@ -183,6 +195,23 @@ func reduceRecord(view *SessionView, record Record) error {
 		view.Recoveries = append(view.Recoveries, RecoveryView{
 			RunID: record.RunID, SourceRunID: payload.SourceRunID, CallID: payload.CallID,
 			Action: payload.Action, Outcome: payload.Outcome,
+		})
+	case events.KindContextCompacted:
+		payload, err := events.DecodePayload[events.ContextCompacted](event)
+		if err != nil {
+			return err
+		}
+		if payload.SourceStart == 0 || payload.SourceEnd < payload.SourceStart ||
+			payload.EstimatedBefore <= 0 || payload.EstimatedAfterUpperBound <= 0 ||
+			payload.GeneratorModel == "" || payload.GeneratorVersion == "" {
+			return errors.New("invalid context compaction metadata")
+		}
+		view.Compactions = append(view.Compactions, ContextCompactionView{
+			RunID: record.RunID, SourceStart: payload.SourceStart, SourceEnd: payload.SourceEnd,
+			EstimatedBefore:          payload.EstimatedBefore,
+			EstimatedAfterUpperBound: payload.EstimatedAfterUpperBound,
+			GeneratorModel:           payload.GeneratorModel,
+			GeneratorVersion:         payload.GeneratorVersion,
 		})
 	case events.KindUsageUpdated:
 		payload, err := events.DecodePayload[events.UsageUpdated](event)

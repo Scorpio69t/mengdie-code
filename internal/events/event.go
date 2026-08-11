@@ -30,6 +30,7 @@ const (
 	KindToolStarted      Kind = "tool.started"
 	KindToolCompleted    Kind = "tool.completed"
 	KindRecoveryResolved Kind = "recovery.resolved"
+	KindContextCompacted Kind = "context.compacted"
 	KindUsageUpdated     Kind = "usage.updated"
 	KindWarning          Kind = "warning"
 	KindRunCompleted     Kind = "run.completed"
@@ -172,6 +173,17 @@ type RecoveryResolved struct {
 	CallID      string `json:"call_id"`
 	Action      string `json:"action"`
 	Outcome     string `json:"outcome"`
+}
+
+// ContextCompacted exposes only non-sensitive compaction accounting. Summary
+// text and source messages remain private session data.
+type ContextCompacted struct {
+	SourceStart              uint64 `json:"source_start"`
+	SourceEnd                uint64 `json:"source_end"`
+	EstimatedBefore          int    `json:"estimated_before"`
+	EstimatedAfterUpperBound int    `json:"estimated_after_upper_bound"`
+	GeneratorModel           string `json:"generator_model"`
+	GeneratorVersion         string `json:"generator_version"`
 }
 
 type UsageUpdated struct {

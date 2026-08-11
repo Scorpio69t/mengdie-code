@@ -29,6 +29,7 @@ type ResumePlan struct {
 	SanitizedResults int    `json:"sanitized_results"`
 
 	History                []provider.Message `json:"-"`
+	ContextSummary         string             `json:"-"`
 	Todos                  []tools.Todo       `json:"-"`
 	ExpectedSessionSeq     uint64             `json:"-"`
 	ExpectedContextOrdinal uint64             `json:"-"`
@@ -224,6 +225,24 @@ func (s *Service) AnalyzeResume(ctx context.Context, sessionID, projectRoot stri
 	if err != nil {
 		return blockResume(plan, err.Error()), nil
 	}
+	latestSummary, summaryErr := s.store.LoadLatestContextSummary(ctx, sessionID)
+	if summaryErr == nil {
+		if latestSummary.SourceEnd >= uint64(len(contextMessages)) {
+			return blockResume(plan, "滚动摘要没有保留可核验的最近原始上下文"), nil
+		}
+		compacted := make([]provider.Message, 0, 1+len(contextMessages)-int(latestSummary.SourceEnd))
+		compacted = append(compacted, cloneProviderMessage(contextMessages[0].Message))
+		for _, item := range contextMessages[latestSummary.SourceEnd:] {
+			compacted = append(compacted, cloneProviderMessage(item.Message))
+		}
+		history = compacted
+		plan.ContextSummary = latestSummary.Summary
+	} else if !errors.Is(summaryErr, ErrContextSummaryNotFound) {
+		if errors.Is(summaryErr, ErrContextCorrupt) {
+			return blockResume(plan, "滚动摘要损坏或来源区间不完整，拒绝静默使用派生上下文"), nil
+		}
+		return ResumePlan{}, summaryErr
+	}
 	plan.History, plan.Todos, plan.CanResume = history, todos, true
 	return plan, nil
 }
@@ -377,6 +396,7 @@ func blockResume(plan ResumePlan, reason string) ResumePlan {
 	plan.CanResume = false
 	plan.Reason = reason
 	plan.History = nil
+	plan.ContextSummary = ""
 	plan.Todos = nil
 	return plan
 }
