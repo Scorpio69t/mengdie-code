@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -177,6 +178,27 @@ func TestServiceListFiltersProjectsAndDeleteCascadesPrivateData(t *testing.T) {
 	}
 	if err := service.Delete(context.Background(), "session-command"); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("delete missing=%v", err)
+	}
+}
+
+func TestReduceProjectsContextCompactionMetadataOnly(t *testing.T) {
+	record := viewRecord(t, 1, events.KindContextCompacted, events.ContextCompacted{
+		SourceStart: 2, SourceEnd: 9, EstimatedBefore: 12000,
+		EstimatedAfterUpperBound: 8000, GeneratorModel: "model", GeneratorVersion: "protocol/v1",
+	})
+	view, err := Reduce(SessionView{ID: "session-view", Status: "active", CreatedAt: storeTestTime, UpdatedAt: storeTestTime}, []Record{record})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Compactions) != 1 || view.Compactions[0].SourceEnd != 9 || view.Compactions[0].GeneratorModel != "model" {
+		t.Fatalf("compactions=%+v", view.Compactions)
+	}
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "summary_text") {
+		t.Fatalf("public projection leaked private summary: %s", encoded)
 	}
 }
 

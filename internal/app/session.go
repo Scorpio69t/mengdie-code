@@ -178,7 +178,7 @@ func (a *App) runSessionResume(ctx context.Context, args []string, interactive b
 		AllowEdit: *allowEdit, AllowCommands: allowCommands.Values(),
 		AllowedEnvironment: allowEnvironment.Values(), CommandID: *commandID,
 		SessionID: plan.SessionID, CommandKind: session.CommandKindResume,
-		History: plan.History, Todos: plan.Todos,
+		History: plan.History, ContextSummary: plan.ContextSummary, Todos: plan.Todos,
 		ExpectedSessionSeq: plan.ExpectedSessionSeq, ExpectedContextOrdinal: plan.ExpectedContextOrdinal,
 	}
 	if plan.Recovery != nil {

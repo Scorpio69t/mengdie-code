@@ -14,22 +14,33 @@ import (
 // RunState is deliberately in-memory in M1. It contains only one active run
 // and is not a persistence or resume contract.
 type RunState struct {
-	mu          sync.RWMutex
-	RunID       string
-	Messages    []provider.Message
-	Todos       []tools.Todo
-	Turn        int
-	Usage       provider.Usage
-	DeniedTools int
-	StartedAt   time.Time
+	mu                 sync.RWMutex
+	RunID              string
+	Messages           []provider.Message
+	CompactionMessages []provider.Message
+	Summary            string
+	Todos              []tools.Todo
+	Turn               int
+	Usage              provider.Usage
+	DeniedTools        int
+	StartedAt          time.Time
 }
 
-func (s *RunState) snapshot() ([]provider.Message, []tools.Todo) {
+func (s *RunState) snapshot() ([]provider.Message, []provider.Message, []tools.Todo, string) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	messages := cloneMessages(s.Messages)
+	compactionMessages := cloneMessages(s.CompactionMessages)
 	todos := append([]tools.Todo(nil), s.Todos...)
-	return messages, todos
+	return messages, compactionMessages, todos, s.Summary
+}
+
+func (s *RunState) applyCompaction(messages, sourceMessages []provider.Message, summary string) {
+	s.mu.Lock()
+	s.Messages = cloneMessages(messages)
+	s.CompactionMessages = cloneMessages(sourceMessages)
+	s.Summary = summary
+	s.mu.Unlock()
 }
 
 func cloneMessages(messages []provider.Message) []provider.Message {
@@ -48,6 +59,14 @@ func cloneMessages(messages []provider.Message) []provider.Message {
 func (s *RunState) appendMessage(message provider.Message) {
 	s.mu.Lock()
 	s.Messages = append(s.Messages, message)
+	s.CompactionMessages = append(s.CompactionMessages, cloneMessages([]provider.Message{message})[0])
+	s.mu.Unlock()
+}
+
+func (s *RunState) appendMessageWithCompactionSource(message, source provider.Message) {
+	s.mu.Lock()
+	s.Messages = append(s.Messages, message)
+	s.CompactionMessages = append(s.CompactionMessages, cloneMessages([]provider.Message{source})[0])
 	s.mu.Unlock()
 }
 

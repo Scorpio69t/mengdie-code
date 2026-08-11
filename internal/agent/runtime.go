@@ -42,6 +42,7 @@ type Options struct {
 // bool is false when output-bearing fields were replaced by a safe summary.
 type ContextRecorder interface {
 	RecordMessage(context.Context, provider.Message, bool) error
+	RecordCompaction(context.Context, agentcontext.CompactionRecord) (agentcontext.CompactionReceipt, error)
 }
 
 type Agent struct {
@@ -60,15 +61,16 @@ type Agent struct {
 }
 
 type RunRequest struct {
-	RunID        string
-	Task         string
-	Model        string
-	DisplayModel string
-	MaxTurns     int
-	Security     string
-	History      []provider.Message
-	Todos        []tools.Todo
-	Recovery     *RecoveryAction
+	RunID          string
+	Task           string
+	Model          string
+	DisplayModel   string
+	MaxTurns       int
+	Security       string
+	History        []provider.Message
+	ContextSummary string
+	Todos          []tools.Todo
+	Recovery       *RecoveryAction
 }
 
 const (
@@ -132,8 +134,10 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 	}
 	state := &RunState{
 		RunID: request.RunID, StartedAt: a.now(),
-		Messages: cloneMessages(request.History),
-		Todos:    append([]tools.Todo(nil), request.Todos...),
+		Messages:           cloneMessages(request.History),
+		CompactionMessages: cloneMessages(request.History),
+		Summary:            strings.TrimSpace(request.ContextSummary),
+		Todos:              append([]tools.Todo(nil), request.Todos...),
 	}
 	startContext := ctx
 	if ctx.Err() != nil {
@@ -169,10 +173,10 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 		if err := a.recordContext(context.WithoutCancel(ctx), resumeMessage, outcome.resumeComplete); err != nil {
 			return state.result(""), a.finishError(ctx, emitter, err)
 		}
-		state.appendMessage(provider.Message{
+		state.appendMessageWithCompactionSource(provider.Message{
 			Role: provider.RoleTool, ToolCallID: request.Recovery.Call.ID,
 			Name: request.Recovery.Call.Name, Content: outcome.message,
-		})
+		}, resumeMessage)
 		if _, err := emitter.Emit(ctx, events.KindRecoveryResolved, events.RecoveryResolved{
 			SourceRunID: request.Recovery.SourceRunID, CallID: request.Recovery.Call.ID,
 			Action: request.Recovery.Kind, Outcome: recoveryOutcome(outcome),
@@ -209,8 +213,14 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 			return state.result(""), a.finishError(ctx, emitter, err)
 		}
 		state.Turn++
-		messages, todos := state.snapshot()
-		chatRequest, err := builder.Build(agentcontext.State{Messages: messages, Todos: todos})
+		messages, sourceMessages, todos, summary := state.snapshot()
+		contextState := agentcontext.State{
+			Messages: messages, SourceMessages: sourceMessages, Todos: todos, Summary: summary,
+		}
+		chatRequest, err := builder.Build(contextState)
+		if errors.Is(err, agentcontext.ErrBudgetExceeded) {
+			chatRequest, err = a.compactContext(ctx, state, emitter, builder, contextState, request.Model)
+		}
 		if err != nil {
 			return state.result(""), a.finishError(ctx, emitter, err)
 		}
@@ -266,9 +276,9 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 			if err := a.recordContext(context.WithoutCancel(ctx), resumeMessage, outcome.resumeComplete); err != nil {
 				return state.result(""), a.finishError(ctx, emitter, err)
 			}
-			state.appendMessage(provider.Message{
+			state.appendMessageWithCompactionSource(provider.Message{
 				Role: provider.RoleTool, ToolCallID: call.ID, Name: call.Name, Content: outcome.message,
-			})
+			}, resumeMessage)
 			if outcome.failed {
 				if tracker.observeFailure(outcome.failureKey) >= repeatedLimit {
 					return state.result(""), a.finishError(ctx, emitter, ErrRepeatedFailure)
@@ -279,6 +289,81 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 		}
 	}
 	return state.result(""), a.finishError(ctx, emitter, ErrMaxTurns)
+}
+
+func (a *Agent) compactContext(
+	ctx context.Context,
+	state *RunState,
+	emitter *events.Emitter,
+	builder *agentcontext.Builder,
+	contextState agentcontext.State,
+	model string,
+) (provider.ChatRequest, error) {
+	if a.contextRecorder == nil {
+		return provider.ChatRequest{}, fmt.Errorf("%w: durable context recorder is required", agentcontext.ErrBudgetExceeded)
+	}
+	plan, err := builder.PlanCompaction(contextState)
+	if err != nil {
+		return provider.ChatRequest{}, err
+	}
+	summaryRequest, err := builder.BuildSummaryRequest(plan)
+	if err != nil {
+		return provider.ChatRequest{}, err
+	}
+	response, err := a.provider.Stream(ctx, summaryRequest, provider.StreamSinkFunc(func(context.Context, provider.StreamEvent) error {
+		return nil
+	}))
+	if err != nil {
+		return provider.ChatRequest{}, fmt.Errorf("generate context summary: %w", err)
+	}
+	if err := validateResponse(response); err != nil || len(response.Message.ToolCalls) != 0 {
+		return provider.ChatRequest{}, fmt.Errorf("generate context summary: %w", ErrInvalidResponse)
+	}
+	summary := strings.TrimSpace(response.Message.Content)
+	if summary == "" || len([]byte(summary)) > 64<<10 {
+		return provider.ChatRequest{}, errors.New("generate context summary: response must be between 1 byte and 64 KiB")
+	}
+	if err := agentcontext.ValidateSummary(summary); err != nil {
+		return provider.ChatRequest{}, fmt.Errorf("generate context summary: %w", err)
+	}
+	compactedRequest, err := builder.Build(agentcontext.State{
+		Messages: plan.Retained, SourceMessages: plan.RetainedSource,
+		Todos: contextState.Todos, Summary: summary,
+	})
+	if err != nil {
+		return provider.ChatRequest{}, fmt.Errorf("validate generated context summary: %w", err)
+	}
+	generatorModel := strings.TrimSpace(response.Model)
+	if generatorModel == "" {
+		generatorModel = model
+	}
+	receipt, err := a.contextRecorder.RecordCompaction(context.WithoutCancel(ctx), agentcontext.CompactionRecord{
+		Summary: summary, RetainedTailMessages: plan.RetainedTailMessages,
+		GeneratorModel: generatorModel, GeneratorVersion: agentcontext.SummaryProtocolVersion,
+		EstimatedBefore: plan.EstimatedBefore, EstimatedAfterUpperBound: plan.EstimatedAfterUpperBound,
+	})
+	if err != nil {
+		return provider.ChatRequest{}, fmt.Errorf("persist private context summary: %w", err)
+	}
+	emitContext := context.WithoutCancel(ctx)
+	if _, err := emitter.Emit(emitContext, events.KindContextCompacted, events.ContextCompacted{
+		SourceStart: receipt.SourceStart, SourceEnd: receipt.SourceEnd,
+		EstimatedBefore: plan.EstimatedBefore, EstimatedAfterUpperBound: plan.EstimatedAfterUpperBound,
+		GeneratorModel:   generatorModel,
+		GeneratorVersion: agentcontext.SummaryProtocolVersion,
+	}); err != nil {
+		return provider.ChatRequest{}, err
+	}
+	if response.Usage != (provider.Usage{}) {
+		if _, err := emitter.Emit(emitContext, events.KindUsageUpdated, events.UsageUpdated{
+			InputTokens: response.Usage.InputTokens, OutputTokens: response.Usage.OutputTokens,
+			CacheReadTokens: response.Usage.CacheReadTokens,
+		}); err != nil {
+			return provider.ChatRequest{}, err
+		}
+	}
+	state.applyCompaction(plan.Retained, plan.RetainedSource, summary)
+	return compactedRequest, nil
 }
 
 func validateRunRequest(request RunRequest) error {
