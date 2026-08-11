@@ -44,6 +44,7 @@ type ContextMessage struct {
 	RunID        string              `json:"run_id"`
 	CommandID    string              `json:"command_id"`
 	Message      provider.Message    `json:"-"`
+	SHA256       string              `json:"sha256"`
 	Completeness ContextCompleteness `json:"completeness"`
 	CreatedAt    time.Time           `json:"created_at"`
 }
@@ -265,6 +266,7 @@ WHERE cm.session_id=? ORDER BY cm.ordinal LIMIT ?`, sessionID, maximumContextMes
 		if checksum != fmt.Sprintf("sha256:%x", digest[:]) {
 			return nil, fmt.Errorf("%w: checksum mismatch at %d", ErrContextCorrupt, item.Ordinal)
 		}
+		item.SHA256 = checksum
 		decoder := json.NewDecoder(bytes.NewReader(encoded))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&item.Message); err != nil {

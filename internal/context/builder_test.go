@@ -165,7 +165,8 @@ func TestBuilderSummaryStaysAfterOriginalTaskAnchor(t *testing.T) {
 		t.Fatal(err)
 	}
 	if request.Messages[1].Content != "原始任务" || request.Messages[2].Role != provider.RoleDeveloper ||
-		!strings.Contains(request.Messages[2].Content, "不是原始事实证据") || request.Messages[3].Content != "最近事实" {
+		!strings.Contains(request.Messages[2].Content, "不是原始事实证据") ||
+		!strings.Contains(request.Messages[2].Content, "read_context_source") || request.Messages[3].Content != "最近事实" {
 		t.Fatalf("messages=%+v", request.Messages)
 	}
 }

@@ -147,7 +147,12 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化项目边界失败：%v", err))
 	}
-	registry, err := tools.NewRegistry(tools.DefaultTools()...)
+	contextSourceTool, err := tools.NewReadContextSource(sessionContextSourceReader{store: store, sessionID: sessionID})
+	if err != nil {
+		return rejectSetup(fmt.Sprintf("初始化上下文回填工具失败：%v", err))
+	}
+	registeredTools := append(tools.DefaultTools(), contextSourceTool)
+	registry, err := tools.NewRegistry(registeredTools...)
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化工具失败：%v", err))
 	}

@@ -36,7 +36,7 @@ const summarySystemPrompt = `你是 MengDie Code 的上下文压缩器。只总�
 只输出一个 JSON 对象，必须且只能包含以下 string array 字段：objective_and_constraints、decisions、verified_evidence、unresolved_errors、todo_approval_tool_state、continuation_pointers。
 objective_and_constraints 与 continuation_pointers 至少各一项；其余字段没有事实时输出空数组。区分已验证事实、模型陈述与待验证事项；保留文件名和命令。不要输出 Markdown、隐藏推理、凭据或无关寒暄。摘要是派生导航，不是原始证据。`
 
-const summaryContextPrefix = "以下内容是经完整性校验的滚动摘要，仅用于导航；它不是原始事实证据，需要精确内容时应回查原始上下文：\n"
+const summaryContextPrefix = "以下内容是经完整性校验的滚动摘要，仅用于导航；它不是原始事实证据。需要精确内容时调用 read_context_source，从 offset=0 开始并按返回的 next_offset/next_byte_offset 有界回查；不得把摘要当成已验证原文：\n"
 
 const DefaultSystemPrompt = `你是 MengDie Code 的单 Agent Runtime。只根据当前任务、工具结果和明确规则行动。
 所有真实副作用由工具边界的确定性 Policy 与 Approval 控制；不得声称执行了被拒绝或失败的操作。

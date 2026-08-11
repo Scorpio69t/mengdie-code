@@ -126,6 +126,9 @@ func TestAgentCompletesReadEditTestAndTodoLoop(t *testing.T) {
 	if len(fake.requests) != 5 || !lastToolResultContains(fake.requests[1], `"success":true`) || !strings.Contains(fake.requests[4].Messages[1].Content, "completed") {
 		t.Fatalf("runtime did not preserve results/todos: requests=%+v", fake.requests)
 	}
+	if requestHasTool(fake.requests[0], tools.ReadContextSourceToolName) {
+		t.Fatal("read_context_source was advertised before a rolling summary existed")
+	}
 }
 
 func TestAgentReturnsPolicyDenialToModelWithoutSideEffect(t *testing.T) {
@@ -304,6 +307,9 @@ func TestAgentCompactsContextBeforeMainModelCall(t *testing.T) {
 	if len(fake.requests) != 2 || len(fake.requests[0].Tools) != 0 || fake.requests[0].ToolChoice != "" || fake.requests[1].ToolChoice != provider.ToolChoiceAuto {
 		t.Fatalf("requests=%+v", fake.requests)
 	}
+	if !requestHasTool(fake.requests[1], tools.ReadContextSourceToolName) {
+		t.Fatal("compacted main request did not advertise read_context_source")
+	}
 	if len(recorder.compactions) != 1 || recorder.compactions[0].GeneratorVersion != agentcontext.SummaryProtocolVersion {
 		t.Fatalf("compactions=%+v", recorder.compactions)
 	}
@@ -456,7 +462,12 @@ func newAgentTestHarnessWithRecorderAndBudget(t *testing.T, root string, fake pr
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry, err := tools.NewRegistry(tools.DefaultTools()...)
+	contextSourceTool, err := tools.NewReadContextSource(unavailableContextSourceReader{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	registeredTools := append(tools.DefaultTools(), contextSourceTool)
+	registry, err := tools.NewRegistry(registeredTools...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,6 +489,25 @@ func newAgentTestHarnessWithRecorderAndBudget(t *testing.T, root string, fake pr
 		t.Fatal(err)
 	}
 	return runtime, emitter, sink
+}
+
+type unavailableContextSourceReader struct{}
+
+func (unavailableContextSourceReader) Describe(context.Context) (tools.ContextSourceDescriptor, error) {
+	return tools.ContextSourceDescriptor{}, errors.New("summary unavailable in unit harness")
+}
+
+func (unavailableContextSourceReader) Load(context.Context, tools.ContextSourceDescriptor) ([]tools.ContextSourceMessage, error) {
+	return nil, errors.New("summary unavailable in unit harness")
+}
+
+func requestHasTool(request provider.ChatRequest, name string) bool {
+	for _, tool := range request.Tools {
+		if tool.Function.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func countKind(kinds []events.Kind, want events.Kind) int {

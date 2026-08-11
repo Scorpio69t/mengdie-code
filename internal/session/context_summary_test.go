@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -149,6 +150,118 @@ func TestAnalyzeResumeUsesVerifiedSummaryAndOriginalTail(t *testing.T) {
 	}
 	if blocked.CanResume || !strings.Contains(blocked.Reason, "滚动摘要损坏") {
 		t.Fatalf("blocked plan=%+v", blocked)
+	}
+}
+
+func TestLoadContextSummarySourceReturnsOnlyVerifiedRecoverySafeRange(t *testing.T) {
+	store := openTestStore(t, t.TempDir(), 0)
+	defer closeTestStore(t, store)
+	recorder := beginSummaryTestRun(t, store, filepath.Join(t.TempDir(), "project"))
+	messages := []struct {
+		message  provider.Message
+		complete bool
+	}{
+		{provider.Message{Role: provider.RoleUser, Content: "原始任务"}, true},
+		{provider.Message{Role: provider.RoleAssistant, Content: "精确旧事实"}, true},
+		{provider.Message{Role: provider.RoleTool, Name: "shell", ToolCallID: "call-side-effect", Content: "已脱敏恢复摘要"}, false},
+		{provider.Message{Role: provider.RoleAssistant, Content: "最近事实"}, true},
+	}
+	for _, item := range messages {
+		if err := recorder.RecordMessage(context.Background(), item.message, item.complete); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := recorder.RecordCompaction(context.Background(), agentcontext.CompactionRecord{
+		Summary: summaryTestDocument("来源回填"), RetainedTailMessages: 1,
+		GeneratorModel: "test-model", GeneratorVersion: agentcontext.SummaryProtocolVersion,
+		EstimatedBefore: 5000, EstimatedAfterUpperBound: 1800,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := store.LoadLatestContextSummary(context.Background(), "summary-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadedSummary, source, err := store.LoadContextSummarySource(context.Background(), "summary-session", summary.Identity())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadedSummary.ID != summary.ID || len(source) != 2 || source[0].Ordinal != 2 || source[0].Message.Content != "精确旧事实" ||
+		source[1].Ordinal != 3 || source[1].Completeness != ContextSanitized || source[1].SHA256 == "" {
+		t.Fatalf("summary=%+v source=%+v", loadedSummary, source)
+	}
+	changed := summary.Identity()
+	changed.SHA256 = "sha256:different"
+	if _, _, err := store.LoadContextSummarySource(context.Background(), "summary-session", changed); !errors.Is(err, ErrContextSummaryChanged) {
+		t.Fatalf("changed identity error=%v", err)
+	}
+}
+
+func TestLoadContextSummarySourceFailsClosedOnMessageTamper(t *testing.T) {
+	store := openTestStore(t, t.TempDir(), 0)
+	defer closeTestStore(t, store)
+	recorder := beginSummaryTestRun(t, store, filepath.Join(t.TempDir(), "project"))
+	for _, message := range []provider.Message{
+		{Role: provider.RoleUser, Content: "原始任务"},
+		{Role: provider.RoleAssistant, Content: "旧事实"},
+		{Role: provider.RoleAssistant, Content: "最近事实"},
+	} {
+		if err := recorder.RecordMessage(context.Background(), message, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := recorder.RecordCompaction(context.Background(), agentcontext.CompactionRecord{
+		Summary: summaryTestDocument("篡改检测"), RetainedTailMessages: 1,
+		GeneratorModel: "test-model", GeneratorVersion: agentcontext.SummaryProtocolVersion,
+		EstimatedBefore: 5000, EstimatedAfterUpperBound: 1800,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := store.LoadLatestContextSummary(context.Background(), "summary-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.Exec(`UPDATE context_messages SET message_json='{"role":"assistant","content":"tampered"}' WHERE session_id='summary-session' AND ordinal=2`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.LoadContextSummarySource(context.Background(), "summary-session", summary.Identity()); !errors.Is(err, ErrContextCorrupt) {
+		t.Fatalf("tampered source error=%v", err)
+	}
+}
+
+func TestLoadContextSummarySourceFailsClosedOnArtifactTamper(t *testing.T) {
+	store := openTestStore(t, t.TempDir(), 0)
+	defer closeTestStore(t, store)
+	recorder := beginSummaryTestRun(t, store, filepath.Join(t.TempDir(), "project"))
+	for _, message := range []provider.Message{
+		{Role: provider.RoleUser, Content: "原始任务"},
+		{Role: provider.RoleAssistant, Content: strings.Repeat("大上下文", inlineContextMessageBytes)},
+		{Role: provider.RoleAssistant, Content: "最近事实"},
+	} {
+		if err := recorder.RecordMessage(context.Background(), message, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := recorder.RecordCompaction(context.Background(), agentcontext.CompactionRecord{
+		Summary: summaryTestDocument("Artifact 篡改检测"), RetainedTailMessages: 1,
+		GeneratorModel: "test-model", GeneratorVersion: agentcontext.SummaryProtocolVersion,
+		EstimatedBefore: 5000, EstimatedAfterUpperBound: 1800,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := store.LoadLatestContextSummary(context.Background(), "summary-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var relative string
+	if err := store.db.QueryRow(`SELECT relative_path FROM artifacts WHERE session_id='summary-session'`).Scan(&relative); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(store.dataDir, filepath.FromSlash(relative)), []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.LoadContextSummarySource(context.Background(), "summary-session", summary.Identity()); !errors.Is(err, ErrContextCorrupt) {
+		t.Fatalf("tampered artifact error=%v", err)
 	}
 }
 
