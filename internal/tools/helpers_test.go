@@ -24,12 +24,11 @@ type toolTestEnv struct {
 
 func newToolTestEnv(t *testing.T) *toolTestEnv {
 	t.Helper()
-	root := t.TempDir()
-	guard, err := platform.NewPathGuard(root)
+	guard, err := platform.NewPathGuard(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewPathGuard() error = %v", err)
 	}
-	return &toolTestEnv{root: root, guard: guard, journal: &testMutationJournal{intents: make(map[string]MutationIntent)}}
+	return &toolTestEnv{root: guard.Root(), guard: guard, journal: &testMutationJournal{intents: make(map[string]MutationIntent)}}
 }
 
 func (e *toolTestEnv) write(t *testing.T, rel, content string) {

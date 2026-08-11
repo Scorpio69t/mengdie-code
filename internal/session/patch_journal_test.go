@@ -10,9 +10,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/Scorpio69t/mengdie-code/internal/platform"
 	"github.com/Scorpio69t/mengdie-code/internal/tools"
 )
 
@@ -161,10 +163,52 @@ func TestPatchJournalVerifyPostFailsClosedAfterExternalChange(t *testing.T) {
 	}
 }
 
+func TestPatchJournalRecorderCanonicalizesEquivalentRootAliases(t *testing.T) {
+	store := openTestStore(t, t.TempDir(), 0)
+	defer closeTestStore(t, store)
+	realRoot := t.TempDir()
+	aliasRoot := strings.ToUpper(realRoot)
+	if runtime.GOOS != "windows" {
+		aliasRoot = filepath.Join(t.TempDir(), "project-link")
+		if err := os.Symlink(realRoot, aliasRoot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	payload, err := TaskCommandPayload("canonical root alias")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BeginCommandRun(context.Background(), CommandRunMetadata{
+		SessionID: "session-alias", CommandID: "command-alias", CommandKind: CommandKindExec,
+		CommandPayload: payload, RunID: "run-alias", ProjectRoot: aliasRoot,
+		Provider: "openai-compatible", Model: "test-model", StartedAt: storeTestTime,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	recorder, err := store.NewPatchJournalRecorder(
+		context.Background(), "session-alias", "run-alias", "command-alias", aliasRoot,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guard, err := platform.NewPathGuard(realRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(guard.Root(), "value.txt")
+	if _, err := recorder.Prepare(context.Background(), patchTestIntent(t, path, false, "", "after\n")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newPatchJournalHarness(t *testing.T) (*SQLiteStore, *PatchJournalRecorder, string) {
 	t.Helper()
 	store := openTestStore(t, t.TempDir(), 0)
-	root := filepath.Clean(t.TempDir())
+	guard, err := platform.NewPathGuard(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := guard.Root()
 	payload, err := TaskCommandPayload("patch journal test")
 	if err != nil {
 		t.Fatal(err)

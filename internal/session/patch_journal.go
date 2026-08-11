@@ -86,11 +86,11 @@ func (s *SQLiteStore) NewPatchJournalRecorder(ctx context.Context, sessionID, ru
 	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(runID) == "" || strings.TrimSpace(commandID) == "" {
 		return nil, errors.New("patch journal identities are required")
 	}
-	root, err := filepath.Abs(strings.TrimSpace(projectRoot))
+	requestedGuard, err := platform.NewPathGuard(strings.TrimSpace(projectRoot))
 	if err != nil {
 		return nil, fmt.Errorf("resolve patch journal project root: %w", err)
 	}
-	root = filepath.Clean(root)
+	root := requestedGuard.Root()
 	var persistedRoot string
 	err = s.db.QueryRowContext(ctx, `
 SELECT se.project_root
