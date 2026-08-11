@@ -38,6 +38,14 @@ func TestWriteFileCreatesNestedFileAfterCapability(t *testing.T) {
 	if result.Metadata["operation"] != "created" || result.Metadata["sha256"] != bytesSHA256([]byte("你好，MengDie\n")) || result.Metadata["size_bytes"] == "" {
 		t.Fatalf("unexpected metadata: %#v", result.Metadata)
 	}
+	if len(env.journal.intents) != 1 {
+		t.Fatalf("journal intents=%d", len(env.journal.intents))
+	}
+	for _, intent := range env.journal.intents {
+		if intent.PreExists || !intent.PostExists || intent.Path != target || intent.PostSHA256 != result.Metadata["sha256"] {
+			t.Fatalf("journal intent=%+v", intent)
+		}
+	}
 	assertNoStagingFiles(t, env.root)
 }
 
@@ -78,6 +86,18 @@ func TestWriteFileRequiresExplicitOverwriteAndPreservesMode(t *testing.T) {
 		}
 	}
 	assertNoStagingFiles(t, env.root)
+}
+
+func TestWriteFileRejectsNoopOverwriteBecauseJournalStatesWouldBeAmbiguous(t *testing.T) {
+	env := newToolTestEnv(t)
+	env.write(t, "same.txt", "same\n")
+	tool := NewWriteFile()
+	_, err := tool.Prepare(context.Background(), mustRawJSON(t, writeFileArgs{
+		Path: "same.txt", Content: "same\n", Overwrite: true,
+	}), env.prepareEnv())
+	if err == nil || !strings.Contains(err.Error(), "identical") {
+		t.Fatalf("Prepare() error=%v", err)
+	}
 }
 
 func TestWriteFileDetectsCreateTOCTOU(t *testing.T) {
@@ -162,6 +182,41 @@ func TestWriteFileMissingCapabilityHasNoSideEffects(t *testing.T) {
 	}
 }
 
+func TestWriteFileRequiresDurableJournalBeforeProjectMutation(t *testing.T) {
+	env := newToolTestEnv(t)
+	tool := NewWriteFile()
+	call := prepareCall(t, tool, env, mustJSON(t, writeFileArgs{
+		Path: "missing/parents/file.txt", Content: "content\n",
+	}))
+	execEnv := env.execEnv()
+	execEnv.MutationJournal = nil
+	if _, err := tool.Execute(context.Background(), call, capabilityFor(call), execEnv); !errors.Is(err, ErrMutationJournalMissing) {
+		t.Fatalf("Execute() error=%v, want ErrMutationJournalMissing", err)
+	}
+	if _, err := os.Stat(filepath.Join(env.root, "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing journal created parent: %v", err)
+	}
+}
+
+func TestWriteFileRechecksTOCTOUAfterJournalPrepare(t *testing.T) {
+	env := newToolTestEnv(t)
+	tool := NewWriteFile()
+	call := prepareCall(t, tool, env, mustJSON(t, writeFileArgs{
+		Path: "new.txt", Content: "approved\n",
+	}))
+	target := filepath.Join(env.root, "new.txt")
+	execEnv := env.execEnv()
+	execEnv.MutationJournal = interferingMutationJournal{path: target}
+	var preconditionErr *PreconditionError
+	if _, err := tool.Execute(context.Background(), call, capabilityFor(call), execEnv); !errors.As(err, &preconditionErr) {
+		t.Fatalf("Execute() error=%v, want PreconditionError", err)
+	}
+	if got := readTestFile(t, target); got != "external\n" {
+		t.Fatalf("content=%q", got)
+	}
+	assertNoStagingFiles(t, env.root)
+}
+
 func TestWriteFileRejectsUnsafeInputs(t *testing.T) {
 	env := newToolTestEnv(t)
 	tool := NewWriteFile()
@@ -193,7 +248,7 @@ func TestAtomicWriteFileCleansStagingAndCreatedParentsOnFailure(t *testing.T) {
 	target := filepath.Join(root, "new", "nested", "file.txt")
 	err := atomicWriteFile(root, target, []byte("content"), 0o644, false, []Precondition{{
 		Kind: PreconditionPathAbsent, Path: blocker,
-	}})
+	}}, nil)
 	var preconditionErr *PreconditionError
 	if !errors.As(err, &preconditionErr) {
 		t.Fatalf("atomicWriteFile() error = %v, want PreconditionError", err)
@@ -214,7 +269,7 @@ func TestAtomicWriteFileRootHandleRejectsSymlinkEscape(t *testing.T) {
 	target := filepath.Join(link, "outside.txt")
 	err := atomicWriteFile(root, target, []byte("must not escape"), 0o644, false, []Precondition{{
 		Kind: PreconditionPathAbsent, Path: target,
-	}})
+	}}, nil)
 	if err == nil {
 		t.Fatal("atomicWriteFile() followed a symlink outside the project root")
 	}
@@ -223,3 +278,16 @@ func TestAtomicWriteFileRootHandleRejectsSymlinkEscape(t *testing.T) {
 	}
 	assertNoStagingFiles(t, root)
 }
+
+type interferingMutationJournal struct{ path string }
+
+func (journal interferingMutationJournal) Prepare(context.Context, MutationIntent) (MutationReceipt, error) {
+	if err := os.WriteFile(journal.path, []byte("external\n"), 0o644); err != nil {
+		return MutationReceipt{}, err
+	}
+	return MutationReceipt{JournalID: "interfering"}, nil
+}
+
+func (interferingMutationJournal) MarkApplied(context.Context, MutationReceipt) error { return nil }
+
+func (interferingMutationJournal) VerifyPost(context.Context, MutationReceipt) error { return nil }

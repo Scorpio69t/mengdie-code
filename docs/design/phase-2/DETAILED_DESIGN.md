@@ -570,10 +570,10 @@ TUI 只依赖 Application Service：
 
 ### P2-06：Patch Journal 与 rewind
 
-- 写前意图、pre/post 哈希、崩溃恢复与冲突报告；
-- edit/write 的 Journal 接入；
-- rewind 命令、审批、用户后续编辑保护；
-- kill-point 与 TOCTOU 组合测试。
+- P2-06A：写前意图、pre/post 哈希、edit/write 接入，以及 `pre/post/conflict` 崩溃判定；
+- P2-06A：`pre` 只允许重新 Prepare/审批，`post` 只补认事实且禁止重复写，`conflict` 保持阻断；
+- P2-06B：回滚材料、rewind 命令、审批和用户后续编辑保护；
+- 两个切片均覆盖 kill-point 与 TOCTOU 组合测试。
 
 ### P2-07：项目指令与最小 Skill
 
@@ -639,4 +639,4 @@ TUI 只依赖 Application Service：
 
 ## 17. 当前实现状态
 
-截至本文更新：P2-04C 已在 P2-03B2 上实现带顺序/SHA-256 的私有上下文日志、store-first 模型边界、同 Session 新 Run、确定性 Resume Analyzer 和 `session resume`。完整 user/assistant/只读工具消息可恢复，副作用工具只保存脱敏摘要；无日志、上下文缺口、跨项目请求、多个未完成调用以及 write/execute/network 的未知状态均 fail-closed。pending Approval 和执行中的 read/state 会在交互终端重新 Prepare 并展示当前预览，要求新的用户确认和新的 one-shot Capability；旧 Capability 永不复用。P2-04A 提供只消费公开 `SessionView` 的 Bubble Tea 只读会话界面；P2-04B 增加 store-first 的同进程有界公开事实通知、`afterSeq` 补读和 TUI 缺口恢复适配；P2-04C 让裸 `mengdie` 默认进入全屏 TUI，在同进程提交一个有界任务、消费已提交事实并完成精确工具调用的交互审批。P2-05A 新增受控 Artifact Store：超过 64 KiB 的单条私有上下文以临时文件、fsync、原子 rename、数据库登记的顺序离线保存，恢复时复验根锚定路径、文件类型、大小与 SHA-256；Session 删除联动清理，启动扫描在安全宽限期后回收内部命名的孤儿文件。P2-05B 在实际 Provider 调用边界接入确定性 token 预算：溢出时保留首个原始任务、当前任务、Todo、项目/安全指令和最近完整消息，把中间闭合区间通过同模型无工具请求生成滚动摘要；摘要记录来源 ordinal、模型、协议版本、SHA-256 与压缩前后预算，原始上下文不改写。压缩只读取与私有账本逐条一致的恢复安全消息；Resume 先验证完整原始事实，再使用有效摘要和原始尾部，摘要损坏时 fail-closed。P2-05C 新增 `read_context_source`：模型只按相对偏移读取当前 Session 最新有效摘要覆盖的恢复安全原文，Prepare/Execute 以摘要 SHA 和区间双重绑定，大消息按字节有界续读，摘要轮换、来源或 Artifact 损坏时拒绝；回填正文不进入公开事件。`context.compacted` 与回填工具事实只公开非敏感元数据。TUI 仍不直连 SQLite、Provider 或工具，审批输入也不签发 Capability；EventBus 不是事实源。重复恢复 Command ID 只回放该 Run 的公开事实。`message.delta` 仍不落库；未知写状态处理、同一 TUI 连续多轮任务、Patch Journal、成本持久化与 M2 退出评测均尚未实现。README 里的 M2 复选框必须保持未完成，直到上述退出条件全部满足。
+截至本文更新：P2-04C 已在 P2-03B2 上实现带顺序/SHA-256 的私有上下文日志、store-first 模型边界、同 Session 新 Run、确定性 Resume Analyzer 和 `session resume`。完整 user/assistant/只读工具消息可恢复，副作用工具只保存脱敏摘要；无日志、上下文缺口、跨项目请求和多个未完成调用均 fail-closed。pending Approval 和执行中的 read/state 会在交互终端重新 Prepare 并展示当前预览，要求新的用户确认和新的 one-shot Capability；旧 Capability 永不复用。P2-04A 提供只消费公开 `SessionView` 的 Bubble Tea 只读会话界面；P2-04B 增加 store-first 的同进程有界公开事实通知、`afterSeq` 补读和 TUI 缺口恢复适配；P2-04C 让裸 `mengdie` 默认进入全屏 TUI，在同进程提交一个有界任务、消费已提交事实并完成精确工具调用的交互审批。P2-05A 新增受控 Artifact Store：超过 64 KiB 的单条私有上下文以临时文件、fsync、原子 rename、数据库登记的顺序离线保存，恢复时复验根锚定路径、文件类型、大小与 SHA-256；Session 删除联动清理，启动扫描在安全宽限期后回收内部命名的孤儿文件。P2-05B 在实际 Provider 调用边界接入确定性 token 预算：溢出时保留首个原始任务、当前任务、Todo、项目/安全指令和最近完整消息，把中间闭合区间通过同模型无工具请求生成滚动摘要；摘要记录来源 ordinal、模型、协议版本、SHA-256 与压缩前后预算，原始上下文不改写。压缩只读取与私有账本逐条一致的恢复安全消息；Resume 先验证完整原始事实，再使用有效摘要和原始尾部，摘要损坏时 fail-closed。P2-05C 新增 `read_context_source`：模型只按相对偏移读取当前 Session 最新有效摘要覆盖的恢复安全原文，Prepare/Execute 以摘要 SHA 和区间双重绑定，大消息按字节有界续读，摘要轮换、来源或 Artifact 损坏时拒绝；回填正文不进入公开事件。`context.compacted` 与回填工具事实只公开非敏感元数据。P2-06A 新增 run-scoped Patch Journal：`edit_file`/`write_file` 在任何项目文件副作用前提交相对路径、路径指纹、调用摘要和 pre/post 状态，原子替换后再落 `applied/verified`；Journal 持久化间隙后再次检查 TOCTOU。Resume 对未完成写调用严格按当前哈希标记 `aborted/verified/conflict`：前者重新 Prepare 并审批，中者只补认工具结果且不重复执行，后者保持阻断。Journal 私有事实不进入 EventBus、TUI 或 JSONL，Capability 仍不持久化。TUI 仍不直连 SQLite、Provider 或工具，审批输入也不签发 Capability；EventBus 不是事实源。重复恢复 Command ID 只回放该 Run 的公开事实。`message.delta` 仍不落库；安全 rewind 与回滚材料、同一 TUI 连续多轮任务、成本持久化与 M2 退出评测均尚未实现。README 里的 M2 复选框必须保持未完成，直到上述退出条件全部满足。

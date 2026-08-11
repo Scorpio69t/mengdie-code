@@ -95,6 +95,9 @@ func (writeFileTool) Prepare(ctx context.Context, raw json.RawMessage, env Prepa
 			return nil, err
 		}
 		preconditions = []Precondition{{Kind: PreconditionFileSHA256, Path: resolved.Path, SHA256: bytesSHA256(before)}}
+		if bytesSHA256(before) == bytesSHA256([]byte(args.Content)) {
+			return nil, errors.New("write_file: replacement content is identical to the existing file")
+		}
 		operation = "覆盖"
 	} else {
 		preconditions = []Precondition{{Kind: PreconditionPathAbsent, Path: resolved.Path}}
@@ -152,8 +155,36 @@ func (writeFileTool) Execute(ctx context.Context, call *PreparedCall, cap Capabi
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := atomicWriteFile(env.Guard.Root(), resolved.Path, content, mode, args.Overwrite, call.Preconditions); err != nil {
+	if env.MutationJournal == nil {
+		return nil, ErrMutationJournalMissing
+	}
+	var receipt MutationReceipt
+	prepareJournal := func() error {
+		preExists := args.Overwrite
+		var preMode os.FileMode
+		if preExists {
+			preMode = mode
+		}
+		var journalErr error
+		receipt, journalErr = env.MutationJournal.Prepare(ctx, MutationIntent{
+			ToolCallID: call.ID, ToolName: call.ToolName, CallDigest: call.Digest,
+			Path: resolved.Path, PreExists: preExists, PreSHA256: preconditionsHash(call.Preconditions), PreMode: preMode,
+			PostExists: true, PostSHA256: bytesSHA256(content), PostMode: mode,
+		})
+		if journalErr == nil {
+			journalErr = ctx.Err()
+		}
+		return journalErr
+	}
+	if err := atomicWriteFile(env.Guard.Root(), resolved.Path, content, mode, args.Overwrite, call.Preconditions, prepareJournal); err != nil {
 		return nil, fmt.Errorf("write_file: %w", err)
+	}
+	journalContext := context.WithoutCancel(ctx)
+	if err := env.MutationJournal.MarkApplied(journalContext, receipt); err != nil {
+		return nil, fmt.Errorf("write_file: record applied write: %w", err)
+	}
+	if err := env.MutationJournal.VerifyPost(journalContext, receipt); err != nil {
+		return nil, fmt.Errorf("write_file: verify applied write: %w", err)
 	}
 	operation := "created"
 	if args.Overwrite {

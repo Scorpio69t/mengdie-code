@@ -46,6 +46,14 @@ func TestEditFilePrepareAndExecute(t *testing.T) {
 	if result.Metadata["sha256_before"] == "" || result.Metadata["sha256_after"] != bytesSHA256([]byte(wantContent)) || result.Metadata["replacements"] != "1" {
 		t.Fatalf("unexpected metadata: %#v", result.Metadata)
 	}
+	if len(env.journal.intents) != 1 {
+		t.Fatalf("journal intents=%d", len(env.journal.intents))
+	}
+	for _, intent := range env.journal.intents {
+		if !intent.PreExists || !intent.PostExists || intent.PreSHA256 == intent.PostSHA256 || intent.Path != path {
+			t.Fatalf("journal intent=%+v", intent)
+		}
+	}
 	if runtime.GOOS != "windows" {
 		info, err := os.Stat(path)
 		if err != nil {

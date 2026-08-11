@@ -124,7 +124,7 @@ func ensureSamePreparedPath(call *PreparedCall, resolved string) error {
 	return nil
 }
 
-func atomicWriteFile(rootDir, path string, content []byte, mode fs.FileMode, replace bool, preconditions []Precondition) (err error) {
+func atomicWriteFile(rootDir, path string, content []byte, mode fs.FileMode, replace bool, preconditions []Precondition, beforeMutation func() error) (err error) {
 	root, err := os.OpenRoot(rootDir)
 	if err != nil {
 		return fmt.Errorf("open project root: %w", err)
@@ -132,6 +132,19 @@ func atomicWriteFile(rootDir, path string, content []byte, mode fs.FileMode, rep
 	defer func() { err = errors.Join(err, root.Close()) }()
 	targetPath, err := relativeRootPath(rootDir, path)
 	if err != nil {
+		return err
+	}
+	if err := checkRootedPreconditions(rootDir, root, preconditions); err != nil {
+		return err
+	}
+	if beforeMutation != nil {
+		if err := beforeMutation(); err != nil {
+			return fmt.Errorf("persist write intent: %w", err)
+		}
+	}
+	// Journal persistence is an external scheduling point. Re-check the
+	// approved state before creating directories or staging files.
+	if err := checkRootedPreconditions(rootDir, root, preconditions); err != nil {
 		return err
 	}
 	createdDirs, err := createParentDirectories(root, filepath.Dir(targetPath))

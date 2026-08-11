@@ -136,7 +136,7 @@ func (a *App) runSessionResume(ctx context.Context, args []string, interactive b
 		}
 		return ExitPolicyDenied
 	}
-	if plan.Recovery != nil && (!interactive || *jsonOutput) {
+	if plan.Recovery != nil && recoveryNeedsApproval(plan.Recovery.Kind) && (!interactive || *jsonOutput) {
 		plan.CanResume = false
 		plan.Reason = "该会话需在交互终端重新确认当前工具预览；无头和 JSON 模式不会复用旧审批"
 		if *jsonOutput {
@@ -182,17 +182,25 @@ func (a *App) runSessionResume(ctx context.Context, args []string, interactive b
 		ExpectedSessionSeq: plan.ExpectedSessionSeq, ExpectedContextOrdinal: plan.ExpectedContextOrdinal,
 	}
 	if plan.Recovery != nil {
-		broker, brokerErr := policy.NewTextBroker(bufio.NewReader(a.stdin), a.stdout)
-		if brokerErr != nil {
-			return a.runtimeSetupError(fmt.Sprintf("初始化恢复审批输入失败：%v", brokerErr))
+		if recoveryNeedsApproval(plan.Recovery.Kind) {
+			broker, brokerErr := policy.NewTextBroker(bufio.NewReader(a.stdin), a.stdout)
+			if brokerErr != nil {
+				return a.runtimeSetupError(fmt.Sprintf("初始化恢复审批输入失败：%v", brokerErr))
+			}
+			options.Mode, options.Broker = policy.ModeInteractive, broker
+			options.Security = "受控本地执行 · 恢复前重新审批"
+		} else {
+			options.Security = "受控本地执行 · Journal 已核验"
 		}
-		options.Mode, options.Broker = policy.ModeInteractive, broker
-		options.Security = "受控本地执行 · 恢复前重新审批"
 		options.Recovery = &agent.RecoveryAction{
 			SourceRunID: plan.Recovery.SourceRunID, Call: plan.Recovery.Call, Kind: plan.Recovery.Kind,
 		}
 	}
 	return a.runAgent(ctx, loaded, runID, strings.TrimSpace(*message), sink, options)
+}
+
+func recoveryNeedsApproval(kind string) bool {
+	return kind != session.RecoveryVerifyWrite
 }
 
 func (a *App) runSessionList(ctx context.Context, args []string) int {

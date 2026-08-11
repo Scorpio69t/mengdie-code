@@ -93,6 +93,9 @@ type ExecEnv struct {
 	Environment []string
 	// TodoWriter is the run-scoped destination used only by write_todos.
 	TodoWriter TodoWriter
+	// MutationJournal is mandatory for project-file writes. It persists the
+	// exact pre/post intent before the atomic replacement can happen.
+	MutationJournal MutationJournal
 }
 
 // PreviewKind classifies what Approval should display.
