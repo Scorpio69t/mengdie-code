@@ -17,7 +17,10 @@ import (
 
 const contextSummarySourceStart uint64 = 2
 
-var ErrContextSummaryNotFound = errors.New("session context summary not found")
+var (
+	ErrContextSummaryNotFound = errors.New("session context summary not found")
+	ErrContextSummaryChanged  = errors.New("session context summary changed")
+)
 
 // ContextSummary is a private, derived navigation aid. Source messages remain
 // authoritative in context_messages and are always validated independently.
@@ -35,6 +38,20 @@ type ContextSummary struct {
 	EstimatedBefore          int
 	EstimatedAfterUpperBound int
 	CreatedAt                time.Time
+}
+
+// ContextSummaryIdentity is the immutable capability boundary for reading a
+// summary's original source. Callers capture it during Prepare and must present
+// the same identity during Execute so a newer rolling summary cannot silently
+// widen or change the authorized range.
+type ContextSummaryIdentity struct {
+	SHA256      string
+	SourceStart uint64
+	SourceEnd   uint64
+}
+
+func (s ContextSummary) Identity() ContextSummaryIdentity {
+	return ContextSummaryIdentity{SHA256: s.SHA256, SourceStart: s.SourceStart, SourceEnd: s.SourceEnd}
 }
 
 func (r *ContextRecorder) RecordCompaction(ctx context.Context, record agentcontext.CompactionRecord) (receipt agentcontext.CompactionReceipt, resultErr error) {
@@ -155,4 +172,50 @@ SELECT COUNT(*) FROM context_messages WHERE session_id=? AND ordinal BETWEEN ? A
 		return ContextSummary{}, fmt.Errorf("%w: invalid rolling summary time", ErrContextCorrupt)
 	}
 	return item, nil
+}
+
+// LoadContextSummarySource returns only the authoritative messages covered by
+// the latest verified rolling summary. The expected identity comes from the
+// tool's prepared call and closes the gap between authorization and execution.
+// LoadContext revalidates every inline message and Artifact before any private
+// source is returned.
+func (s *SQLiteStore) LoadContextSummarySource(
+	ctx context.Context,
+	sessionID string,
+	expected ContextSummaryIdentity,
+) (ContextSummary, []ContextMessage, error) {
+	if strings.TrimSpace(expected.SHA256) == "" || expected.SourceStart == 0 || expected.SourceEnd < expected.SourceStart {
+		return ContextSummary{}, nil, errors.New("context summary identity is required")
+	}
+	summary, err := s.LoadLatestContextSummary(ctx, sessionID)
+	if err != nil {
+		return ContextSummary{}, nil, err
+	}
+	if summary.Identity() != expected {
+		return ContextSummary{}, nil, ErrContextSummaryChanged
+	}
+	messages, err := s.LoadContext(ctx, sessionID)
+	if err != nil {
+		return ContextSummary{}, nil, err
+	}
+	latest, err := s.LoadLatestContextSummary(ctx, sessionID)
+	if err != nil {
+		return ContextSummary{}, nil, err
+	}
+	if latest.Identity() != expected {
+		return ContextSummary{}, nil, ErrContextSummaryChanged
+	}
+	if summary.SourceEnd > uint64(len(messages)) {
+		return ContextSummary{}, nil, fmt.Errorf("%w: rolling summary source exceeds context", ErrContextCorrupt)
+	}
+	start := int(summary.SourceStart - 1)
+	end := int(summary.SourceEnd)
+	result := append([]ContextMessage(nil), messages[start:end]...)
+	for index, message := range result {
+		want := summary.SourceStart + uint64(index)
+		if message.Ordinal != want || strings.TrimSpace(message.SHA256) == "" {
+			return ContextSummary{}, nil, fmt.Errorf("%w: rolling summary source mismatch at %d", ErrContextCorrupt, want)
+		}
+	}
+	return summary, result, nil
 }

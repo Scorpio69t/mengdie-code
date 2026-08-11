@@ -430,6 +430,18 @@ rewind 的自动前提是：
 
 压缩只改变发给模型的上下文，不改写原始历史。摘要记录来源事件区间、生成模型、版本和哈希；恢复时若摘要缺失，可从原始事实重新生成。M2 摘要不是长期记忆，也不自动跨项目复用。
 
+### 9.3 摘要来源按需回填
+
+滚动摘要只负责导航；模型需要文件名、命令参数或错误原文等精确事实时，通过 `read_context_source` 回查当前 Session 最新有效摘要覆盖的原始上下文：
+
+- 模型参数只有摘要区间内的相对 `offset`、最多 4 条的 `limit` 与超大消息续读用的 `byte_offset`，不接受 Session ID、项目路径或任意来源区间；
+- Provider 请求仅在当前上下文已经携带有效滚动摘要时声明该工具；压缩规划提前计入工具 schema 的 token 上界；
+- Prepare 读取并验证最新摘要，把 `summary_sha256 + source_start + source_end` 写入内部规范参数和一次性 Capability；Execute 再次核对同一身份，摘要已经滚动时拒绝旧调用；
+- 来源消息仍通过私有 Context Ledger 与 Artifact Store 读取，返回前复验顺序、角色、完整性、大小与 SHA-256；副作用工具只能返回此前持久化的 `sanitized` 恢复摘要；
+- 每次最多返回 4 条、正文预算 6 KiB、完整工具输出上限 16 KiB；超大消息以规范 JSON 字节片段和 `next_offset/next_byte_offset` 继续，不能一次把整个压缩区间重新塞回模型；
+- 回填正文只进入私有模型上下文。公开 `tool.proposed/started/completed` 只展示工具名、摘要哈希短标识、来源 ordinal 与条数，不把原文投影到 EventBus、TUI 或 JSONL；
+- 无摘要、摘要损坏、来源缺口、Artifact 篡改、分页越界或授权后摘要轮换均 fail-closed。回填不赋予文件、命令、网络或跨会话权限。
+
 ## 10. 数据目录、权限与隐私
 
 ### 10.1 默认目录
@@ -551,8 +563,9 @@ TUI 只依赖 Application Service：
 
 ### P2-05：Artifact Store 与上下文压缩
 
-- 大输出落盘、配额、完整性和孤儿清理；
-- token 预算、滚动摘要、来源区间与按需回填；
+- P2-05A：大输出落盘、配额、完整性和孤儿清理；
+- P2-05B：token 预算、滚动摘要与可验证来源区间；
+- P2-05C：当前 Session 最新有效摘要来源的有界按需回填；
 - 压缩前后任务约束保持评测和成本对比。
 
 ### P2-06：Patch Journal 与 rewind
@@ -626,4 +639,4 @@ TUI 只依赖 Application Service：
 
 ## 17. 当前实现状态
 
-截至本文更新：P2-04C 已在 P2-03B2 上实现带顺序/SHA-256 的私有上下文日志、store-first 模型边界、同 Session 新 Run、确定性 Resume Analyzer 和 `session resume`。完整 user/assistant/只读工具消息可恢复，副作用工具只保存脱敏摘要；无日志、上下文缺口、跨项目请求、多个未完成调用以及 write/execute/network 的未知状态均 fail-closed。pending Approval 和执行中的 read/state 会在交互终端重新 Prepare 并展示当前预览，要求新的用户确认和新的 one-shot Capability；旧 Capability 永不复用。P2-04A 提供只消费公开 `SessionView` 的 Bubble Tea 只读会话界面；P2-04B 增加 store-first 的同进程有界公开事实通知、`afterSeq` 补读和 TUI 缺口恢复适配；P2-04C 让裸 `mengdie` 默认进入全屏 TUI，在同进程提交一个有界任务、消费已提交事实并完成精确工具调用的交互审批。P2-05A 新增受控 Artifact Store：超过 64 KiB 的单条私有上下文以临时文件、fsync、原子 rename、数据库登记的顺序离线保存，恢复时复验根锚定路径、文件类型、大小与 SHA-256；Session 删除联动清理，启动扫描在安全宽限期后回收内部命名的孤儿文件。P2-05B 在实际 Provider 调用边界接入确定性 token 预算：溢出时保留首个原始任务、当前任务、Todo、项目/安全指令和最近完整消息，把中间闭合区间通过同模型无工具请求生成滚动摘要；摘要记录来源 ordinal、模型、协议版本、SHA-256 与压缩前后预算，原始上下文不改写。压缩只读取与私有账本逐条一致的恢复安全消息；Resume 先验证完整原始事实，再使用有效摘要和原始尾部，摘要损坏时 fail-closed。`context.compacted` 只公开非敏感元数据。TUI 仍不直连 SQLite、Provider 或工具，审批输入也不签发 Capability；EventBus 不是事实源。重复恢复 Command ID 只回放该 Run 的公开事实。`message.delta` 仍不落库；模型按需回填原始摘要区间、未知写状态处理、同一 TUI 连续多轮任务、Patch Journal、成本持久化与 M2 退出评测均尚未实现。README 里的 M2 复选框必须保持未完成，直到上述退出条件全部满足。
+截至本文更新：P2-04C 已在 P2-03B2 上实现带顺序/SHA-256 的私有上下文日志、store-first 模型边界、同 Session 新 Run、确定性 Resume Analyzer 和 `session resume`。完整 user/assistant/只读工具消息可恢复，副作用工具只保存脱敏摘要；无日志、上下文缺口、跨项目请求、多个未完成调用以及 write/execute/network 的未知状态均 fail-closed。pending Approval 和执行中的 read/state 会在交互终端重新 Prepare 并展示当前预览，要求新的用户确认和新的 one-shot Capability；旧 Capability 永不复用。P2-04A 提供只消费公开 `SessionView` 的 Bubble Tea 只读会话界面；P2-04B 增加 store-first 的同进程有界公开事实通知、`afterSeq` 补读和 TUI 缺口恢复适配；P2-04C 让裸 `mengdie` 默认进入全屏 TUI，在同进程提交一个有界任务、消费已提交事实并完成精确工具调用的交互审批。P2-05A 新增受控 Artifact Store：超过 64 KiB 的单条私有上下文以临时文件、fsync、原子 rename、数据库登记的顺序离线保存，恢复时复验根锚定路径、文件类型、大小与 SHA-256；Session 删除联动清理，启动扫描在安全宽限期后回收内部命名的孤儿文件。P2-05B 在实际 Provider 调用边界接入确定性 token 预算：溢出时保留首个原始任务、当前任务、Todo、项目/安全指令和最近完整消息，把中间闭合区间通过同模型无工具请求生成滚动摘要；摘要记录来源 ordinal、模型、协议版本、SHA-256 与压缩前后预算，原始上下文不改写。压缩只读取与私有账本逐条一致的恢复安全消息；Resume 先验证完整原始事实，再使用有效摘要和原始尾部，摘要损坏时 fail-closed。P2-05C 新增 `read_context_source`：模型只按相对偏移读取当前 Session 最新有效摘要覆盖的恢复安全原文，Prepare/Execute 以摘要 SHA 和区间双重绑定，大消息按字节有界续读，摘要轮换、来源或 Artifact 损坏时拒绝；回填正文不进入公开事件。`context.compacted` 与回填工具事实只公开非敏感元数据。TUI 仍不直连 SQLite、Provider 或工具，审批输入也不签发 Capability；EventBus 不是事实源。重复恢复 Command ID 只回放该 Run 的公开事实。`message.delta` 仍不落库；未知写状态处理、同一 TUI 连续多轮任务、Patch Journal、成本持久化与 M2 退出评测均尚未实现。README 里的 M2 复选框必须保持未完成，直到上述退出条件全部满足。

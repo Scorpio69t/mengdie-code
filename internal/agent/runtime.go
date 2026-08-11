@@ -197,14 +197,33 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 	if err != nil {
 		return state.result(""), a.finishError(ctx, emitter, err)
 	}
-	builder, err := agentcontext.NewBuilder(agentcontext.Options{
+	allToolSpecs := a.registry.Specs()
+	baseToolSpecs := make([]tools.ToolSpec, 0, len(allToolSpecs))
+	for _, spec := range allToolSpecs {
+		if spec.Name != tools.ReadContextSourceToolName {
+			baseToolSpecs = append(baseToolSpecs, spec)
+		}
+	}
+	baseBuilder, err := agentcontext.NewBuilder(agentcontext.Options{
 		Model: request.Model, SystemPrompt: a.systemPrompt,
 		MaxContextTokens: a.maxContextTokens, Capabilities: capabilities,
-		Tools:        a.registry.Specs(),
+		Tools:        baseToolSpecs,
 		Instructions: a.instructions,
 	})
 	if err != nil {
 		return state.result(""), a.finishError(ctx, emitter, err)
+	}
+	summaryBuilder := baseBuilder
+	if len(baseToolSpecs) != len(allToolSpecs) {
+		summaryBuilder, err = agentcontext.NewBuilder(agentcontext.Options{
+			Model: request.Model, SystemPrompt: a.systemPrompt,
+			MaxContextTokens: a.maxContextTokens, Capabilities: capabilities,
+			Tools:        allToolSpecs,
+			Instructions: a.instructions,
+		})
+		if err != nil {
+			return state.result(""), a.finishError(ctx, emitter, err)
+		}
 	}
 
 	tracker := repetitionTracker{}
@@ -217,9 +236,13 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 		contextState := agentcontext.State{
 			Messages: messages, SourceMessages: sourceMessages, Todos: todos, Summary: summary,
 		}
+		builder := baseBuilder
+		if summary != "" {
+			builder = summaryBuilder
+		}
 		chatRequest, err := builder.Build(contextState)
 		if errors.Is(err, agentcontext.ErrBudgetExceeded) {
-			chatRequest, err = a.compactContext(ctx, state, emitter, builder, contextState, request.Model)
+			chatRequest, err = a.compactContext(ctx, state, emitter, summaryBuilder, contextState, request.Model)
 		}
 		if err != nil {
 			return state.result(""), a.finishError(ctx, emitter, err)
