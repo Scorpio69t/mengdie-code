@@ -12,12 +12,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Scorpio69t/mengdie-code/internal/platform"
 	"github.com/Scorpio69t/mengdie-code/internal/session"
 	"github.com/Scorpio69t/mengdie-code/internal/tools"
 )
 
 func TestRewindCommandRequiresInteractiveApprovalAndIsIdempotent(t *testing.T) {
-	root := t.TempDir()
+	guard, err := platform.NewPathGuard(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := guard.Root()
 	writeRuntimeConfig(t, root)
 	application, stdout, _ := newTestApp(t, nil)
 	path := filepath.Join(root, "value.txt")
