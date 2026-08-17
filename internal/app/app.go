@@ -62,6 +62,7 @@ type App struct {
 	environment   func() []string
 	newProvider   providerFactory
 	userConfigDir string
+	userHomeDir   string
 	dataDir       string
 	now           func() time.Time
 	newRunID      func() (string, error)
@@ -71,6 +72,7 @@ type App struct {
 
 // New constructs the production application service.
 func New(build BuildInfo, stdout, stderr io.Writer) *App {
+	userHomeDir, _ := os.UserHomeDir()
 	return &App{
 		build:       build,
 		stdin:       os.Stdin,
@@ -79,6 +81,7 @@ func New(build BuildInfo, stdout, stderr io.Writer) *App {
 		lookupEnv:   os.LookupEnv,
 		environment: os.Environ,
 		newProvider: defaultProviderFactory,
+		userHomeDir: userHomeDir,
 		now:         time.Now,
 		newRunID:    events.NewRunID,
 		factBus:     session.NewPublicFactBus(session.DefaultPublicFactBuffer),

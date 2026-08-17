@@ -35,6 +35,7 @@ type Options struct {
 	Environment        func() []string
 	AllowedEnvironment []string
 	Instructions       []agentcontext.Instruction
+	Skills             []agentcontext.SkillSummary
 	ContextRecorder    ContextRecorder
 	MutationJournal    tools.MutationJournal
 }
@@ -58,6 +59,7 @@ type Agent struct {
 	environment        func() []string
 	allowedEnvironment []string
 	instructions       []agentcontext.Instruction
+	skills             []agentcontext.SkillSummary
 	contextRecorder    ContextRecorder
 	mutationJournal    tools.MutationJournal
 }
@@ -125,6 +127,7 @@ func New(options Options) (*Agent, error) {
 		environment:        options.Environment,
 		allowedEnvironment: append([]string(nil), options.AllowedEnvironment...),
 		instructions:       append([]agentcontext.Instruction(nil), options.Instructions...),
+		skills:             append([]agentcontext.SkillSummary(nil), options.Skills...),
 		contextRecorder:    options.ContextRecorder,
 		mutationJournal:    options.MutationJournal,
 	}, nil
@@ -214,6 +217,7 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 		MaxContextTokens: a.maxContextTokens, Capabilities: capabilities,
 		Tools:        baseToolSpecs,
 		Instructions: a.instructions,
+		Skills:       a.skills,
 	})
 	if err != nil {
 		return state.result(""), a.finishError(ctx, emitter, err)
@@ -225,6 +229,7 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 			MaxContextTokens: a.maxContextTokens, Capabilities: capabilities,
 			Tools:        allToolSpecs,
 			Instructions: a.instructions,
+			Skills:       a.skills,
 		})
 		if err != nil {
 			return state.result(""), a.finishError(ctx, emitter, err)
