@@ -143,10 +143,10 @@ func TestAgentCompletesReadEditTestAndTodoLoop(t *testing.T) {
 	}
 	assertEventKinds(t, sink.Events(), []events.Kind{
 		events.KindRunStarted,
-		events.KindMessageCompleted, events.KindToolProposed, events.KindToolStarted, events.KindToolCompleted,
-		events.KindMessageCompleted, events.KindToolProposed, events.KindToolStarted, events.KindToolCompleted,
-		events.KindMessageCompleted, events.KindToolProposed, events.KindToolStarted, events.KindToolCompleted,
-		events.KindMessageCompleted, events.KindToolProposed, events.KindToolStarted, events.KindTodoUpdated, events.KindToolCompleted,
+		events.KindUsageUpdated, events.KindMessageCompleted, events.KindToolProposed, events.KindToolStarted, events.KindToolCompleted,
+		events.KindUsageUpdated, events.KindMessageCompleted, events.KindToolProposed, events.KindToolStarted, events.KindToolCompleted,
+		events.KindUsageUpdated, events.KindMessageCompleted, events.KindToolProposed, events.KindToolStarted, events.KindToolCompleted,
+		events.KindUsageUpdated, events.KindMessageCompleted, events.KindToolProposed, events.KindToolStarted, events.KindTodoUpdated, events.KindToolCompleted,
 		events.KindMessageDelta, events.KindUsageUpdated, events.KindMessageCompleted, events.KindRunCompleted,
 	})
 	if len(fake.requests) != 5 || !lastToolResultContains(fake.requests[1], `"success":true`) || !strings.Contains(fake.requests[4].Messages[1].Content, "completed") {
@@ -155,6 +155,75 @@ func TestAgentCompletesReadEditTestAndTodoLoop(t *testing.T) {
 	if requestHasTool(fake.requests[0], tools.ReadContextSourceToolName) {
 		t.Fatal("read_context_source was advertised before a rolling summary existed")
 	}
+}
+
+func TestAgentRecordsEveryLogicalRequestWhenUsageValuesRepeat(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "value.txt"), []byte("value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	usage := provider.Usage{InputTokens: 20, OutputTokens: 5, TotalTokens: 25, CacheReadTokens: 4}
+	first := assistantTool("read", "read_file", map[string]any{"path": "value.txt"})
+	first.Usage = usage
+	fake := &scriptedProvider{responses: []*provider.ChatResponse{first, assistantFinal("完成。", usage)}}
+	runtime, emitter, sink := newAgentTestHarness(t, root, fake, nil)
+	result, err := runtime.Run(context.Background(), RunRequest{
+		RunID: "run-test", Task: "读取后完成", Model: "fake:model", MaxTurns: 3,
+	}, emitter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RequestCount != 2 || result.UsageReportedRequests != 2 ||
+		result.Usage.InputTokens != 40 || result.Usage.OutputTokens != 10 || result.Usage.TotalTokens != 50 || result.Usage.CacheReadTokens != 8 {
+		t.Fatalf("result=%+v", result)
+	}
+	var facts []events.UsageUpdated
+	for _, event := range sink.Events() {
+		if event.Kind != events.KindUsageUpdated {
+			continue
+		}
+		fact, decodeErr := events.DecodePayload[events.UsageUpdated](event)
+		if decodeErr != nil {
+			t.Fatal(decodeErr)
+		}
+		facts = append(facts, fact)
+	}
+	if len(facts) != 2 || facts[0].RequestCount != 1 || facts[1].RequestCount != 1 ||
+		!facts[0].UsageReported || !facts[1].UsageReported || facts[0].InputTokens != facts[1].InputTokens {
+		t.Fatalf("facts=%+v", facts)
+	}
+}
+
+type usageThenErrorProvider struct{}
+
+func (usageThenErrorProvider) ID() string { return "usage-then-error" }
+
+func (usageThenErrorProvider) Capabilities(context.Context, string) (provider.Capabilities, error) {
+	return provider.Capabilities{ToolCalling: true, UsageInStream: true, MaxContextTokens: 64_000}, nil
+}
+
+func (usageThenErrorProvider) Stream(ctx context.Context, _ provider.ChatRequest, sink provider.StreamSink) (*provider.ChatResponse, error) {
+	usage := provider.Usage{InputTokens: 9, OutputTokens: 2, TotalTokens: 11}
+	if err := sink.OnEvent(ctx, provider.StreamEvent{Kind: provider.StreamUsage, Usage: &usage}); err != nil {
+		return nil, err
+	}
+	return nil, errors.New("provider disconnected")
+}
+
+func TestAgentPersistsUsageFactBeforeProviderFailure(t *testing.T) {
+	runtime, emitter, sink := newAgentTestHarness(t, t.TempDir(), usageThenErrorProvider{}, nil)
+	result, err := runtime.Run(context.Background(), RunRequest{
+		RunID: "run-test", Task: "执行", Model: "fake:model", MaxTurns: 1,
+	}, emitter)
+	if err == nil || !strings.Contains(err.Error(), "provider disconnected") {
+		t.Fatalf("error=%v", err)
+	}
+	if result.RequestCount != 1 || result.UsageReportedRequests != 1 || result.Usage.InputTokens != 9 {
+		t.Fatalf("result=%+v", result)
+	}
+	assertEventKinds(t, sink.Events(), []events.Kind{
+		events.KindRunStarted, events.KindUsageUpdated, events.KindRunFailed,
+	})
 }
 
 func TestAgentReturnsPolicyDenialToModelWithoutSideEffect(t *testing.T) {
@@ -218,7 +287,7 @@ func TestAgentAcknowledgesVerifiedWriteRecoveryWithoutReexecution(t *testing.T) 
 	}
 	assertEventKinds(t, sink.Events(), []events.Kind{
 		events.KindRunStarted, events.KindToolProposed, events.KindToolCompleted,
-		events.KindRecoveryResolved, events.KindMessageDelta, events.KindMessageCompleted, events.KindRunCompleted,
+		events.KindRecoveryResolved, events.KindMessageDelta, events.KindUsageUpdated, events.KindMessageCompleted, events.KindRunCompleted,
 	})
 }
 
@@ -359,12 +428,15 @@ func TestAgentCompactsContextBeforeMainModelCall(t *testing.T) {
 	}}
 	recorder := &memoryContextRecorder{position: len(history)}
 	runtime, emitter, sink := newAgentTestHarnessWithRecorderAndBudget(t, root, fake, nil, recorder, 9000)
-	_, err := runtime.Run(context.Background(), RunRequest{
+	result, err := runtime.Run(context.Background(), RunRequest{
 		RunID: "run-test", Task: "当前任务：继续验证", Model: "fake:model", MaxTurns: 2, History: history,
 		Todos: []tools.Todo{{ID: "verify", Content: "保留未完成验收", Status: tools.TodoInProgress}},
 	}, emitter)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if result.RequestCount != 2 || result.UsageReportedRequests != 2 || result.Usage.InputTokens != 2100 {
+		t.Fatalf("usage result=%+v", result)
 	}
 	if len(fake.requests) != 2 || len(fake.requests[0].Tools) != 0 || fake.requests[0].ToolChoice != "" || fake.requests[1].ToolChoice != provider.ToolChoiceAuto {
 		t.Fatalf("requests=%+v", fake.requests)
@@ -391,11 +463,20 @@ func TestAgentCompactsContextBeforeMainModelCall(t *testing.T) {
 		t.Fatalf("main request did not preserve the expected boundaries")
 	}
 	kinds := make([]events.Kind, 0)
+	usagePurposes := make([]string, 0, 2)
 	for _, event := range sink.Events() {
 		kinds = append(kinds, event.Kind)
+		if event.Kind == events.KindUsageUpdated {
+			fact, decodeErr := events.DecodePayload[events.UsageUpdated](event)
+			if decodeErr != nil {
+				t.Fatal(decodeErr)
+			}
+			usagePurposes = append(usagePurposes, fact.Purpose)
+		}
 	}
-	if countKind(kinds, events.KindContextCompacted) != 1 || countKind(kinds, events.KindMessageCompleted) != 1 {
-		t.Fatalf("event kinds=%v", kinds)
+	if countKind(kinds, events.KindContextCompacted) != 1 || countKind(kinds, events.KindMessageCompleted) != 1 ||
+		len(usagePurposes) != 2 || usagePurposes[0] != usagePurposeContextSummary || usagePurposes[1] != usagePurposeAgent {
+		t.Fatalf("event kinds=%v usage purposes=%v", kinds, usagePurposes)
 	}
 }
 
@@ -478,7 +559,7 @@ func TestAgentRecoveryRepreparesAndReauthorizesBeforeProviderCall(t *testing.T) 
 	}
 	assertEventKinds(t, sink.Events(), []events.Kind{
 		events.KindRunStarted, events.KindToolProposed, events.KindApprovalNeeded, events.KindApprovalResolved,
-		events.KindToolStarted, events.KindToolCompleted, events.KindRecoveryResolved, events.KindMessageDelta, events.KindMessageCompleted, events.KindRunCompleted,
+		events.KindToolStarted, events.KindToolCompleted, events.KindRecoveryResolved, events.KindMessageDelta, events.KindUsageUpdated, events.KindMessageCompleted, events.KindRunCompleted,
 	})
 }
 

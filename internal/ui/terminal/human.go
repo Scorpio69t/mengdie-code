@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Scorpio69t/mengdie-code/internal/cost"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 )
 
@@ -135,7 +136,16 @@ func (r *HumanRenderer) render(event events.Event) error {
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(r.writer, "• 用量：输入 %d · 输出 %d · 缓存读取 %d tokens\n", payload.InputTokens, payload.OutputTokens, payload.CacheReadTokens)
+		if payload.RequestCount == 0 {
+			_, err = fmt.Fprintf(r.writer, "• 用量：输入 %d · 输出 %d · 总计 %d · 缓存读取 %d tokens\n", payload.InputTokens, payload.OutputTokens, payload.TotalTokens, payload.CacheReadTokens)
+			return err
+		}
+		costText := fmt.Sprintf("成本未知（%s）", usageUnknownReason(payload.CostUnknownReason))
+		if payload.CostStatus == cost.StatusEstimated {
+			costText = fmt.Sprintf("估算成本 $%s USD（价表 %s）", cost.FormatPicoUSD(payload.EstimatedCostPicoUSD), payload.PriceTableVersion)
+		}
+		_, err = fmt.Fprintf(r.writer, "• 用量（%s）：请求 %d · 输入 %d · 输出 %d · 总计 %d · 缓存读取 %d tokens · %s\n",
+			usagePurpose(payload.Purpose), payload.RequestCount, payload.InputTokens, payload.OutputTokens, payload.TotalTokens, payload.CacheReadTokens, costText)
 		return err
 	case events.KindWarning:
 		payload, err := events.DecodePayload[events.Warning](event)
@@ -168,6 +178,28 @@ func (r *HumanRenderer) render(event events.Event) error {
 	default:
 		_, err := fmt.Fprintf(r.writer, "• %s\n", event.Kind)
 		return err
+	}
+}
+
+func usagePurpose(purpose string) string {
+	if purpose == "context_summary" {
+		return "上下文摘要"
+	}
+	return "Agent"
+}
+
+func usageUnknownReason(reason string) string {
+	switch reason {
+	case cost.UnknownUsageUnreported:
+		return "Provider 未上报 token"
+	case cost.UnknownPriceUnavailable:
+		return "无匹配价表"
+	case cost.UnknownInvalidUsage:
+		return "用量数据无效"
+	case cost.UnknownCostOverflow:
+		return "估算超出范围"
+	default:
+		return "原因未记录"
 	}
 }
 

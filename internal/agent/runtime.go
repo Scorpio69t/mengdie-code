@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	agentcontext "github.com/Scorpio69t/mengdie-code/internal/context"
+	"github.com/Scorpio69t/mengdie-code/internal/cost"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 	"github.com/Scorpio69t/mengdie-code/internal/platform"
 	"github.com/Scorpio69t/mengdie-code/internal/policy"
@@ -21,7 +23,11 @@ import (
 	"github.com/Scorpio69t/mengdie-code/internal/tools"
 )
 
-const repeatedLimit = 3
+const (
+	repeatedLimit              = 3
+	usagePurposeAgent          = "agent"
+	usagePurposeContextSummary = "context_summary"
+)
 
 type Options struct {
 	Provider           provider.Provider
@@ -38,6 +44,7 @@ type Options struct {
 	Skills             []agentcontext.SkillSummary
 	ContextRecorder    ContextRecorder
 	MutationJournal    tools.MutationJournal
+	CostEstimator      cost.Estimator
 }
 
 // ContextRecorder persists private, model-visible message boundaries. The
@@ -62,6 +69,7 @@ type Agent struct {
 	skills             []agentcontext.SkillSummary
 	contextRecorder    ContextRecorder
 	mutationJournal    tools.MutationJournal
+	costEstimator      cost.Estimator
 }
 
 type RunRequest struct {
@@ -94,11 +102,16 @@ type RecoveryAction struct {
 }
 
 type RunResult struct {
-	Summary     string
-	Turns       int
-	Usage       provider.Usage
-	Todos       []tools.Todo
-	DeniedTools int
+	Summary               string
+	Turns                 int
+	Usage                 provider.Usage
+	RequestCount          int64
+	UsageReportedRequests int64
+	EstimatedCostPicoUSD  int64
+	EstimatedCostRequests int64
+	UnknownCostRequests   int64
+	Todos                 []tools.Todo
+	DeniedTools           int
 }
 
 func New(options Options) (*Agent, error) {
@@ -130,6 +143,7 @@ func New(options Options) (*Agent, error) {
 		skills:             append([]agentcontext.SkillSummary(nil), options.Skills...),
 		contextRecorder:    options.ContextRecorder,
 		mutationJournal:    options.MutationJournal,
+		costEstimator:      options.CostEstimator,
 	}, nil
 }
 
@@ -257,18 +271,17 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 		if err != nil {
 			return state.result(""), a.finishError(ctx, emitter, err)
 		}
-		observer := &streamObserver{emitter: emitter, state: state}
-		response, err := a.provider.Stream(ctx, chatRequest, observer)
-		if err != nil {
-			return state.result(""), a.finishError(ctx, emitter, err)
+		observer := &streamObserver{emitter: emitter}
+		response, providerErr := a.provider.Stream(ctx, chatRequest, observer)
+		usage, usageReported := observer.observedUsage(response)
+		if err := a.recordUsageCall(ctx, state, emitter, usagePurposeAgent, request.Model, usage, usageReported); err != nil {
+			return state.result(""), errors.Join(providerErr, err)
+		}
+		if providerErr != nil {
+			return state.result(""), a.finishError(ctx, emitter, providerErr)
 		}
 		if err := validateResponse(response); err != nil {
 			return state.result(""), a.finishError(ctx, emitter, err)
-		}
-		if state.setUsage(response.Usage) {
-			if err := observer.emitUsage(ctx, response.Usage); err != nil {
-				return state.result(""), err
-			}
 		}
 		if err := a.recordContext(ctx, response.Message, true); err != nil {
 			return state.result(""), a.finishError(ctx, emitter, err)
@@ -343,11 +356,14 @@ func (a *Agent) compactContext(
 	if err != nil {
 		return provider.ChatRequest{}, err
 	}
-	response, err := a.provider.Stream(ctx, summaryRequest, provider.StreamSinkFunc(func(context.Context, provider.StreamEvent) error {
-		return nil
-	}))
-	if err != nil {
-		return provider.ChatRequest{}, fmt.Errorf("generate context summary: %w", err)
+	observer := &streamObserver{emitter: emitter, suppressText: true}
+	response, providerErr := a.provider.Stream(ctx, summaryRequest, observer)
+	usage, usageReported := observer.observedUsage(response)
+	if err := a.recordUsageCall(ctx, state, emitter, usagePurposeContextSummary, model, usage, usageReported); err != nil {
+		return provider.ChatRequest{}, errors.Join(providerErr, err)
+	}
+	if providerErr != nil {
+		return provider.ChatRequest{}, fmt.Errorf("generate context summary: %w", providerErr)
 	}
 	if err := validateResponse(response); err != nil || len(response.Message.ToolCalls) != 0 {
 		return provider.ChatRequest{}, fmt.Errorf("generate context summary: %w", ErrInvalidResponse)
@@ -386,14 +402,6 @@ func (a *Agent) compactContext(
 		GeneratorVersion: agentcontext.SummaryProtocolVersion,
 	}); err != nil {
 		return provider.ChatRequest{}, err
-	}
-	if response.Usage != (provider.Usage{}) {
-		if _, err := emitter.Emit(emitContext, events.KindUsageUpdated, events.UsageUpdated{
-			InputTokens: response.Usage.InputTokens, OutputTokens: response.Usage.OutputTokens,
-			CacheReadTokens: response.Usage.CacheReadTokens,
-		}); err != nil {
-			return provider.ChatRequest{}, err
-		}
 	}
 	state.applyCompaction(plan.Retained, plan.RetainedSource, summary)
 	return compactedRequest, nil
@@ -763,23 +771,30 @@ func (writer todoWriter) ReplaceTodos(ctx context.Context, todos []tools.Todo) e
 }
 
 type streamObserver struct {
-	emitter *events.Emitter
-	state   *RunState
+	emitter      *events.Emitter
+	suppressText bool
+	mu           sync.Mutex
+	usage        provider.Usage
+	usageSeen    bool
 }
 
 func (observer *streamObserver) OnEvent(ctx context.Context, event provider.StreamEvent) error {
 	switch event.Kind {
 	case provider.StreamTextDelta:
-		if event.Text == "" {
+		if observer.suppressText || event.Text == "" {
 			return nil
 		}
 		_, err := observer.emitter.Emit(ctx, events.KindMessageDelta, events.MessageDelta{Text: event.Text})
 		return err
 	case provider.StreamUsage:
-		if event.Usage == nil || !observer.state.setUsage(*event.Usage) {
+		if event.Usage == nil {
 			return nil
 		}
-		return observer.emitUsage(ctx, *event.Usage)
+		observer.mu.Lock()
+		observer.usage = *event.Usage
+		observer.usageSeen = true
+		observer.mu.Unlock()
+		return nil
 	case provider.StreamRetry:
 		if event.Retry == nil {
 			return nil
@@ -794,11 +809,42 @@ func (observer *streamObserver) OnEvent(ctx context.Context, event provider.Stre
 	}
 }
 
-func (observer *streamObserver) emitUsage(ctx context.Context, usage provider.Usage) error {
-	_, err := observer.emitter.Emit(ctx, events.KindUsageUpdated, events.UsageUpdated{
-		InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheReadTokens: usage.CacheReadTokens,
-	})
-	return err
+func (observer *streamObserver) observedUsage(response *provider.ChatResponse) (provider.Usage, bool) {
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	if response != nil && response.Usage != (provider.Usage{}) {
+		return response.Usage, true
+	}
+	return observer.usage, observer.usageSeen
+}
+
+func (a *Agent) recordUsageCall(
+	ctx context.Context,
+	state *RunState,
+	emitter *events.Emitter,
+	purpose string,
+	model string,
+	usage provider.Usage,
+	reported bool,
+) error {
+	estimate := a.costEstimator.EstimateForModel(usage, reported, model)
+	accountedUsage := usage
+	if estimate.UnknownReason == cost.UnknownInvalidUsage {
+		accountedUsage = provider.Usage{}
+	}
+	fact := events.UsageUpdated{
+		Purpose: purpose, RequestCount: 1, UsageReported: reported,
+		InputTokens: accountedUsage.InputTokens, OutputTokens: accountedUsage.OutputTokens,
+		TotalTokens: accountedUsage.TotalTokens, CacheReadTokens: accountedUsage.CacheReadTokens,
+		ProviderOrigin: estimate.ProviderOrigin, Model: estimate.Model,
+		CostStatus: estimate.Status, EstimatedCostPicoUSD: estimate.PicoUSD, Currency: estimate.Currency,
+		PriceTableVersion: estimate.TableVersion, PricingSource: estimate.PricingSource,
+		CostUnknownReason: estimate.UnknownReason,
+	}
+	if _, err := emitter.Emit(context.WithoutCancel(ctx), events.KindUsageUpdated, fact); err != nil {
+		return err
+	}
+	return state.addUsage(accountedUsage, fact)
 }
 
 func effectStrings(effects []tools.Effect) []string {

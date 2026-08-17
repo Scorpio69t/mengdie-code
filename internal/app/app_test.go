@@ -20,6 +20,7 @@ import (
 
 	"github.com/Scorpio69t/mengdie-code/internal/brand"
 	"github.com/Scorpio69t/mengdie-code/internal/config"
+	"github.com/Scorpio69t/mengdie-code/internal/cost"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 	"github.com/Scorpio69t/mengdie-code/internal/provider"
 	"github.com/Scorpio69t/mengdie-code/internal/session"
@@ -353,10 +354,10 @@ func TestExecRunsAgentAndEmitsCompletedEvents(t *testing.T) {
 		t.Fatalf("Run() code = %d, want %d", code, ExitOK)
 	}
 	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	if len(lines) != 4 {
+	if len(lines) != 5 {
 		t.Fatalf("exec output has %d lines: %q", len(lines), stdout.String())
 	}
-	wantKinds := []events.Kind{events.KindRunStarted, events.KindMessageDelta, events.KindMessageCompleted, events.KindRunCompleted}
+	wantKinds := []events.Kind{events.KindRunStarted, events.KindMessageDelta, events.KindUsageUpdated, events.KindMessageCompleted, events.KindRunCompleted}
 	for i, line := range lines {
 		var event events.Event
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
@@ -370,7 +371,16 @@ func TestExecRunsAgentAndEmitsCompletedEvents(t *testing.T) {
 
 func TestExecPersistsPrivateTaskOnlyInCommandLedger(t *testing.T) {
 	root := t.TempDir()
-	writeRuntimeConfig(t, root)
+	writeAppConfig(t, root, `
+[profiles.default]
+provider = "openai-compatible"
+base_url = "https://api.example.com/v1?endpoint_secret=hidden"
+api_key_env = "TEST_API_KEY"
+model = "test-model"
+
+[approval]
+allow_commands = []
+`)
 	application, stdout, _ := newTestApp(t, map[string]string{"TEST_API_KEY": "must-not-persist"})
 
 	code := application.Run(context.Background(), []string{"exec", "--cwd", root, "--json", "private task text"}, false)
@@ -386,7 +396,7 @@ func TestExecPersistsPrivateTaskOnlyInCommandLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantKinds := []string{"run.started", "message.completed", "run.completed"}
+	wantKinds := []string{"run.started", "usage.updated", "message.completed", "run.completed"}
 	if len(records) != len(wantKinds) {
 		t.Fatalf("records=%d: %+v", len(records), records)
 	}
@@ -397,6 +407,14 @@ func TestExecPersistsPrivateTaskOnlyInCommandLedger(t *testing.T) {
 		if bytes.Contains(record.Payload, []byte("private task text")) {
 			t.Fatalf("public event contains private task: %s", record.Payload)
 		}
+	}
+	usageFact := events.Event{Kind: events.KindUsageUpdated, Payload: records[1].Payload}
+	usage, err := events.DecodePayload[events.UsageUpdated](usageFact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.ProviderOrigin != "https://api.example.com" || usage.Model != "test-model" || usage.CostUnknownReason != cost.UnknownUsageUnreported {
+		t.Fatalf("usage fact=%+v", usage)
 	}
 	if strings.Contains(stdout.String(), "private task text") {
 		t.Fatalf("JSON output exposed task: %q", stdout.String())
@@ -412,7 +430,7 @@ func TestExecPersistsPrivateTaskOnlyInCommandLedger(t *testing.T) {
 	if !bytes.Contains(command.Payload, []byte("private task text")) {
 		t.Fatalf("command payload=%s", command.Payload)
 	}
-	for _, forbidden := range []string{"must-not-persist"} {
+	for _, forbidden := range []string{"must-not-persist", "endpoint_secret"} {
 		if bytes.Contains(databaseBytes, []byte(forbidden)) {
 			t.Fatalf("database contains forbidden value %q", forbidden)
 		}
@@ -485,7 +503,7 @@ func TestExecCommandIDReplaysTerminalFactsWithoutProvider(t *testing.T) {
 	if strings.Contains(stdout.String(), "private task") {
 		t.Fatalf("replay leaked private task: %s", stdout.String())
 	}
-	if strings.Count(strings.TrimSpace(stdout.String()), "\n")+1 != 3 {
+	if strings.Count(strings.TrimSpace(stdout.String()), "\n")+1 != 4 {
 		t.Fatalf("replay output=%q first=%q", stdout.String(), firstOutput)
 	}
 	stdout.Reset()
@@ -572,6 +590,13 @@ func TestSessionCommandsExposeOnlyPublicProjectionAndRequireDeleteConfirmation(t
 	}
 	if !strings.Contains(stdout.String(), "fake completed") || strings.Contains(stdout.String(), "private task") {
 		t.Fatalf("show=%s", stdout.String())
+	}
+	stdout.Reset()
+	if code := application.Run(context.Background(), []string{"session", "show", "--cwd", root, "ses_run-test"}, false); code != ExitOK {
+		t.Fatalf("plain show code=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "用量与成本：") || !strings.Contains(stdout.String(), "成本未知 1 次 · Provider 未上报 token") {
+		t.Fatalf("plain show=%s", stdout.String())
 	}
 	stdout.Reset()
 	if code := application.Run(context.Background(), []string{"session", "delete", "--cwd", root, "ses_run-test"}, false); code != ExitInvalidInput {
