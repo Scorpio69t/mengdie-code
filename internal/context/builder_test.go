@@ -45,6 +45,35 @@ func TestBuilderKeepsTaskTodosAndStableTools(t *testing.T) {
 	}
 }
 
+func TestBuilderInjectsOnlySkillCatalogMetadata(t *testing.T) {
+	builder, err := NewBuilder(Options{
+		Model: "test", MaxContextTokens: 4096,
+		Capabilities: provider.Capabilities{ToolCalling: true},
+		Skills: []SkillSummary{{
+			Name: "review", Description: "Review changes", Source: "$PROJECT_ROOT/.mengdie/skills/review/SKILL.md",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := builder.Build(State{Messages: []provider.Message{{Role: provider.RoleUser, Content: "检查修改"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(request.Messages) != 3 {
+		t.Fatalf("messages=%+v", request.Messages)
+	}
+	catalog := request.Messages[1]
+	for _, want := range []string{"review", "Review changes", "$PROJECT_ROOT", "read_skill", "不授予额外权限"} {
+		if !strings.Contains(catalog.Content, want) {
+			t.Errorf("catalog does not contain %q: %s", want, catalog.Content)
+		}
+	}
+	if strings.Contains(catalog.Content, "SKILL BODY") {
+		t.Fatalf("catalog unexpectedly contains full Skill content: %s", catalog.Content)
+	}
+}
+
 func TestBuilderOmitsUnsupportedOptionalProviderFields(t *testing.T) {
 	builder, err := NewBuilder(Options{
 		Model: "test", MaxContextTokens: 1024,

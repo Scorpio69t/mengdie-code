@@ -20,6 +20,7 @@ import (
 	"github.com/Scorpio69t/mengdie-code/internal/provider"
 	"github.com/Scorpio69t/mengdie-code/internal/provider/openaicompat"
 	"github.com/Scorpio69t/mengdie-code/internal/session"
+	"github.com/Scorpio69t/mengdie-code/internal/skills"
 	"github.com/Scorpio69t/mengdie-code/internal/tools"
 )
 
@@ -151,7 +152,20 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化上下文回填工具失败：%v", err))
 	}
+	skillCatalog, err := skills.Discover(skills.Options{
+		UserHomeDir: a.userHomeDir, ProjectRoot: loaded.ProjectRoot,
+	})
+	if err != nil {
+		return rejectSetup(fmt.Sprintf("加载 Skills 失败：%v", err))
+	}
 	registeredTools := append(tools.DefaultTools(), contextSourceTool)
+	if len(skillCatalog.Skills) > 0 {
+		readSkillTool, err := skills.NewReadTool(skillCatalog)
+		if err != nil {
+			return rejectSetup(fmt.Sprintf("初始化 Skill 读取工具失败：%v", err))
+		}
+		registeredTools = append(registeredTools, readSkillTool)
+	}
 	registry, err := tools.NewRegistry(registeredTools...)
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化工具失败：%v", err))
@@ -174,6 +188,12 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	for index, instruction := range instructions {
 		contextInstructions[index] = agentcontext.Instruction{Source: instruction.Path, Content: instruction.Content}
 	}
+	contextSkills := make([]agentcontext.SkillSummary, len(skillCatalog.Skills))
+	for index, skill := range skillCatalog.Skills {
+		contextSkills[index] = agentcontext.SkillSummary{
+			Name: skill.Name, Description: skill.Description, Source: skill.Source,
+		}
+	}
 	var contextRecorder *session.ContextRecorder
 	if commandKind == session.CommandKindResume {
 		contextRecorder, err = store.NewContextRecorderAt(ctx, sessionID, runID, commandID, options.ExpectedContextOrdinal)
@@ -191,7 +211,8 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 		Provider: modelProvider, Registry: registry, Guard: guard, Policy: engine, Broker: options.Broker,
 		Now: a.now, MaxContextTokens: profile.MaxContextTokens,
 		Environment: a.environment, AllowedEnvironment: options.AllowedEnvironment,
-		Instructions: contextInstructions, ContextRecorder: contextRecorder, MutationJournal: patchJournal,
+		Instructions: contextInstructions, Skills: contextSkills,
+		ContextRecorder: contextRecorder, MutationJournal: patchJournal,
 	})
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化 Agent Runtime 失败：%v", err))

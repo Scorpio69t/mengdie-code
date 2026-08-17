@@ -72,6 +72,52 @@ func TestInteractiveShowsConfiguredModel(t *testing.T) {
 	}
 }
 
+func TestRuntimeAdvertisesSkillCatalogWithoutEagerlyLoadingBody(t *testing.T) {
+	root := t.TempDir()
+	writeRuntimeConfig(t, root)
+	skillPath := filepath.Join(root, ".mengdie", "skills", "review", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skillPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skillPath, []byte("---\nname: review\ndescription: Review changes\n---\nPRIVATE SKILL BODY"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	application, _, _ := newTestApp(t, nil)
+	fake := &appFakeProvider{responses: []*provider.ChatResponse{{
+		Message: provider.Message{Role: provider.RoleAssistant, Content: "done"},
+	}}}
+	application.newProvider = func(config.Profile, string) (provider.Provider, error) { return fake, nil }
+
+	if code := application.Run(context.Background(), []string{"exec", "--cwd", root, "--json", "检查项目"}, false); code != ExitOK {
+		t.Fatalf("Run() code=%d", code)
+	}
+	if len(fake.requests) != 1 {
+		t.Fatalf("requests=%d", len(fake.requests))
+	}
+	request := fake.requests[0]
+	var joined strings.Builder
+	for _, message := range request.Messages {
+		joined.WriteString(message.Content)
+	}
+	for _, want := range []string{"review", "Review changes", "read_skill", "$PROJECT_ROOT/.mengdie/skills/review/SKILL.md"} {
+		if !strings.Contains(joined.String(), want) {
+			t.Errorf("request does not contain %q: %s", want, joined.String())
+		}
+	}
+	if strings.Contains(joined.String(), "PRIVATE SKILL BODY") || strings.Contains(joined.String(), root) {
+		t.Fatalf("request eagerly loaded content or leaked an absolute source path: %s", joined.String())
+	}
+	foundTool := false
+	for _, tool := range request.Tools {
+		if tool.Function.Name == "read_skill" {
+			foundTool = true
+		}
+	}
+	if !foundTool {
+		t.Fatalf("read_skill not advertised: %+v", request.Tools)
+	}
+}
+
 func TestInteractiveDefaultsToFullScreenTUI(t *testing.T) {
 	root := t.TempDir()
 	writeRuntimeConfig(t, root)
@@ -752,6 +798,7 @@ func newTestApp(t *testing.T, environment map[string]string) (*App, *bytes.Buffe
 	stderr := &bytes.Buffer{}
 	application := New(BuildInfo{Version: "test", Commit: "abc123", Date: "2026-07-30"}, stdout, stderr)
 	application.userConfigDir = t.TempDir()
+	application.userHomeDir = t.TempDir()
 	application.dataDir = t.TempDir()
 	application.now = func() time.Time {
 		return time.Date(2026, 7, 30, 9, 0, 0, 0, time.UTC)

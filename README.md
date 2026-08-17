@@ -101,6 +101,7 @@ mengdie memory forget <id>
 - [x] 第二阶段 Slice 05C：滚动摘要来源受控按需回填（[实施报告](./docs/development/phase-2-slice-05c/IMPLEMENTATION_REPORT.md)）
 - [x] 第二阶段 Slice 06A：Patch Journal 写入事实与崩溃判定（[实施报告](./docs/development/phase-2-slice-06a/IMPLEMENTATION_REPORT.md)）
 - [x] 第二阶段 Slice 06B：回滚材料、显式审批与安全 rewind（[实施报告](./docs/development/phase-2-slice-06b/IMPLEMENTATION_REPORT.md)）
+- [x] 第二阶段 Slice 07：项目指令与最小 Skill 按需加载（[实施报告](./docs/development/phase-2-slice-07/IMPLEMENTATION_REPORT.md)）
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal（[第二阶段详细设计](./docs/design/phase-2/DETAILED_DESIGN.md)）
@@ -160,6 +161,8 @@ go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 默认数据目录为 macOS 的 `~/Library/Application Support/MengDie Code/`、Windows 的 `%LOCALAPPDATA%\MengDie Code\`，Linux 使用 `$XDG_STATE_HOME/mengdie/`（未设置时为 `~/.local/state/mengdie/`）。可通过 `MENGDIE_DATA_DIR` 覆盖，但仓库内、网络共享、OneDrive/iCloud 同步目录以及 symlink/reparse point 会被拒绝。
 
 `exec --json` 输出完整 JSON Lines 运行事件。`--command-id` 可为自动化提供幂等键：同 ID、同任务只回放已经提交的公开事实，不再调用 Provider 或工具；同 ID、不同任务直接冲突，运行中或中断状态不会由 `exec` 自动续跑，需要显式通过安全门禁调用 `session resume`。恢复命令也支持独立的 `--command-id`，重复 ID 只回放该恢复 Run 的公开事实。无头模式默认拒绝 edit/write/shell；`--allow-edit` 只放行项目内修改，`--allow-command go,test` 只放行无控制操作符的 `go test` 命令前缀，`--allow-env NAME` 才允许 shell 继承对应敏感环境变量。
+
+项目指令按“用户配置目录下的 `AGENTS.md` → 项目根 `AGENTS.md` → 当前工作目录最近层级”依次进入上下文。最小 Skill 从用户级 `~/.mengdie/skills/<name>/SKILL.md` 和项目级 `.mengdie/skills/<name>/SKILL.md` 发现；同名时项目级胜出并由 `doctor` 报告冲突。Runtime 常驻的只有名称、单行 description 和逻辑来源，模型确有需要时才通过只读 `read_skill` 加载受快照哈希约束的全文。Skill 内容只是指令，不授予文件、命令、网络或其他工具权限，也不会触发联网安装。
 
 公开事件、`session` 输出和日志不包含完整用户任务、密钥或隐藏推理。为进行 Command 幂等与上下文恢复，完整任务和模型可见消息会作为私有事实保存；超过 64 KiB 的单条上下文或回滚前镜像改存到数据目录下受控的 `artifacts/`，SQLite 只登记相对路径、大小和 SHA-256，恢复时必须重新校验；较小回滚前镜像作为私有 BLOB 保存，二者都不会进入 EventBus、TUI 或 JSONL。默认配额为每个 Session 128 MiB、全局 512 MiB，超限拒绝新 Artifact，不静默删除仍在使用的数据。模型请求超过 token 预算时，Runtime 会保留首个原始任务、当前任务、Todo、项目/安全指令和最近完整消息，只把中间闭合区间交给同一 Provider 的无工具请求生成滚动摘要；摘要单独保存来源 ordinal、生成模型、协议版本与 SHA-256，原始上下文不被改写。恢复会先校验完整原始事实，再复用有效摘要和原始尾部；摘要损坏时 fail-closed。模型若需要摘要中的精确原文，只能调用 `read_context_source` 按相对偏移有界回查当前 Session 的最新有效摘要区间；工具不接受 Session ID 或路径，Prepare/Execute 两次核对摘要哈希与区间，大消息按字节续读，摘要轮换、原始消息或 Artifact 损坏都会拒绝。回填正文仅进入私有模型上下文，TUI/JSONL 只看到工具名、区间等元数据。副作用工具只允许恢复安全摘要进入压缩与回填来源，避免派生上下文越过持久化边界。API Key、允许继承的环境变量值和可重放审批授权不会写入。私有事实当前仅依赖目录/文件权限，尚未静态加密；不要把 `MENGDIE_DATA_DIR` 指向共享或同步目录，并使用 `session delete --yes` 删除不再需要的本地会话及所属 Artifact。
 

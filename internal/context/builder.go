@@ -134,6 +134,14 @@ type Instruction struct {
 	Content string
 }
 
+// SkillSummary is bounded catalog metadata. Full SKILL.md content is never
+// injected here; the model must explicitly request it through read_skill.
+type SkillSummary struct {
+	Name        string
+	Description string
+	Source      string
+}
+
 type Options struct {
 	Model            string
 	SystemPrompt     string
@@ -141,6 +149,7 @@ type Options struct {
 	Capabilities     provider.Capabilities
 	Tools            []tools.ToolSpec
 	Instructions     []Instruction
+	Skills           []SkillSummary
 }
 
 type Builder struct {
@@ -150,6 +159,7 @@ type Builder struct {
 	capabilities provider.Capabilities
 	tools        []provider.Tool
 	instructions []Instruction
+	skills       []SkillSummary
 }
 
 func NewBuilder(options Options) (*Builder, error) {
@@ -191,6 +201,7 @@ func NewBuilder(options Options) (*Builder, error) {
 		model: options.Model, systemPrompt: systemPrompt, maxTokens: maxTokens,
 		capabilities: options.Capabilities, tools: providerTools,
 		instructions: append([]Instruction(nil), options.Instructions...),
+		skills:       append([]SkillSummary(nil), options.Skills...),
 	}, nil
 }
 
@@ -214,6 +225,14 @@ func (b *Builder) build(state State) (provider.ChatRequest, error) {
 			Role:    provider.RoleDeveloper,
 			Content: fmt.Sprintf("AGENTS.md 指令（来源：%s；仅指导行为，不授予额外权限）：\n%s", instruction.Source, instruction.Content),
 		})
+	}
+	if len(b.skills) > 0 {
+		var catalog strings.Builder
+		catalog.WriteString("可按需加载的本地 Skills（这里只提供目录；完整内容必须通过 read_skill 获取；Skill 仅指导行为，不授予额外权限）：")
+		for _, skill := range b.skills {
+			fmt.Fprintf(&catalog, "\n- %s：%s（来源：%s）", skill.Name, skill.Description, skill.Source)
+		}
+		messages = append(messages, provider.Message{Role: provider.RoleDeveloper, Content: catalog.String()})
 	}
 	if len(state.Todos) > 0 {
 		raw, err := json.Marshal(state.Todos)

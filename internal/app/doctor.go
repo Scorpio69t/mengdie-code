@@ -21,6 +21,7 @@ import (
 	"github.com/Scorpio69t/mengdie-code/internal/platform"
 	"github.com/Scorpio69t/mengdie-code/internal/project"
 	"github.com/Scorpio69t/mengdie-code/internal/provider"
+	"github.com/Scorpio69t/mengdie-code/internal/skills"
 )
 
 const (
@@ -77,37 +78,52 @@ type doctorGit struct {
 	TrackedChanges *bool  `json:"tracked_changes,omitempty"`
 }
 
+type doctorSkill struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Source      string `json:"source"`
+	Scope       string `json:"scope"`
+}
+
+type doctorSkillConflict struct {
+	Name          string `json:"name"`
+	WinnerSource  string `json:"winner_source"`
+	IgnoredSource string `json:"ignored_source"`
+}
+
 type doctorReport struct {
-	SchemaVersion       int                 `json:"schema_version"`
-	Status              string              `json:"status"`
-	Offline             bool                `json:"offline"`
-	Version             string              `json:"version"`
-	Commit              string              `json:"commit"`
-	GoVersion           string              `json:"go_version"`
-	Platform            string              `json:"platform"`
-	ProjectRoot         string              `json:"project_root"`
-	ProjectName         string              `json:"project_name"`
-	UserConfigPath      string              `json:"user_config_path"`
-	UserConfigLoaded    bool                `json:"user_config_loaded"`
-	ProjectConfigPath   string              `json:"project_config_path"`
-	ProjectConfigLoaded bool                `json:"project_config_loaded"`
-	Profile             string              `json:"profile"`
-	Provider            string              `json:"provider,omitempty"`
-	ProviderEndpoint    string              `json:"provider_endpoint,omitempty"`
-	Model               string              `json:"model,omitempty"`
-	APIKeyEnvironment   string              `json:"api_key_environment,omitempty"`
-	CredentialSet       bool                `json:"credential_set"`
-	Approval            string              `json:"approval"`
-	Security            string              `json:"security"`
-	MaxTurns            int                 `json:"max_turns"`
-	Agents              []string            `json:"agents"`
-	Shell               doctorShell         `json:"shell"`
-	Ripgrep             doctorTool          `json:"ripgrep"`
-	Terminal            doctorTerminal      `json:"terminal"`
-	Git                 doctorGit           `json:"git"`
-	Capabilities        *doctorCapabilities `json:"capabilities,omitempty"`
-	ProviderProbe       doctorProviderProbe `json:"provider_probe"`
-	Checks              []doctorCheck       `json:"checks"`
+	SchemaVersion       int                   `json:"schema_version"`
+	Status              string                `json:"status"`
+	Offline             bool                  `json:"offline"`
+	Version             string                `json:"version"`
+	Commit              string                `json:"commit"`
+	GoVersion           string                `json:"go_version"`
+	Platform            string                `json:"platform"`
+	ProjectRoot         string                `json:"project_root"`
+	ProjectName         string                `json:"project_name"`
+	UserConfigPath      string                `json:"user_config_path"`
+	UserConfigLoaded    bool                  `json:"user_config_loaded"`
+	ProjectConfigPath   string                `json:"project_config_path"`
+	ProjectConfigLoaded bool                  `json:"project_config_loaded"`
+	Profile             string                `json:"profile"`
+	Provider            string                `json:"provider,omitempty"`
+	ProviderEndpoint    string                `json:"provider_endpoint,omitempty"`
+	Model               string                `json:"model,omitempty"`
+	APIKeyEnvironment   string                `json:"api_key_environment,omitempty"`
+	CredentialSet       bool                  `json:"credential_set"`
+	Approval            string                `json:"approval"`
+	Security            string                `json:"security"`
+	MaxTurns            int                   `json:"max_turns"`
+	Agents              []string              `json:"agents"`
+	Skills              []doctorSkill         `json:"skills"`
+	SkillConflicts      []doctorSkillConflict `json:"skill_conflicts"`
+	Shell               doctorShell           `json:"shell"`
+	Ripgrep             doctorTool            `json:"ripgrep"`
+	Terminal            doctorTerminal        `json:"terminal"`
+	Git                 doctorGit             `json:"git"`
+	Capabilities        *doctorCapabilities   `json:"capabilities,omitempty"`
+	ProviderProbe       doctorProviderProbe   `json:"provider_probe"`
+	Checks              []doctorCheck         `json:"checks"`
 }
 
 type doctorOptions struct {
@@ -231,6 +247,31 @@ func (a *App) addProjectChecks(ctx context.Context, loaded config.Loaded, report
 			report.addCheck("agents", "pass", "未发现 AGENTS.md")
 		} else {
 			report.addCheck("agents", "pass", fmt.Sprintf("按从宽到近顺序加载 %d 个 AGENTS.md", len(report.Agents)))
+		}
+	}
+	catalog, err := skills.Discover(skills.Options{
+		UserHomeDir: a.userHomeDir, ProjectRoot: loaded.ProjectRoot,
+	})
+	if err != nil {
+		report.addCheck("skills", "fail", "Skills 加载失败（检查目录边界、文件类型、大小、UTF-8 和 frontmatter）")
+	} else {
+		for _, skill := range catalog.Skills {
+			report.Skills = append(report.Skills, doctorSkill{
+				Name: skill.Name, Description: skill.Description, Source: skill.Source, Scope: string(skill.Scope),
+			})
+		}
+		for _, conflict := range catalog.Conflicts {
+			report.SkillConflicts = append(report.SkillConflicts, doctorSkillConflict{
+				Name: conflict.Name, WinnerSource: conflict.WinnerSource, IgnoredSource: conflict.IgnoredSource,
+			})
+		}
+		switch {
+		case len(report.SkillConflicts) > 0:
+			report.addCheck("skills", "warn", fmt.Sprintf("发现 %d 个 Skill；%d 个同名冲突按项目级优先处理", len(report.Skills), len(report.SkillConflicts)))
+		case len(report.Skills) > 0:
+			report.addCheck("skills", "pass", fmt.Sprintf("发现 %d 个按需加载的本地 Skill", len(report.Skills)))
+		default:
+			report.addCheck("skills", "pass", "未发现本地 Skill")
 		}
 	}
 	report.Git.Repository = gitMarkerExists(loaded.ProjectRoot)
@@ -448,6 +489,26 @@ func (a *App) writeDoctorReport(report doctorReport) error {
 		}
 		for _, path := range report.Agents {
 			if _, err := fmt.Fprintln(a.stdout, "  - "+path); err != nil {
+				return err
+			}
+		}
+	}
+	if len(report.Skills) > 0 {
+		if _, err := fmt.Fprintln(a.stdout, "Skill catalog（全文按需加载）："); err != nil {
+			return err
+		}
+		for _, skill := range report.Skills {
+			if _, err := fmt.Fprintf(a.stdout, "  - %s · %s · %s\n", skill.Name, skill.Scope, skill.Source); err != nil {
+				return err
+			}
+		}
+	}
+	if len(report.SkillConflicts) > 0 {
+		if _, err := fmt.Fprintln(a.stdout, "Skill 同名冲突（项目级优先）："); err != nil {
+			return err
+		}
+		for _, conflict := range report.SkillConflicts {
+			if _, err := fmt.Fprintf(a.stdout, "  - %s：使用 %s，忽略 %s\n", conflict.Name, conflict.WinnerSource, conflict.IgnoredSource); err != nil {
 				return err
 			}
 		}

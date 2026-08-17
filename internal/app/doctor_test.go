@@ -159,6 +159,42 @@ func TestDoctorReportsAgentsChainWithRedactedPaths(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsSkillSourcesAndProjectConflictWinner(t *testing.T) {
+	root := t.TempDir()
+	application, stdout, _ := newTestApp(t, nil)
+	userRoot := filepath.Join(application.userHomeDir, ".mengdie", "skills", "review")
+	projectRoot := filepath.Join(root, ".mengdie", "skills", "review")
+	for path, description := range map[string]string{
+		filepath.Join(userRoot, "SKILL.md"):    "user review",
+		filepath.Join(projectRoot, "SKILL.md"): "project review",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		content := "---\nname: review\ndescription: " + description + "\n---\nbody"
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	code := application.Run(context.Background(), []string{"doctor", "--cwd", root, "--offline", "--json"}, false)
+	if code != ExitOK {
+		t.Fatalf("Run() code=%d output=%s", code, stdout.String())
+	}
+	report := decodeDoctorReport(t, stdout.String())
+	if report.Status != "warning" || len(report.Skills) != 1 || len(report.SkillConflicts) != 1 {
+		t.Fatalf("report=%+v", report)
+	}
+	if report.Skills[0].Scope != "project" || report.Skills[0].Description != "project review" ||
+		report.SkillConflicts[0].WinnerSource != "$PROJECT_ROOT/.mengdie/skills/review/SKILL.md" ||
+		report.SkillConflicts[0].IgnoredSource != "~/.mengdie/skills/review/SKILL.md" {
+		t.Fatalf("skills=%+v conflicts=%+v", report.Skills, report.SkillConflicts)
+	}
+	if strings.Contains(stdout.String(), root) || strings.Contains(stdout.String(), application.userHomeDir) {
+		t.Fatalf("doctor output leaked local paths: %s", stdout.String())
+	}
+}
+
 func TestDoctorRejectsUnboundedProbeTimeout(t *testing.T) {
 	application, _, _ := newTestApp(t, nil)
 	for _, timeout := range []string{"500ms", "2m"} {
