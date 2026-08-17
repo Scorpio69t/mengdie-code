@@ -152,6 +152,7 @@ func (editFileTool) Execute(ctx context.Context, call *PreparedCall, cap Capabil
 		receipt, journalErr = env.MutationJournal.Prepare(ctx, MutationIntent{
 			ToolCallID: call.ID, ToolName: call.ToolName, CallDigest: call.Digest,
 			Path: resolved.Path, PreExists: true, PreSHA256: preconditionsHash(call.Preconditions), PreMode: mode,
+			PreContent: append([]byte(nil), content...),
 			PostExists: true, PostSHA256: bytesSHA256(updated), PostMode: mode,
 		})
 		if journalErr == nil {

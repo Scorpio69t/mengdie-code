@@ -99,6 +99,8 @@ mengdie memory forget <id>
 - [x] 第二阶段 Slice 05A：受控 Artifact Store 与大上下文离线恢复（[实施报告](./docs/development/phase-2-slice-05a/IMPLEMENTATION_REPORT.md)）
 - [x] 第二阶段 Slice 05B：可恢复 token 预算与可验证滚动摘要（[实施报告](./docs/development/phase-2-slice-05b/IMPLEMENTATION_REPORT.md)）
 - [x] 第二阶段 Slice 05C：滚动摘要来源受控按需回填（[实施报告](./docs/development/phase-2-slice-05c/IMPLEMENTATION_REPORT.md)）
+- [x] 第二阶段 Slice 06A：Patch Journal 写入事实与崩溃判定（[实施报告](./docs/development/phase-2-slice-06a/IMPLEMENTATION_REPORT.md)）
+- [x] 第二阶段 Slice 06B：回滚材料、显式审批与安全 rewind（[实施报告](./docs/development/phase-2-slice-06b/IMPLEMENTATION_REPORT.md)）
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal（[第二阶段详细设计](./docs/design/phase-2/DETAILED_DESIGN.md)）
@@ -147,17 +149,19 @@ go run ./cmd/mengdie session list
 go run ./cmd/mengdie session show --json <session-id>
 go run ./cmd/mengdie session tui <session-id>
 go run ./cmd/mengdie session resume --message "继续检查" <session-id>
+go run ./cmd/mengdie rewind <session-id>
+go run ./cmd/mengdie rewind --journal-id <journal-id> <session-id>
 go run ./cmd/mengdie session delete --yes <session-id>
 go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 ```
 
-交互入口每次启动只接收一个不超过 64 KiB 的任务。裸命令默认打开全屏 TUI，显示 Logo、项目、模型与安全等级，可提交多行任务、查看已提交事实时间线，并对当前精确工具调用执行允许、拒绝或编辑后重备；审批选择本身不会签发 Capability，授权仍由 Policy Authorizer 完成。`Ctrl+C` 或运行中的 `q` 会先取消 Agent 并等待 Runtime 写入确定终态。`run.started`、完成消息、警告和 Run 终态等可重建边界已持久化到本地 SQLite，流式 `message.delta` 仍只存在内存中。事实先提交再输出，因此输出器失败不会抹掉已提交事件；存储失败则不会把事件伪装成已发生。已提交公开事实随后进入同进程有界通知总线；慢消费者会收到缺口标记，并通过 `afterSeq` 从 EventStore 补读，TUI 不会成为第二事实源。`session list/show/resume/delete` 通过 Session Service 工作，Snapshot 只作可丢弃缓存；`delete` 必须显式提供 `--yes`。`session resume` 在同一 Session 创建新 Run，恢复完整 user/assistant/只读工具边界和 Todo；写入、执行、网络工具只恢复脱敏摘要。中断在待审批时，只能在交互终端按当前项目状态重新 Prepare、查看新预览并重新确认，旧 Capability 永不复用；执行中的 read/state 也只能由用户显式确认后重试。`edit_file` 与 `write_file` 现在会在任何项目文件副作用之前提交 Patch Journal 写入意图，原子替换后再校验写后哈希；若中断，resume 只按当前文件严格落入“未写入、已写入、冲突”三态，未写入需重新审批，已写入只补认事实而不重复执行，冲突保持阻断。execute/network 状态未知、多个未完成调用、旧版无上下文日志或私有/公开事实不一致时仍一律中文拒绝。`session tui` 继续提供历史会话的只读查看；安全 `rewind`、同一 TUI 内连续提交多轮任务与 REPL 尚未实现，管道或重定向场景必须改用 `mengdie exec`。
+交互入口每次启动只接收一个不超过 64 KiB 的任务。裸命令默认打开全屏 TUI，显示 Logo、项目、模型与安全等级，可提交多行任务、查看已提交事实时间线，并对当前精确工具调用执行允许、拒绝或编辑后重备；审批选择本身不会签发 Capability，授权仍由 Policy Authorizer 完成。`Ctrl+C` 或运行中的 `q` 会先取消 Agent 并等待 Runtime 写入确定终态。`run.started`、完成消息、警告和 Run 终态等可重建边界已持久化到本地 SQLite，流式 `message.delta` 仍只存在内存中。事实先提交再输出，因此输出器失败不会抹掉已提交事件；存储失败则不会把事件伪装成已发生。已提交公开事实随后进入同进程有界通知总线；慢消费者会收到缺口标记，并通过 `afterSeq` 从 EventStore 补读，TUI 不会成为第二事实源。`session list/show/resume/delete` 通过 Session Service 工作，Snapshot 只作可丢弃缓存；`delete` 必须显式提供 `--yes`。`session resume` 在同一 Session 创建新 Run，恢复完整 user/assistant/只读工具边界和 Todo；写入、执行、网络工具只恢复脱敏摘要。中断在待审批时，只能在交互终端按当前项目状态重新 Prepare、查看新预览并重新确认，旧 Capability 永不复用；执行中的 read/state 也只能由用户显式确认后重试。`edit_file` 与 `write_file` 会在任何项目文件副作用之前提交 Patch Journal 写入意图和私有回滚材料，原子替换后再校验写后哈希与权限位；若中断，resume 只按当前文件严格落入“未写入、已写入、冲突”三态。交互命令 `mengdie rewind <session-id>` 默认选择最近一个可回滚 Journal，也可用 `--journal-id` 精确指定；它重新校验项目、路径、写后内容和权限位，展示单文件反向 diff，强制显式审批并消费新的单次 Capability。写后又被用户修改或 chmod 时一律拒绝，不覆盖后续工作；进程中断后只按严格写前/写后/冲突三态补记 Command 与 Journal，绝不重放文件副作用。execute/network 状态未知、多个未完成调用、旧版无上下文日志或私有/公开事实不一致时仍一律中文拒绝。`session tui` 继续提供历史会话的只读查看；同一 TUI 内连续提交多轮任务与 REPL 尚未实现，管道或重定向场景必须改用 `mengdie exec`。
 
 默认数据目录为 macOS 的 `~/Library/Application Support/MengDie Code/`、Windows 的 `%LOCALAPPDATA%\MengDie Code\`，Linux 使用 `$XDG_STATE_HOME/mengdie/`（未设置时为 `~/.local/state/mengdie/`）。可通过 `MENGDIE_DATA_DIR` 覆盖，但仓库内、网络共享、OneDrive/iCloud 同步目录以及 symlink/reparse point 会被拒绝。
 
 `exec --json` 输出完整 JSON Lines 运行事件。`--command-id` 可为自动化提供幂等键：同 ID、同任务只回放已经提交的公开事实，不再调用 Provider 或工具；同 ID、不同任务直接冲突，运行中或中断状态不会由 `exec` 自动续跑，需要显式通过安全门禁调用 `session resume`。恢复命令也支持独立的 `--command-id`，重复 ID 只回放该恢复 Run 的公开事实。无头模式默认拒绝 edit/write/shell；`--allow-edit` 只放行项目内修改，`--allow-command go,test` 只放行无控制操作符的 `go test` 命令前缀，`--allow-env NAME` 才允许 shell 继承对应敏感环境变量。
 
-公开事件、`session` 输出和日志不包含完整用户任务、密钥或隐藏推理。为进行 Command 幂等与上下文恢复，完整任务和模型可见消息会作为私有事实保存；超过 64 KiB 的单条上下文改存到数据目录下受控的 `artifacts/`，SQLite 只登记相对路径、大小和 SHA-256，恢复时必须重新校验。默认配额为每个 Session 128 MiB、全局 512 MiB，超限拒绝新 Artifact，不静默删除仍在使用的数据。模型请求超过 token 预算时，Runtime 会保留首个原始任务、当前任务、Todo、项目/安全指令和最近完整消息，只把中间闭合区间交给同一 Provider 的无工具请求生成滚动摘要；摘要单独保存来源 ordinal、生成模型、协议版本与 SHA-256，原始上下文不被改写。恢复会先校验完整原始事实，再复用有效摘要和原始尾部；摘要损坏时 fail-closed。模型若需要摘要中的精确原文，只能调用 `read_context_source` 按相对偏移有界回查当前 Session 的最新有效摘要区间；工具不接受 Session ID 或路径，Prepare/Execute 两次核对摘要哈希与区间，大消息按字节续读，摘要轮换、原始消息或 Artifact 损坏都会拒绝。回填正文仅进入私有模型上下文，TUI/JSONL 只看到工具名、区间等元数据。副作用工具只允许恢复安全摘要进入压缩与回填来源，避免派生上下文越过持久化边界。API Key、允许继承的环境变量值和可重放审批授权不会写入。私有事实当前仅依赖目录/文件权限，尚未静态加密；不要把 `MENGDIE_DATA_DIR` 指向共享或同步目录，并使用 `session delete --yes` 删除不再需要的本地会话及所属 Artifact。
+公开事件、`session` 输出和日志不包含完整用户任务、密钥或隐藏推理。为进行 Command 幂等与上下文恢复，完整任务和模型可见消息会作为私有事实保存；超过 64 KiB 的单条上下文或回滚前镜像改存到数据目录下受控的 `artifacts/`，SQLite 只登记相对路径、大小和 SHA-256，恢复时必须重新校验；较小回滚前镜像作为私有 BLOB 保存，二者都不会进入 EventBus、TUI 或 JSONL。默认配额为每个 Session 128 MiB、全局 512 MiB，超限拒绝新 Artifact，不静默删除仍在使用的数据。模型请求超过 token 预算时，Runtime 会保留首个原始任务、当前任务、Todo、项目/安全指令和最近完整消息，只把中间闭合区间交给同一 Provider 的无工具请求生成滚动摘要；摘要单独保存来源 ordinal、生成模型、协议版本与 SHA-256，原始上下文不被改写。恢复会先校验完整原始事实，再复用有效摘要和原始尾部；摘要损坏时 fail-closed。模型若需要摘要中的精确原文，只能调用 `read_context_source` 按相对偏移有界回查当前 Session 的最新有效摘要区间；工具不接受 Session ID 或路径，Prepare/Execute 两次核对摘要哈希与区间，大消息按字节续读，摘要轮换、原始消息或 Artifact 损坏都会拒绝。回填正文仅进入私有模型上下文，TUI/JSONL 只看到工具名、区间等元数据。副作用工具只允许恢复安全摘要进入压缩与回填来源，避免派生上下文越过持久化边界。API Key、允许继承的环境变量值和可重放审批授权不会写入。私有事实当前仅依赖目录/文件权限，尚未静态加密；不要把 `MENGDIE_DATA_DIR` 指向共享或同步目录，并使用 `session delete --yes` 删除不再需要的本地会话及所属 Artifact。
 
 需要 Go 1.26 或更高版本。
 

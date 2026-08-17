@@ -376,10 +376,14 @@ func seedInterruptedWriteSession(t *testing.T, store *SQLiteStore, root, path st
 	if err != nil {
 		t.Fatal(err)
 	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := journal.Prepare(context.Background(), tools.MutationIntent{
 		ToolCallID: call.ID, ToolName: call.Name, CallDigest: tools.ComputeDigest(call.Name, canonical),
-		Path: path, PreExists: true, PreSHA256: bytesDigest("before\n"), PreMode: 0o600,
-		PostExists: true, PostSHA256: bytesDigest("after\n"), PostMode: 0o600,
+		Path: path, PreExists: true, PreSHA256: bytesDigest("before\n"), PreMode: info.Mode().Perm(), PreContent: []byte("before\n"),
+		PostExists: true, PostSHA256: bytesDigest("after\n"), PostMode: info.Mode().Perm(),
 	}); err != nil {
 		t.Fatal(err)
 	}

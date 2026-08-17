@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"time"
@@ -132,6 +133,9 @@ const (
 	// PreconditionFileSHA256 requires the file at Path to still hash to
 	// SHA256 immediately before Execute.
 	PreconditionFileSHA256 PreconditionKind = "file_sha256"
+	// PreconditionFileMode requires the file permission bits to remain exactly
+	// as approved. rewind uses it so a user's chmod is treated as a conflict.
+	PreconditionFileMode PreconditionKind = "file_mode"
 	// PreconditionPathAbsent requires Path not to exist immediately before
 	// Execute. write_file uses it so an approved create can never overwrite a
 	// file that appeared after approval.
@@ -145,6 +149,7 @@ type Precondition struct {
 	Kind   PreconditionKind
 	Path   string
 	SHA256 string
+	Mode   fs.FileMode
 }
 
 // PreparedCall is the canonical, approvable form of a tool call. Approval
@@ -217,11 +222,15 @@ func (c *PreparedCall) Validate() error {
 	for _, precondition := range c.Preconditions {
 		switch precondition.Kind {
 		case PreconditionFileSHA256:
-			if precondition.Path == "" || precondition.SHA256 == "" {
+			if precondition.Path == "" || precondition.SHA256 == "" || precondition.Mode != 0 {
 				return errors.New("prepared call: file_sha256 precondition requires path and hash")
 			}
+		case PreconditionFileMode:
+			if precondition.Path == "" || precondition.SHA256 != "" || precondition.Mode != precondition.Mode.Perm() {
+				return errors.New("prepared call: file_mode precondition requires path and permission bits")
+			}
 		case PreconditionPathAbsent:
-			if precondition.Path == "" || precondition.SHA256 != "" {
+			if precondition.Path == "" || precondition.SHA256 != "" || precondition.Mode != 0 {
 				return errors.New("prepared call: path_absent precondition requires only path")
 			}
 		default:

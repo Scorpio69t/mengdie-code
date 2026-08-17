@@ -60,6 +60,17 @@ func CheckPreconditions(preconditions []Precondition) error {
 			if actual != precondition.SHA256 {
 				return &PreconditionError{Path: precondition.Path, Reason: "content changed after approval"}
 			}
+		case PreconditionFileMode:
+			info, err := os.Stat(precondition.Path)
+			if errors.Is(err, os.ErrNotExist) {
+				return &PreconditionError{Path: precondition.Path, Reason: "file no longer exists"}
+			}
+			if err != nil {
+				return &PreconditionError{Path: precondition.Path, Reason: err.Error()}
+			}
+			if !info.Mode().IsRegular() || info.Mode().Perm() != precondition.Mode.Perm() {
+				return &PreconditionError{Path: precondition.Path, Reason: "file mode changed after approval"}
+			}
 		case PreconditionPathAbsent:
 			_, err := os.Lstat(precondition.Path)
 			if errors.Is(err, os.ErrNotExist) {
@@ -90,6 +101,14 @@ func CheckFilePreconditions(preconditions []Precondition, file *os.File) error {
 			}
 			if hex.EncodeToString(sum.Sum(nil)) != precondition.SHA256 {
 				return &PreconditionError{Path: precondition.Path, Reason: "content changed after approval"}
+			}
+		case PreconditionFileMode:
+			info, err := file.Stat()
+			if err != nil {
+				return &PreconditionError{Path: precondition.Path, Reason: err.Error()}
+			}
+			if !info.Mode().IsRegular() || info.Mode().Perm() != precondition.Mode.Perm() {
+				return &PreconditionError{Path: precondition.Path, Reason: "file mode changed after approval"}
 			}
 		default:
 			return fmt.Errorf("tools: unknown precondition kind %q", precondition.Kind)

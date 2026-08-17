@@ -208,6 +208,42 @@ func atomicWriteFile(rootDir, path string, content []byte, mode fs.FileMode, rep
 	return nil
 }
 
+func atomicRemoveFile(rootDir, path string, preconditions []Precondition, beforeMutation func() error) (err error) {
+	root, err := os.OpenRoot(rootDir)
+	if err != nil {
+		return fmt.Errorf("open project root: %w", err)
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	targetPath, err := relativeRootPath(rootDir, path)
+	if err != nil {
+		return err
+	}
+	if err := checkRootedPreconditions(rootDir, root, preconditions); err != nil {
+		return err
+	}
+	if beforeMutation != nil {
+		if err := beforeMutation(); err != nil {
+			return fmt.Errorf("persist rewind intent: %w", err)
+		}
+	}
+	// Persisting the rewind intent is a scheduling point. Re-check both the
+	// approved hash and mode through the root-anchored handle before deletion.
+	if err := checkRootedPreconditions(rootDir, root, preconditions); err != nil {
+		return err
+	}
+	info, err := root.Stat(targetPath)
+	if err != nil {
+		return &PreconditionError{Path: path, Reason: err.Error()}
+	}
+	if !info.Mode().IsRegular() {
+		return &PreconditionError{Path: path, Reason: "target is no longer a regular file"}
+	}
+	if err := root.Remove(targetPath); err != nil {
+		return fmt.Errorf("remove target: %w", err)
+	}
+	return nil
+}
+
 func relativeRootPath(rootDir, path string) (string, error) {
 	relative, err := filepath.Rel(rootDir, path)
 	if err != nil {
@@ -253,6 +289,14 @@ func checkRootedPreconditions(rootDir string, root *os.Root, preconditions []Pre
 			}
 			if hex.EncodeToString(sum.Sum(nil)) != precondition.SHA256 {
 				return &PreconditionError{Path: precondition.Path, Reason: "content changed after approval"}
+			}
+		case PreconditionFileMode:
+			info, err := root.Stat(relative)
+			if err != nil {
+				return &PreconditionError{Path: precondition.Path, Reason: err.Error()}
+			}
+			if !info.Mode().IsRegular() || info.Mode().Perm() != precondition.Mode.Perm() {
+				return &PreconditionError{Path: precondition.Path, Reason: "file mode changed after approval"}
 			}
 		case PreconditionPathAbsent:
 			_, err := root.Lstat(relative)

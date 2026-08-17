@@ -17,6 +17,7 @@ const MaxCommandPayloadBytes = 1 << 20
 const (
 	CommandKindExec   = "exec"
 	CommandKindResume = "session.resume"
+	CommandKindRewind = "session.rewind"
 )
 
 var (
@@ -114,6 +115,24 @@ func ResumeCommandPayload(sessionID, message string) (json.RawMessage, error) {
 	}{SessionID: sessionID, Message: message})
 	if err != nil {
 		return nil, fmt.Errorf("encode resume command: %w", err)
+	}
+	return payload, nil
+}
+
+// RewindCommandPayload binds one idempotent local rewind to an exact Session
+// and Patch Journal without exposing project paths or rollback material.
+func RewindCommandPayload(sessionID, journalID string) (json.RawMessage, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	journalID = strings.TrimSpace(journalID)
+	if sessionID == "" || journalID == "" {
+		return nil, errors.New("rewind session id and journal id are required")
+	}
+	payload, err := json.Marshal(struct {
+		SessionID string `json:"session_id"`
+		JournalID string `json:"journal_id"`
+	}{SessionID: sessionID, JournalID: journalID})
+	if err != nil {
+		return nil, fmt.Errorf("encode rewind command: %w", err)
 	}
 	return payload, nil
 }

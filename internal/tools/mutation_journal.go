@@ -18,8 +18,10 @@ var (
 	ErrMutationConflict = errors.New("mutation journal conflict")
 )
 
-// MutationIntent is the bounded fact a write tool knows immediately before
-// it mutates one project file. File contents remain outside this protocol.
+// MutationIntent is the bounded private fact a write tool knows immediately
+// before it mutates one project file. PreContent is supplied only for an
+// existing text file so the Journal can create integrity-checked rewind
+// material; it must never be projected to public events or approvals.
 type MutationIntent struct {
 	ToolCallID string
 	ToolName   string
@@ -28,6 +30,7 @@ type MutationIntent struct {
 	PreExists  bool
 	PreSHA256  string
 	PreMode    fs.FileMode
+	PreContent []byte
 	PostExists bool
 	PostSHA256 string
 	PostMode   fs.FileMode
