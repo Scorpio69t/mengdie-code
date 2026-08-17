@@ -235,7 +235,13 @@ func patchTestIntent(t *testing.T, path string, preExists bool, before, after st
 		PostSHA256: bytesDigest(after), PostMode: 0o600,
 	}
 	if preExists {
-		intent.PreSHA256, intent.PreMode = bytesDigest(before), 0o600
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		intent.PreSHA256, intent.PreMode = bytesDigest(before), info.Mode().Perm()
+		intent.PostMode = info.Mode().Perm()
+		intent.PreContent = []byte(before)
 	}
 	return intent
 }

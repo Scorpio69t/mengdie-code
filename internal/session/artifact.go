@@ -163,10 +163,18 @@ func (s *SQLiteStore) stageArtifactFile(id string, content []byte) (relative str
 		return "", nil, fmt.Errorf("close artifact: %w", err)
 	}
 	closed = true
-	if err := os.Rename(temporaryPath, target); err != nil {
+	// A hard link gives us an atomic no-clobber commit on every supported
+	// platform. Rename would replace an existing target on Unix if two
+	// writers raced after the Lstat check.
+	if err := os.Link(temporaryPath, target); err != nil {
 		return "", nil, fmt.Errorf("commit artifact file: %w", err)
 	}
 	committed = true
+	if err := os.Remove(temporaryPath); err != nil {
+		_ = os.Remove(target)
+		committed = false
+		return "", nil, fmt.Errorf("remove artifact staging link: %w", err)
+	}
 	if runtime.GOOS != "windows" {
 		if err := os.Chmod(target, 0o600); err != nil {
 			_ = os.Remove(target)

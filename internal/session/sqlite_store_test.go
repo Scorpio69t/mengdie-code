@@ -35,7 +35,7 @@ func TestOpenSQLiteAppliesSchemaAndConnectionSettings(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 6 {
+	if migrationCount != 7 {
 		t.Fatalf("migration count=%d", migrationCount)
 	}
 	if _, err := os.Stat(store.Path()); err != nil {
@@ -240,7 +240,7 @@ func TestArtifactMigrationUpgradesExistingContextLedger(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('context_messages') WHERE name='artifact_id'`).Scan(&artifactColumnCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 6 || artifactColumnCount != 1 {
+	if migrationCount != 7 || artifactColumnCount != 1 {
 		t.Fatalf("migration count=%d artifact columns=%d", migrationCount, artifactColumnCount)
 	}
 }

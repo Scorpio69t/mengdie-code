@@ -22,6 +22,8 @@ import (
 type PatchStatus string
 
 const (
+	inlinePatchRewindBytes = 64 << 10
+
 	PatchPrepared PatchStatus = "prepared"
 	PatchApplied  PatchStatus = "applied"
 	PatchVerified PatchStatus = "verified"
@@ -58,21 +60,28 @@ type PatchJournalRecorder struct {
 }
 
 type patchJournalEntry struct {
-	JournalID       string
-	RunID           string
-	ToolCallID      string
-	ToolName        string
-	CallDigest      string
-	Status          PatchStatus
-	ProjectRoot     string
-	RelativePath    string
-	PathFingerprint string
-	PreExists       bool
-	PreSHA256       string
-	PreMode         uint32
-	PostExists      bool
-	PostSHA256      string
-	PostMode        uint32
+	JournalID        string
+	SessionID        string
+	RunID            string
+	ToolCallID       string
+	ToolName         string
+	CallDigest       string
+	Status           PatchStatus
+	ProjectRoot      string
+	RelativePath     string
+	PathFingerprint  string
+	PreExists        bool
+	PreSHA256        string
+	PreMode          uint32
+	PostExists       bool
+	PostSHA256       string
+	PostMode         uint32
+	ReverseInline    []byte
+	ReverseInlineSet bool
+	ReverseArtifact  string
+	ReverseSize      int64
+	ReverseSHA256    string
+	RewindCommandID  string
 }
 
 type patchObservation struct {
@@ -120,12 +129,48 @@ func (r *PatchJournalRecorder) Prepare(ctx context.Context, intent tools.Mutatio
 	}
 	journalID := patchIdentity("jnl_", r.sessionID, r.runID, intent.ToolCallID, intent.CallDigest)
 	entryID := patchIdentity("pte_", journalID, relative)
+	var reverseInline []byte
+	var reverseArtifact any
+	var reverseArtifactPath string
+	var reverseSize any
+	var reverseSHA any
+	var artifactCleanup func()
+	if intent.PreExists {
+		reverseSize, reverseSHA = int64(len(intent.PreContent)), intent.PreSHA256
+		if len(intent.PreContent) <= inlinePatchRewindBytes {
+			reverseInline = append([]byte{}, intent.PreContent...)
+		} else {
+			artifactID := patchIdentity("art_", journalID, "reverse", intent.PreSHA256)
+			relativePath, cleanup, stageErr := r.store.stageArtifactFile(artifactID, intent.PreContent)
+			if stageErr != nil {
+				return tools.MutationReceipt{}, fmt.Errorf("stage patch rewind artifact: %w", stageErr)
+			}
+			artifactCleanup = cleanup
+			reverseArtifact = artifactID
+			reverseArtifactPath = relativePath
+			defer func() {
+				if resultErr != nil && artifactCleanup != nil {
+					artifactCleanup()
+				}
+			}()
+		}
+	}
 	stamp := formatTime(r.store.now().UTC())
 	tx, err := r.store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return tools.MutationReceipt{}, classifySQLiteError("begin patch journal prepare", err)
 	}
 	defer rollbackTransaction(tx, &resultErr, "rollback patch journal prepare")
+	if reverseArtifact != nil {
+		artifactID := reverseArtifact.(string)
+		if err := r.store.insertArtifactTx(ctx, tx, artifactMetadata{
+			ID: artifactID, SessionID: r.sessionID, RunID: r.runID,
+			Kind: "patch-reverse", MIME: "application/octet-stream", Sensitivity: VisibilityPrivate,
+			RelativePath: reverseArtifactPath, SHA256: artifactChecksum(intent.PreContent), SizeBytes: int64(len(intent.PreContent)),
+		}); err != nil {
+			return tools.MutationReceipt{}, err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO patch_journals(
     id, session_id, run_id, command_id, tool_call_id, tool_name, call_digest,
@@ -147,10 +192,12 @@ INSERT INTO patch_journals(
 INSERT INTO patch_entries(
     id, journal_id, ordinal, relative_path, path_fingerprint,
     pre_existed, pre_sha256, pre_mode, post_existed, post_sha256, post_mode,
+    reverse_artifact_id, reverse_inline, reverse_size_bytes, reverse_sha256,
     status, conflict_reason
-) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', NULL)`,
+) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', NULL)`,
 		entryID, journalID, relative, fingerprint, boolInt(intent.PreExists), preSHA, preMode,
 		boolInt(intent.PostExists), postSHA, postMode,
+		reverseArtifact, nullableBytes(reverseInline, intent.PreExists), reverseSize, reverseSHA,
 	); err != nil {
 		return tools.MutationReceipt{}, classifySQLiteError("insert patch entry", err)
 	}
@@ -170,7 +217,7 @@ func (r *PatchJournalRecorder) VerifyPost(ctx context.Context, receipt tools.Mut
 		return err
 	}
 	observation, reason := observePatchPath(entry)
-	if reason == "" && matchesPatchState(observation, entry.PostExists, entry.PostSHA256) {
+	if reason == "" && matchesPatchStateAndMode(observation, entry.PostExists, entry.PostSHA256, entry.PostMode) {
 		return r.store.transitionPatchJournal(ctx, receipt.JournalID, PatchVerified, "")
 	}
 	if reason == "" {
@@ -241,9 +288,9 @@ ORDER BY prepared_at, id`, sessionID)
 		status := PatchConflict
 		switch {
 		case reason != "":
-		case matchesPatchState(observation, entry.PostExists, entry.PostSHA256):
+		case matchesPatchStateAndMode(observation, entry.PostExists, entry.PostSHA256, entry.PostMode):
 			status = PatchVerified
-		case matchesPatchState(observation, entry.PreExists, entry.PreSHA256):
+		case matchesPatchStateAndMode(observation, entry.PreExists, entry.PreSHA256, entry.PreMode):
 			status = PatchAborted
 		default:
 			reason = "当前文件既不匹配 Journal 写前哈希，也不匹配写后哈希"
@@ -288,18 +335,25 @@ func (s *SQLiteStore) loadPatchJournal(ctx context.Context, journalID string) (p
 	var preExists, postExists int
 	var preSHA, postSHA sql.NullString
 	var preMode, postMode sql.NullInt64
+	var reverseArtifact, reverseSHA, rewindCommand sql.NullString
+	var reverseSize sql.NullInt64
+	var reverseInline []byte
+	var reverseInlineSet int
 	err := s.db.QueryRowContext(ctx, `
-SELECT j.id, j.run_id, j.tool_call_id, j.tool_name, j.call_digest, j.status, e.status,
+SELECT j.id, j.session_id, j.run_id, j.tool_call_id, j.tool_name, j.call_digest, j.status, e.status,
        se.project_root, e.relative_path, e.path_fingerprint,
        e.pre_existed, e.pre_sha256, e.pre_mode,
-       e.post_existed, e.post_sha256, e.post_mode
+       e.post_existed, e.post_sha256, e.post_mode,
+       e.reverse_inline, e.reverse_inline IS NOT NULL, e.reverse_artifact_id, e.reverse_size_bytes, e.reverse_sha256,
+       j.rewind_command_id
 FROM patch_journals j
 JOIN sessions se ON se.id=j.session_id
 JOIN patch_entries e ON e.journal_id=j.id AND e.ordinal=1
 WHERE j.id=?`, journalID).Scan(
-		&item.JournalID, &item.RunID, &item.ToolCallID, &item.ToolName, &item.CallDigest, &item.Status, &entryStatus,
+		&item.JournalID, &item.SessionID, &item.RunID, &item.ToolCallID, &item.ToolName, &item.CallDigest, &item.Status, &entryStatus,
 		&item.ProjectRoot, &item.RelativePath, &item.PathFingerprint,
 		&preExists, &preSHA, &preMode, &postExists, &postSHA, &postMode,
+		&reverseInline, &reverseInlineSet, &reverseArtifact, &reverseSize, &reverseSHA, &rewindCommand,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return patchJournalEntry{}, ErrPatchJournalNotFound
@@ -319,6 +373,20 @@ WHERE j.id=?`, journalID).Scan(
 	}
 	if postMode.Valid {
 		item.PostMode = uint32(postMode.Int64)
+	}
+	item.ReverseInline = append([]byte(nil), reverseInline...)
+	item.ReverseInlineSet = reverseInlineSet == 1
+	if reverseArtifact.Valid {
+		item.ReverseArtifact = reverseArtifact.String
+	}
+	if reverseSize.Valid {
+		item.ReverseSize = reverseSize.Int64
+	}
+	if reverseSHA.Valid {
+		item.ReverseSHA256 = reverseSHA.String
+	}
+	if rewindCommand.Valid {
+		item.RewindCommandID = rewindCommand.String
 	}
 	if entryStatus != item.Status || !validHexSHA256(item.PathFingerprint) ||
 		item.PreExists != (item.PreSHA256 != "") || item.PostExists != (item.PostSHA256 != "") ||
@@ -423,6 +491,17 @@ func validateMutationIntent(projectRoot string, intent tools.MutationIntent) (st
 	if intent.PreExists && !validHexSHA256(intent.PreSHA256) {
 		return "", "", errors.New("patch journal pre hash is invalid")
 	}
+	if intent.PreExists {
+		digest := sha256.Sum256(intent.PreContent)
+		if hex.EncodeToString(digest[:]) != intent.PreSHA256 {
+			return "", "", errors.New("patch journal pre content does not match pre hash")
+		}
+		if len(intent.PreContent) > maxArtifactBytes {
+			return "", "", fmt.Errorf("patch journal pre content exceeds %d bytes", maxArtifactBytes)
+		}
+	} else if len(intent.PreContent) != 0 {
+		return "", "", errors.New("patch journal absent pre-state cannot carry content")
+	}
 	if intent.PostExists && !validHexSHA256(intent.PostSHA256) {
 		return "", "", errors.New("patch journal post hash is invalid")
 	}
@@ -519,6 +598,13 @@ func nullableReason(reason string) any {
 		return nil
 	}
 	return reason
+}
+
+func nullableBytes(content []byte, present bool) any {
+	if !present {
+		return nil
+	}
+	return content
 }
 
 var _ tools.MutationJournal = (*PatchJournalRecorder)(nil)

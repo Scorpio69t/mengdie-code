@@ -162,13 +162,19 @@ func (writeFileTool) Execute(ctx context.Context, call *PreparedCall, cap Capabi
 	prepareJournal := func() error {
 		preExists := args.Overwrite
 		var preMode os.FileMode
+		var preContent []byte
+		var journalErr error
 		if preExists {
 			preMode = mode
+			preContent, _, journalErr = readEditableFile(resolved.Path, "write_file")
+			if journalErr != nil {
+				return journalErr
+			}
 		}
-		var journalErr error
 		receipt, journalErr = env.MutationJournal.Prepare(ctx, MutationIntent{
 			ToolCallID: call.ID, ToolName: call.ToolName, CallDigest: call.Digest,
 			Path: resolved.Path, PreExists: preExists, PreSHA256: preconditionsHash(call.Preconditions), PreMode: preMode,
+			PreContent: preContent,
 			PostExists: true, PostSHA256: bytesSHA256(content), PostMode: mode,
 		})
 		if journalErr == nil {
