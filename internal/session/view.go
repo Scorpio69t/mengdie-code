@@ -7,9 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/Scorpio69t/mengdie-code/internal/cost"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 )
 
@@ -92,9 +95,18 @@ type ContextCompactionView struct {
 }
 
 type UsageView struct {
-	InputTokens     int64 `json:"input_tokens"`
-	OutputTokens    int64 `json:"output_tokens"`
-	CacheReadTokens int64 `json:"cache_read_tokens"`
+	RequestCount          int64    `json:"request_count"`
+	UsageReportedRequests int64    `json:"usage_reported_requests"`
+	InputTokens           int64    `json:"input_tokens"`
+	OutputTokens          int64    `json:"output_tokens"`
+	TotalTokens           int64    `json:"total_tokens"`
+	CacheReadTokens       int64    `json:"cache_read_tokens"`
+	EstimatedCostPicoUSD  int64    `json:"estimated_cost_pico_usd"`
+	EstimatedCostRequests int64    `json:"estimated_cost_requests"`
+	UnknownCostRequests   int64    `json:"unknown_cost_requests"`
+	Currency              string   `json:"currency,omitempty"`
+	PriceTableVersions    []string `json:"price_table_versions"`
+	CostUnknownReasons    []string `json:"cost_unknown_reasons"`
 }
 
 // Reduce is a pure fold over durable records. Unknown future kinds advance
@@ -218,9 +230,9 @@ func reduceRecord(view *SessionView, record Record) error {
 		if err != nil {
 			return err
 		}
-		view.Usage.InputTokens += payload.InputTokens
-		view.Usage.OutputTokens += payload.OutputTokens
-		view.Usage.CacheReadTokens += payload.CacheReadTokens
+		if err := reduceUsage(&view.Usage, payload); err != nil {
+			return err
+		}
 	case events.KindWarning:
 		payload, err := events.DecodePayload[events.Warning](event)
 		if err != nil {
@@ -255,6 +267,98 @@ func reduceRecord(view *SessionView, record Record) error {
 		return nil
 	}
 	return nil
+}
+
+func reduceUsage(view *UsageView, payload events.UsageUpdated) error {
+	if payload.InputTokens < 0 || payload.OutputTokens < 0 || payload.TotalTokens < 0 || payload.CacheReadTokens < 0 ||
+		payload.CacheReadTokens > payload.InputTokens || payload.EstimatedCostPicoUSD < 0 {
+		return errors.New("invalid usage accounting values")
+	}
+	// Events written before P2-08 contain only token fields. Preserve their
+	// deterministic token projection without inventing a request or cost fact.
+	legacy := payload.RequestCount == 0 && payload.Purpose == "" && payload.CostStatus == ""
+	if !legacy {
+		if payload.RequestCount != 1 || (payload.Purpose != "agent" && payload.Purpose != "context_summary") {
+			return errors.New("invalid usage request metadata")
+		}
+		if strings.TrimSpace(payload.Model) == "" ||
+			(payload.ProviderOrigin != "" && cost.Origin(payload.ProviderOrigin) != payload.ProviderOrigin) {
+			return errors.New("invalid usage provider identity")
+		}
+		switch payload.CostStatus {
+		case cost.StatusEstimated:
+			if !payload.UsageReported || payload.ProviderOrigin == "" || payload.Currency != cost.CurrencyUSD || payload.PriceTableVersion == "" ||
+				payload.PricingSource == "" || payload.CostUnknownReason != "" {
+				return errors.New("invalid estimated cost metadata")
+			}
+		case cost.StatusUnknown:
+			if payload.EstimatedCostPicoUSD != 0 || payload.Currency != "" || payload.PricingSource != "" || payload.CostUnknownReason == "" {
+				return errors.New("invalid unknown cost metadata")
+			}
+		default:
+			return errors.New("invalid cost status")
+		}
+		if !payload.UsageReported && (payload.InputTokens != 0 || payload.OutputTokens != 0 || payload.TotalTokens != 0 || payload.CacheReadTokens != 0) {
+			return errors.New("unreported usage cannot contain token values")
+		}
+		var ok bool
+		view.RequestCount, ok = addUsageValue(view.RequestCount, payload.RequestCount)
+		if !ok {
+			return errors.New("usage request total overflow")
+		}
+		if payload.UsageReported {
+			view.UsageReportedRequests, ok = addUsageValue(view.UsageReportedRequests, payload.RequestCount)
+			if !ok {
+				return errors.New("reported usage request total overflow")
+			}
+		}
+		if payload.CostStatus == cost.StatusEstimated {
+			view.EstimatedCostPicoUSD, ok = addUsageValue(view.EstimatedCostPicoUSD, payload.EstimatedCostPicoUSD)
+			if !ok {
+				return errors.New("estimated cost total overflow")
+			}
+			view.EstimatedCostRequests, _ = addUsageValue(view.EstimatedCostRequests, payload.RequestCount)
+			view.Currency = cost.CurrencyUSD
+		} else {
+			view.UnknownCostRequests, _ = addUsageValue(view.UnknownCostRequests, payload.RequestCount)
+			view.CostUnknownReasons = appendSortedUnique(view.CostUnknownReasons, payload.CostUnknownReason)
+		}
+		if payload.PriceTableVersion != "" {
+			view.PriceTableVersions = appendSortedUnique(view.PriceTableVersions, payload.PriceTableVersion)
+		}
+	}
+	var ok bool
+	if view.InputTokens, ok = addUsageValue(view.InputTokens, payload.InputTokens); !ok {
+		return errors.New("input token total overflow")
+	}
+	if view.OutputTokens, ok = addUsageValue(view.OutputTokens, payload.OutputTokens); !ok {
+		return errors.New("output token total overflow")
+	}
+	if view.TotalTokens, ok = addUsageValue(view.TotalTokens, payload.TotalTokens); !ok {
+		return errors.New("token total overflow")
+	}
+	if view.CacheReadTokens, ok = addUsageValue(view.CacheReadTokens, payload.CacheReadTokens); !ok {
+		return errors.New("cache-read token total overflow")
+	}
+	return nil
+}
+
+func addUsageValue(left, right int64) (int64, bool) {
+	if left < 0 || right < 0 || left > math.MaxInt64-right {
+		return 0, false
+	}
+	return left + right, true
+}
+
+func appendSortedUnique(values []string, value string) []string {
+	index := sort.SearchStrings(values, value)
+	if index < len(values) && values[index] == value {
+		return values
+	}
+	values = append(values, "")
+	copy(values[index+1:], values[index:])
+	values[index] = value
+	return values
 }
 
 func ensureRun(view *SessionView, id string) *RunView {
@@ -322,6 +426,15 @@ func normalizeSessionView(view *SessionView) {
 	}
 	if view.Recoveries == nil {
 		view.Recoveries = []RecoveryView{}
+	}
+	if view.Compactions == nil {
+		view.Compactions = []ContextCompactionView{}
+	}
+	if view.Usage.PriceTableVersions == nil {
+		view.Usage.PriceTableVersions = []string{}
+	}
+	if view.Usage.CostUnknownReasons == nil {
+		view.Usage.CostUnknownReasons = []string{}
 	}
 	if view.Warnings == nil {
 		view.Warnings = []events.Warning{}

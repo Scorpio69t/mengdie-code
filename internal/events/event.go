@@ -187,9 +187,21 @@ type ContextCompacted struct {
 }
 
 type UsageUpdated struct {
-	InputTokens     int64 `json:"input_tokens,omitempty"`
-	OutputTokens    int64 `json:"output_tokens,omitempty"`
-	CacheReadTokens int64 `json:"cache_read_tokens,omitempty"`
+	Purpose              string `json:"purpose,omitempty"`
+	RequestCount         int64  `json:"request_count,omitempty"`
+	UsageReported        bool   `json:"usage_reported,omitempty"`
+	InputTokens          int64  `json:"input_tokens,omitempty"`
+	OutputTokens         int64  `json:"output_tokens,omitempty"`
+	TotalTokens          int64  `json:"total_tokens,omitempty"`
+	CacheReadTokens      int64  `json:"cache_read_tokens,omitempty"`
+	ProviderOrigin       string `json:"provider_origin,omitempty"`
+	Model                string `json:"model,omitempty"`
+	CostStatus           string `json:"cost_status,omitempty"`
+	EstimatedCostPicoUSD int64  `json:"estimated_cost_pico_usd,omitempty"`
+	Currency             string `json:"currency,omitempty"`
+	PriceTableVersion    string `json:"price_table_version,omitempty"`
+	PricingSource        string `json:"pricing_source,omitempty"`
+	CostUnknownReason    string `json:"cost_unknown_reason,omitempty"`
 }
 
 type Warning struct {

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Scorpio69t/mengdie-code/internal/cost"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 )
 
@@ -73,13 +74,58 @@ func TestReduceKeepsSameToolCallIDIndependentAcrossRuns(t *testing.T) {
 	}
 }
 
+func TestReduceAggregatesVersionedCostsAndExplicitUnknowns(t *testing.T) {
+	records := []Record{
+		viewRecord(t, 1, events.KindUsageUpdated, events.UsageUpdated{
+			Purpose: "agent", RequestCount: 1, UsageReported: true,
+			InputTokens: 10, OutputTokens: 2, TotalTokens: 12, CacheReadTokens: 3,
+			ProviderOrigin: "https://api.deepseek.com", Model: "deepseek-v4-flash",
+			CostStatus: cost.StatusEstimated, EstimatedCostPicoUSD: 1_000_000,
+			Currency: cost.CurrencyUSD, PriceTableVersion: cost.TableVersion, PricingSource: "official",
+		}),
+		viewRecord(t, 2, events.KindUsageUpdated, events.UsageUpdated{
+			Purpose: "context_summary", RequestCount: 1,
+			Model:      "deepseek-v4-flash",
+			CostStatus: cost.StatusUnknown, PriceTableVersion: cost.TableVersion,
+			CostUnknownReason: cost.UnknownUsageUnreported,
+		}),
+	}
+	view, err := Reduce(SessionView{ID: "session-view"}, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Usage.RequestCount != 2 || view.Usage.UsageReportedRequests != 1 ||
+		view.Usage.InputTokens != 10 || view.Usage.TotalTokens != 12 || view.Usage.EstimatedCostPicoUSD != 1_000_000 ||
+		view.Usage.EstimatedCostRequests != 1 || view.Usage.UnknownCostRequests != 1 {
+		t.Fatalf("usage=%+v", view.Usage)
+	}
+	if len(view.Usage.PriceTableVersions) != 1 || view.Usage.PriceTableVersions[0] != cost.TableVersion ||
+		len(view.Usage.CostUnknownReasons) != 1 || view.Usage.CostUnknownReasons[0] != cost.UnknownUsageUnreported {
+		t.Fatalf("usage metadata=%+v", view.Usage)
+	}
+}
+
+func TestReduceRejectsMalformedUsageFacts(t *testing.T) {
+	record := viewRecord(t, 1, events.KindUsageUpdated, events.UsageUpdated{
+		Purpose: "agent", RequestCount: 1, InputTokens: 1, Model: "model",
+		CostStatus: cost.StatusUnknown, CostUnknownReason: cost.UnknownUsageUnreported,
+	})
+	if _, err := Reduce(SessionView{ID: "session-view"}, []Record{record}); err == nil || !strings.Contains(err.Error(), "unreported usage") {
+		t.Fatalf("Reduce() error=%v", err)
+	}
+}
+
 func TestSnapshotCASAndCorruptFallbackToFacts(t *testing.T) {
 	store := openTestStore(t, t.TempDir(), 0)
 	defer closeTestStore(t, store)
 	beginTestRun(t, store)
 	records := []Record{
 		viewRecordForSession(t, "session-1", "run-1", 1, events.KindRunStarted, events.RunStarted{Model: "model"}),
-		viewRecordForSession(t, "session-1", "run-1", 2, events.KindRunCompleted, events.RunCompleted{Summary: "done"}),
+		viewRecordForSession(t, "session-1", "run-1", 2, events.KindUsageUpdated, events.UsageUpdated{
+			Purpose: "agent", RequestCount: 1, Model: "model", CostStatus: cost.StatusUnknown,
+			PriceTableVersion: cost.TableVersion, CostUnknownReason: cost.UnknownUsageUnreported,
+		}),
+		viewRecordForSession(t, "session-1", "run-1", 3, events.KindRunCompleted, events.RunCompleted{Summary: "done"}),
 	}
 	if err := store.Append(context.Background(), "session-1", 0, records); err != nil {
 		t.Fatal(err)
@@ -105,7 +151,7 @@ func TestSnapshotCASAndCorruptFallbackToFacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rebuilt.LastSeq != 2 || rebuilt.Status != "completed" {
+	if rebuilt.LastSeq != 3 || rebuilt.Status != "completed" || rebuilt.Usage.RequestCount != 1 || rebuilt.Usage.UnknownCostRequests != 1 {
 		t.Fatalf("rebuilt=%+v", rebuilt)
 	}
 	var count int

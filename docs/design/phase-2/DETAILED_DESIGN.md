@@ -3,7 +3,7 @@
 > 里程碑：M2 · 值得信任  
 > 文档状态：已审核，实施中
 > 适用版本：v0.1 开发阶段  
-> 更新日期：2026-08-06
+> 更新日期：2026-08-17
 
 ## 1. 结论先行
 
@@ -584,10 +584,10 @@ TUI 只依赖 Application Service：
 
 ### P2-08：用量、成本与 M2 退出评测
 
-- token/缓存 token/请求次数的持久事实；
-- 成本基于带版本的本地价格表，未知价格明确显示未知；
-- 随机 kill、resume、审批、journal、TUI、双平台完整验收；
-- 退出报告区分模拟故障与真实 Provider 证据。
+- P2-08A（已实现）：token/缓存 token/请求次数的持久事实；
+- P2-08A（已实现）：成本基于带版本与来源的本地精确模型价格表，未知价格明确显示未知；
+- P2-08B：随机 kill、resume、审批、journal、TUI、双平台完整验收；
+- P2-08B：退出报告区分模拟故障与真实 Provider 证据。
 
 每个切片都必须先在 Beads 建立验收项，完成后运行适用的 `go fmt ./...`、`go vet ./...`、`go test ./...`；依赖变化额外运行 `go mod tidy`、`govulncheck ./...`、许可证检查和四目标构建。
 
@@ -640,4 +640,4 @@ TUI 只依赖 Application Service：
 
 ## 17. 当前实现状态
 
-截至本文更新：P2-04C 已在 P2-03B2 上实现带顺序/SHA-256 的私有上下文日志、store-first 模型边界、同 Session 新 Run、确定性 Resume Analyzer 和 `session resume`。完整 user/assistant/只读工具消息可恢复，副作用工具只保存脱敏摘要；无日志、上下文缺口、跨项目请求和多个未完成调用均 fail-closed。pending Approval 和执行中的 read/state 会在交互终端重新 Prepare 并展示当前预览，要求新的用户确认和新的 one-shot Capability；旧 Capability 永不复用。P2-04A 提供只消费公开 `SessionView` 的 Bubble Tea 只读会话界面；P2-04B 增加 store-first 的同进程有界公开事实通知、`afterSeq` 补读和 TUI 缺口恢复适配；P2-04C 让裸 `mengdie` 默认进入全屏 TUI，在同进程提交一个有界任务、消费已提交事实并完成精确工具调用的交互审批。P2-05A 新增受控 Artifact Store：超过 64 KiB 的单条私有上下文以临时文件、fsync、原子 rename、数据库登记的顺序离线保存，恢复时复验根锚定路径、文件类型、大小与 SHA-256；Session 删除联动清理，启动扫描在安全宽限期后回收内部命名的孤儿文件。P2-05B 在实际 Provider 调用边界接入确定性 token 预算：溢出时保留首个原始任务、当前任务、Todo、项目/安全指令和最近完整消息，把中间闭合区间通过同模型无工具请求生成滚动摘要；摘要记录来源 ordinal、模型、协议版本、SHA-256 与压缩前后预算，原始上下文不改写。压缩只读取与私有账本逐条一致的恢复安全消息；Resume 先验证完整原始事实，再使用有效摘要和原始尾部，摘要损坏时 fail-closed。P2-05C 新增 `read_context_source`：模型只按相对偏移读取当前 Session 最新有效摘要覆盖的恢复安全原文，Prepare/Execute 以摘要 SHA 和区间双重绑定，大消息按字节有界续读，摘要轮换、来源或 Artifact 损坏时拒绝；回填正文不进入公开事件。`context.compacted` 与回填工具事实只公开非敏感元数据。P2-06A 新增 run-scoped Patch Journal：`edit_file`/`write_file` 在任何项目文件副作用前提交相对路径、路径指纹、调用摘要和 pre/post 状态，原子替换后再落 `applied/verified`；Journal 持久化间隙后再次检查 TOCTOU。Resume 对未完成写调用严格按当前哈希和权限位标记 `aborted/verified/conflict`：前者重新 Prepare 并审批，中者只补认工具结果且不重复执行，后者保持阻断。P2-06B 把写前镜像作为私有回滚材料保存：不超过 64 KiB 时使用 SQLite BLOB，更大内容复用 Artifact Store 的原子落盘、配额、完整性和 Session 删除边界。应用层 `mengdie rewind` 默认选择最近可回滚 Journal，也可显式指定；应用专用两阶段工具不向 Provider 注册，Prepare 展示精确反向 diff，Policy 强制用户确认并签发新的一次性 Capability，Execute 在持久化 rewind Command 后再次根锚定检查写后哈希与权限位，随后原子恢复或删除 Agent 创建的文件。重复 Command ID 和进程中断只按严格写前/写后/冲突状态补记结果，绝不重放副作用；用户后续编辑、chmod、路径变化和回滚材料损坏均 fail-closed。P2-07 在既有 AGENTS.md 链路上新增本地 Skill catalog：用户级 `~/.mengdie/skills` 先发现、项目级 `.mengdie/skills` 后覆盖，同名冲突由 doctor 展示；Runtime 常驻的只有名称、单行 description 与逻辑来源，完整 SKILL.md 只能由只读 `read_skill` 按名称加载并在 Prepare/Execute 复验发现快照 SHA-256。Skill 不授予工具权限，也不触发联网安装。Journal、回滚正文和 Skill 绝对路径不进入 EventBus、TUI 或 JSONL，Capability 仍不持久化。TUI 仍不直连 SQLite、Provider 或工具，审批输入也不签发 Capability；EventBus 不是事实源。`message.delta` 仍不落库；同一 TUI 连续多轮任务、成本持久化与 M2 退出评测尚未实现。README 里的 M2 复选框必须保持未完成，直到上述退出条件全部满足。
+截至本文更新：P2-04C 已在 P2-03B2 上实现带顺序/SHA-256 的私有上下文日志、store-first 模型边界、同 Session 新 Run、确定性 Resume Analyzer 和 `session resume`。完整 user/assistant/只读工具消息可恢复，副作用工具只保存脱敏摘要；无日志、上下文缺口、跨项目请求和多个未完成调用均 fail-closed。pending Approval 和执行中的 read/state 会在交互终端重新 Prepare 并展示当前预览，要求新的用户确认和新的 one-shot Capability；旧 Capability 永不复用。P2-04A 提供只消费公开 `SessionView` 的 Bubble Tea 只读会话界面；P2-04B 增加 store-first 的同进程有界公开事实通知、`afterSeq` 补读和 TUI 缺口恢复适配；P2-04C 让裸 `mengdie` 默认进入全屏 TUI，在同进程提交一个有界任务、消费已提交事实并完成精确工具调用的交互审批。P2-05A 新增受控 Artifact Store：超过 64 KiB 的单条私有上下文以临时文件、fsync、原子 rename、数据库登记的顺序离线保存，恢复时复验根锚定路径、文件类型、大小与 SHA-256；Session 删除联动清理，启动扫描在安全宽限期后回收内部命名的孤儿文件。P2-05B 在实际 Provider 调用边界接入确定性 token 预算：溢出时保留首个原始任务、当前任务、Todo、项目/安全指令和最近完整消息，把中间闭合区间通过同模型无工具请求生成滚动摘要；摘要记录来源 ordinal、模型、协议版本、SHA-256 与压缩前后预算，原始上下文不改写。压缩只读取与私有账本逐条一致的恢复安全消息；Resume 先验证完整原始事实，再使用有效摘要和原始尾部，摘要损坏时 fail-closed。P2-05C 新增 `read_context_source`：模型只按相对偏移读取当前 Session 最新有效摘要覆盖的恢复安全原文，Prepare/Execute 以摘要 SHA 和区间双重绑定，大消息按字节有界续读，摘要轮换、来源或 Artifact 损坏时拒绝；回填正文不进入公开事件。`context.compacted` 与回填工具事实只公开非敏感元数据。P2-06A 新增 run-scoped Patch Journal：`edit_file`/`write_file` 在任何项目文件副作用前提交相对路径、路径指纹、调用摘要和 pre/post 状态，原子替换后再落 `applied/verified`；Journal 持久化间隙后再次检查 TOCTOU。Resume 对未完成写调用严格按当前哈希和权限位标记 `aborted/verified/conflict`：前者重新 Prepare 并审批，中者只补认工具结果且不重复执行，后者保持阻断。P2-06B 把写前镜像作为私有回滚材料保存：不超过 64 KiB 时使用 SQLite BLOB，更大内容复用 Artifact Store 的原子落盘、配额、完整性和 Session 删除边界。应用层 `mengdie rewind` 默认选择最近可回滚 Journal，也可显式指定；应用专用两阶段工具不向 Provider 注册，Prepare 展示精确反向 diff，Policy 强制用户确认并签发新的一次性 Capability，Execute 在持久化 rewind Command 后再次根锚定检查写后哈希与权限位，随后原子恢复或删除 Agent 创建的文件。重复 Command ID 和进程中断只按严格写前/写后/冲突状态补记结果，绝不重放副作用；用户后续编辑、chmod、路径变化和回滚材料损坏均 fail-closed。P2-07 在既有 AGENTS.md 链路上新增本地 Skill catalog：用户级 `~/.mengdie/skills` 先发现、项目级 `.mengdie/skills` 后覆盖，同名冲突由 doctor 展示；Runtime 常驻的只有名称、单行 description 与逻辑来源，完整 SKILL.md 只能由只读 `read_skill` 按名称加载并在 Prepare/Execute 复验发现快照 SHA-256。Skill 不授予工具权限，也不触发联网安装。P2-08A 将主 Agent 与上下文摘要的每次逻辑模型调用固化为一条 store-first 用量事实，相同 token 值不再被跨请求去重；Provider 失败仍记录请求，未观察到 usage 或精确 endpoint origin/模型未命中版本化本地价表时明确显示 unknown。成本使用整数 pico-USD 估算并公开价表版本与来源，CLI、JSON、Session 快照/重放和 TUI 消费同一聚合。Journal、回滚正文、Skill 绝对路径、端点路径/查询参数和凭据不进入 EventBus、TUI 或 JSONL，Capability 仍不持久化。TUI 仍不直连 SQLite、Provider 或工具，审批输入也不签发 Capability；EventBus 不是事实源。`message.delta` 仍不落库；同一 TUI 连续多轮任务、随机 kill、双平台真实 Provider 证据与 M2 完整退出评测尚未完成。README 里的 M2 复选框必须保持未完成，直到上述退出条件全部满足。
