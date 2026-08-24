@@ -13,9 +13,11 @@ import "time"
 // decoupled from the underlying SQLite schema and payload JSON shape.
 //
 // SourceRef is a best-effort text carrier: for tool.completed events it is
-// taken from the Summary field of events.ToolCompleted (lossy — the actual
-// command text lives in the unreplied arguments and is not persisted);
-// for run.failed events it carries "category=<RunFailed.Category>".
+// taken from events.ToolCompleted.SourceCommand when non-empty (the durable
+// shell argument text written alongside the human-facing Summary), and
+// otherwise falls back to events.ToolCompleted.Summary for records written
+// before migration 009; for run.failed events it carries
+// "category=<RunFailed.Category>".
 // Future slices that need richer projection should add a dedicated column
 // rather than overload this struct.
 type EventRow struct {
