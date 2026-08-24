@@ -611,13 +611,22 @@ LIMIT 5`, id)
 		return WhyReport{}, fmt.Errorf("iterate usage: %w", err)
 	}
 
-	// Conflicts: any other same-scope row currently marked disputed. The
-	// cross-authority expansion of spec §4.2 row 3 is intentionally deferred
-	// to Task 5; until then the query is a same-scope + status=disputed sweep.
+	// Conflicts: per brief §Step 5.4 — same scope, peer rows that are either
+	// disputed, supersede this memory, or are themselves superseded by it.
+	// Cross-authority peer expansion (spec §4.2 row 3) is still deferred to
+	// Task 5; until `supersedes` is populated by Task 5 the new branches
+	// match nothing, so the existing TestWhyReturnsAllSixSections case
+	// (no seeded disputed or superseded rows) continues to observe an empty
+	// Conflicts section.
 	conflictRows, err := s.db.QueryContext(ctx, memoryColumnsSelect+`
 FROM memories
-WHERE scope_kind = ? AND scope_value = ? AND id != ? AND status = 'disputed'
-ORDER BY observed_at DESC`, mem.Scope.Kind, mem.Scope.Value, mem.ID)
+WHERE scope_kind = ? AND scope_value = ? AND id != ?
+  AND (
+    status = 'disputed'
+    OR supersedes = ?
+    OR id IN (SELECT supersedes FROM memories WHERE id = ?)
+  )
+ORDER BY observed_at DESC`, mem.Scope.Kind, mem.Scope.Value, mem.ID, mem.ID, mem.ID)
 	if err != nil {
 		return WhyReport{}, fmt.Errorf("list conflicts: %w", err)
 	}
