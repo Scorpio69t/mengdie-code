@@ -72,6 +72,21 @@ var memoryAllowedStatuses = map[string]struct{}{
 	"archived":   {},
 }
 
+// memoryStatusAliasFor maps a CLI alias accepted by `--status` onto the
+// underlying SQLite CHECK constraint literal the Store actually filters on.
+// The alias set is deliberately separate from memoryAllowedStatuses because
+// the latter mirrors a DB constraint and adding `auto-approved` to it would
+// leak a CLI-only concept into a docstring read by everyone auditing the
+// schema. v0.1 simplifies the alias to a single rewrite — auto-Approved
+// candidates land at status=active today (whether they reached the Store
+// via SaveRepositoryFact, SaveVerifiedFact, or the ProposeMemory→Approve
+// auto-Approve path). A later v0.2 may extend this to filter on
+// evidence.source=auto_approve as well; the alias map keeps the door open
+// without changing the DB shape.
+var memoryStatusAliasFor = map[string]string{
+	"auto-approved": "active",
+}
+
 // memoryAllowedScopeKinds pins the set of --scope values. Mirrors the
 // SQLite CHECK constraint on memories.scope_kind.
 var memoryAllowedScopeKinds = map[string]struct{}{
@@ -305,10 +320,18 @@ func runMemoryList(ctx context.Context, args []string, a *App, stdout, stderr io
 	}
 	if *status != "" {
 		if _, ok := memoryAllowedStatuses[*status]; !ok {
-			if err := writeMemoryError(stderr, "未知 status %q\n", *status); err != nil {
-				return ExitRunError
+			// The set above mirrors the DB literal; fall back to the
+			// CLI-only alias map so `--status auto-approved` survives the
+			// parse-time guard. Anything else exits 2 (spec §5 row 2) so
+			// typos don't silently widen the query to "all rows".
+			if alias, aliasOK := memoryStatusAliasFor[*status]; aliasOK {
+				*status = alias
+			} else {
+				if werr := writeMemoryError(stderr, "未知 status %q\n", *status); werr != nil {
+					return ExitRunError
+				}
+				return ExitInvalidInput
 			}
-			return ExitInvalidInput
 		}
 	}
 
@@ -781,10 +804,18 @@ func runMemoryExport(ctx context.Context, args []string, a *App, stdout, stderr 
 	}
 	if *status != "" {
 		if _, ok := memoryAllowedStatuses[*status]; !ok {
-			if err := writeMemoryError(stderr, "未知 status %q\n", *status); err != nil {
-				return ExitRunError
+			// Mirror the runMemoryList alias path so `memory export` accepts
+			// `--status auto-approved` too. See runMemoryList for the
+			// rationale on why aliases are a separate map from
+			// memoryAllowedStatuses.
+			if alias, aliasOK := memoryStatusAliasFor[*status]; aliasOK {
+				*status = alias
+			} else {
+				if werr := writeMemoryError(stderr, "未知 status %q\n", *status); werr != nil {
+					return ExitRunError
+				}
+				return ExitInvalidInput
 			}
-			return ExitInvalidInput
 		}
 	}
 	if _, ok := memoryAllowedExportFormats[*format]; !ok {

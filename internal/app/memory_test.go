@@ -78,3 +78,32 @@ func TestMemoryForgetMissingID(t *testing.T) {
 		t.Fatalf("missing id must exit 3, got %d stderr=%q", code, state.stderr.String())
 	}
 }
+
+// TestMemoryListStatusAutoApproved covers the M3 Slice 03 v0.1 simplification:
+// `--status auto-approved` is a CLI-side alias that the CLI accepts at parse
+// time and translates to the underlying SQLite CHECK constraint value
+// `status=active`. The test seeds an explicit-memory row (which lands in
+// status=active), then issues `mengdie memory list --status auto-approved`
+// and asserts the rendered ASCII table contains the saved claim.
+//
+// Today this test is expected to fail because `auto-approved` is not yet in
+// the allowed-statuses allow-list; the implementation that ships with Task 5
+// (memory.go: memoryAllowedStatusAliases) makes it pass.
+func TestMemoryListStatusAutoApproved(t *testing.T) {
+	state := setupAppTestState(t)
+	code := runApp(state, []string{"memory", "remember", "项目使用 edit_file 修改文件", "--scope", "project"})
+	if code != ExitOK {
+		t.Fatalf("remember exit=%d stderr=%q", code, state.stderr.String())
+	}
+	// Reset the buffered stdout so the assertion only reads what the list
+	// command emitted, not the remember output that preceded it.
+	state.stdout.Reset()
+
+	code = runApp(state, []string{"memory", "list", "--status", "auto-approved"})
+	if code != ExitOK {
+		t.Fatalf("list --status auto-approved must exit 0, got %d stderr=%q", code, state.stderr.String())
+	}
+	if !strings.Contains(state.stdout.String(), "项目使用 edit_file 修改文件") {
+		t.Fatalf("list --status auto-approved must surface the auto-promoted claim: %q", state.stdout.String())
+	}
+}
