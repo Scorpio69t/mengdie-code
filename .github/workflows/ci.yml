@@ -42,7 +42,19 @@ jobs:
         run: go test -race -coverprofile=coverage.out ./...
 
       - name: 运行 Coding baseline
-        run: go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json
+        run: go run ./cmd/mengdie-eval baseline --manifest evals/coding/smoke.json
+
+      - name: 随机故障注入评测
+        run: |
+          mkdir -p evidence
+          go run ./cmd/mengdie-eval chaos --manifest evals/chaos/all.json --rounds 3 --out evidence/chaos-simulated.json --pretty
+
+      - name: 上传模拟故障证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-simulated-${{ github.run_id }}
+          path: evidence/chaos-simulated.json
 
   test:
     name: 测试 · ${{ matrix.os }}

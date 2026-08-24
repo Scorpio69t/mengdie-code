@@ -13,6 +13,7 @@ import (
 	"github.com/Scorpio69t/mengdie-code/internal/agent"
 	"github.com/Scorpio69t/mengdie-code/internal/config"
 	agentcontext "github.com/Scorpio69t/mengdie-code/internal/context"
+	"github.com/Scorpio69t/mengdie-code/internal/cost"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 	"github.com/Scorpio69t/mengdie-code/internal/platform"
 	"github.com/Scorpio69t/mengdie-code/internal/policy"
@@ -213,6 +214,7 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 		Environment: a.environment, AllowedEnvironment: options.AllowedEnvironment,
 		Instructions: contextInstructions, Skills: contextSkills,
 		ContextRecorder: contextRecorder, MutationJournal: patchJournal,
+		CostEstimator: cost.NewEstimator(profile.BaseURL, profile.Model),
 	})
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化 Agent Runtime 失败：%v", err))

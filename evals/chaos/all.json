@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "id": "chaos-m2-exit-v1",
+  "description": "MengDie Code P2-08B 随机故障注入与 M2 退出评测。所有 hook 攻击点必须真实 fire；系统必须按安全守则拒绝任何可证明的不一致恢复。",
+  "fixture_root": "../fixtures",
+  "tasks": [
+    {
+      "id": "patch-pre-abort",
+      "title": "Patch Journal Prepare 之前 abort（触发后拒绝恢复，文件保持未编辑）",
+      "fixture": "go/sum-boundary",
+      "script": "edit_then_finish",
+      "verify": {"command": ["go", "test", "./..."], "timeout": "30s"},
+      "hooks": [
+        {"hook": "patch.pre", "fire": "abort"}
+      ],
+      "recovery": {
+        "expected_resume_can_resume": false,
+        "expected_resume_reason_contains": "私有边界",
+        "expected_final_exit_code": 1
+      }
+    },
+    {
+      "id": "patch-post-abort",
+      "title": "Patch Journal MarkApplied 之后 abort（事务已部分应用，文件已写入）",
+      "fixture": "go/sum-boundary",
+      "script": "edit_then_finish",
+      "verify": {"command": ["go", "test", "./..."], "timeout": "30s"},
+      "hooks": [
+        {"hook": "patch.post", "fire": "abort"}
+      ],
+      "recovery": {
+        "expected_resume_can_resume": false,
+        "expected_resume_reason_contains": "私有边界",
+        "expected_final_exit_code": 0
+      }
+    },
+    {
+      "id": "read-pre-abort",
+      "title": "只读工具 Execute 之前 abort（拒绝恢复）",
+      "fixture": "go/sum-boundary",
+      "script": "read_then_finish",
+      "verify": {"command": ["go", "test", "./..."], "timeout": "30s"},
+      "hooks": [
+        {"hook": "tools.read.pre", "fire": "abort"}
+      ],
+      "recovery": {
+        "expected_resume_can_resume": false,
+        "expected_resume_reason_contains": "私有边界",
+        "expected_final_exit_code": 1
+      }
+    },
+    {
+      "id": "read-post-cancel",
+      "title": "只读工具 Execute 之后 cancel（拒绝恢复）",
+      "fixture": "go/sum-boundary",
+      "script": "read_then_finish",
+      "verify": {"command": ["go", "test", "./..."], "timeout": "30s"},
+      "hooks": [
+        {"hook": "tools.read.post", "fire": "context"}
+      ],
+      "recovery": {
+        "expected_resume_can_resume": false,
+        "expected_resume_reason_contains": "私有边界",
+        "expected_final_exit_code": 1
+      }
+    },
+    {
+      "id": "event-store-commit-abort",
+      "title": "EventStore commit 边界 abort（拒绝恢复）",
+      "fixture": "go/sum-boundary",
+      "script": "edit_then_finish",
+      "verify": {"command": ["go", "test", "./..."], "timeout": "30s"},
+      "hooks": [
+        {"hook": "event_store.commit", "fire": "abort", "after_event_seq": 3}
+      ],
+      "recovery": {
+        "expected_resume_can_resume": false,
+        "expected_resume_reason_contains": "未完成",
+        "expected_final_exit_code": 1
+      }
+    }
+  ]
+}

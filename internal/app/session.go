@@ -12,6 +12,7 @@ import (
 
 	"github.com/Scorpio69t/mengdie-code/internal/agent"
 	"github.com/Scorpio69t/mengdie-code/internal/config"
+	"github.com/Scorpio69t/mengdie-code/internal/cost"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 	"github.com/Scorpio69t/mengdie-code/internal/policy"
 	"github.com/Scorpio69t/mengdie-code/internal/session"
@@ -354,6 +355,31 @@ func (a *App) writeHumanSession(view session.SessionView) error {
 			}
 		}
 	}
+	if view.Usage.RequestCount > 0 {
+		if _, err := fmt.Fprintf(a.stdout, "\n用量与成本：\n- 请求 %d · 已上报 token %d · 输入 %d · 输出 %d · 总计 %d · 缓存读取 %d\n",
+			view.Usage.RequestCount, view.Usage.UsageReportedRequests, view.Usage.InputTokens,
+			view.Usage.OutputTokens, view.Usage.TotalTokens, view.Usage.CacheReadTokens); err != nil {
+			return err
+		}
+		if view.Usage.EstimatedCostRequests > 0 {
+			if _, err := fmt.Fprintf(a.stdout, "- 估算成本 $%s USD · %d 次请求 · 价表 %s\n",
+				cost.FormatPicoUSD(view.Usage.EstimatedCostPicoUSD), view.Usage.EstimatedCostRequests,
+				strings.Join(view.Usage.PriceTableVersions, ", ")); err != nil {
+				return err
+			}
+		}
+		if view.Usage.UnknownCostRequests > 0 {
+			if _, err := fmt.Fprintf(a.stdout, "- 成本未知 %d 次 · %s\n", view.Usage.UnknownCostRequests,
+				strings.Join(humanUsageUnknownReasons(view.Usage.CostUnknownReasons), ", ")); err != nil {
+				return err
+			}
+		}
+	} else if view.Usage.InputTokens != 0 || view.Usage.OutputTokens != 0 || view.Usage.TotalTokens != 0 || view.Usage.CacheReadTokens != 0 {
+		if _, err := fmt.Fprintf(a.stdout, "\n用量与成本：\n- 历史 token：输入 %d · 输出 %d · 总计 %d · 缓存读取 %d（请求数与成本未记录）\n",
+			view.Usage.InputTokens, view.Usage.OutputTokens, view.Usage.TotalTokens, view.Usage.CacheReadTokens); err != nil {
+			return err
+		}
+	}
 	if len(view.Tools) > 0 {
 		if _, err := fmt.Fprintln(a.stdout, "\n工具："); err != nil {
 			return err
@@ -375,6 +401,25 @@ func (a *App) writeHumanSession(view session.SessionView) error {
 		}
 	}
 	return nil
+}
+
+func humanUsageUnknownReasons(reasons []string) []string {
+	labels := make([]string, len(reasons))
+	for index, reason := range reasons {
+		switch reason {
+		case cost.UnknownUsageUnreported:
+			labels[index] = "Provider 未上报 token"
+		case cost.UnknownPriceUnavailable:
+			labels[index] = "无匹配价表"
+		case cost.UnknownInvalidUsage:
+			labels[index] = "用量数据无效"
+		case cost.UnknownCostOverflow:
+			labels[index] = "估算超出范围"
+		default:
+			labels[index] = reason
+		}
+	}
+	return labels
 }
 
 func writeJSON(writer interface{ Write([]byte) (int, error) }, value any) error {

@@ -11,6 +11,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/Scorpio69t/mengdie-code/internal/cost"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 	"github.com/Scorpio69t/mengdie-code/internal/session"
 )
@@ -21,9 +22,15 @@ func TestRenderSessionUsesOnlyPublicFactsAndHandlesNarrowWidth(t *testing.T) {
 		Tools:     []session.ToolView{{Tool: "read_file", Phase: "completed"}},
 		Approvals: []session.ApprovalView{{CallID: "call-1"}},
 		Todos:     []events.Todo{{Content: "验证 Windows", Status: "in_progress"}},
+		Usage: session.UsageView{
+			RequestCount: 2, UsageReportedRequests: 1, InputTokens: 10, OutputTokens: 2, TotalTokens: 12,
+			EstimatedCostPicoUSD: 1_000_000, EstimatedCostRequests: 1, UnknownCostRequests: 1,
+			PriceTableVersions: []string{cost.TableVersion}, CostUnknownReasons: []string{cost.UnknownUsageUnreported},
+		},
 	}
 	output := RenderSession(view, 100, false)
-	for _, want := range []string{"修复中文宽字符", "read_file：completed", "待审批调用 call-1", "验证 Windows", "公开事实视图"} {
+	for _, want := range []string{"修复中文宽字符", "read_file：completed", "待审批调用 call-1", "验证 Windows", "公开事实视图",
+		"请求 2 · 已上报 token 1", "估算成本 $0.000001 USD", "成本未知 1 次 · Provider 未上报 token"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("output missing %q: %s", want, output)
 		}
