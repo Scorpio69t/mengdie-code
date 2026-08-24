@@ -26,7 +26,7 @@ M3 Slice 02 落地三件切片 01 留下的 follow-up：
 - `internal/agent/extractor_adapter.go`：`*memory.Extractor` → `agent.MemoryExtractor` 适配
 - `internal/agent/runtime.go`：`Options.MemoryExtractor` 字段；`Options.MemoryStore` 字段；`Agent.Run` 末尾 `applyMemoryExtraction` 钩子
 - `internal/config/config.go`：`Loaded.ProjectIdentity` 字段 + `ProjectIdentityValue()` 方法
-- `internal/tools/defaults.go`：`DefaultTools(opts ...DefaultToolsOption) []Tool` + `WithMemoryRetriever` / `WithProjectIdentity` 函子
+- `internal/tools/defaults.go`：`DefaultTools(opts ...DefaultToolsOption) []Tool` + `WithMemoryRetriever` / `WithProjectIdentityForTools` 函子
 - `internal/app/runtime.go`：retriever + extractor 适配、`tools.DefaultTools(...)` 拼装
 - `evals/memory/trust-set-v1.json`：5 个 `inferred_extraction` 增量场景
 - `internal/memory/extractor/live_provider_test.go`：`//go:build liveprovider` 端到端
@@ -255,7 +255,7 @@ extractorAdapter := agent.NewExtractorAdapter(hybrid, loaded.ProjectIdentityValu
 registeredTools := append(
     tools.DefaultTools(
         tools.WithMemoryRetriever(retrieverAdapter),
-        tools.WithProjectIdentity(loaded.ProjectIdentityValue()),
+        tools.WithProjectIdentityForTools(loaded.ProjectIdentityValue()),
     ),
     contextSourceTool,
 )

@@ -4,7 +4,7 @@
 
 **Goal:** 在 M3 Slice 01 的可信记忆系统之上落地：MemoryExtractor 自动候选提取（Rules + LLM + Hybrid 三实现）、ProjectIdentity 字段、DefaultTools 签名扩展让 memory_recall 工具正式进 app.Runtime 的工具注册表，加上 30+5 场景 Trust Set 评测 + live provider 端到端。
 
-**Architecture:** 混合 extractor（规则先于 LLM，避免重复 LLM 成本），Agent.Run 末尾 `applyMemoryExtraction` 钩子（5s 超时、≤5 条、走 ProposeMemory 而非 SaveUserMemory，必须经 Approve 才 active），app.Runtime 拼装时把 `*memory.Retriever` 通过 `WithMemoryRetriever` 函子 + `WithProjectIdentity` 传给 `tools.DefaultTools()`，把 `*memory.Extractor` 包装为 `agent.MemoryExtractor` 注入 `agent.Options`。
+**Architecture:** 混合 extractor（规则先于 LLM，避免重复 LLM 成本），Agent.Run 末尾 `applyMemoryExtraction` 钩子（5s 超时、≤5 条、走 ProposeMemory 而非 SaveUserMemory，必须经 Approve 才 active），app.Runtime 拼装时把 `*memory.Retriever` 通过 `WithMemoryRetriever` 函子 + `WithProjectIdentityForTools` 传给 `tools.DefaultTools()`，把 `*memory.Extractor` 包装为 `agent.MemoryExtractor` 注入 `agent.Options`。
 
 **Tech Stack:** Go 1.26.6、`internal/memory` 既有 store/retriever 模式、`internal/agent/runtime.go` Options 模式（已支持 `MemoryRetriever` / `ProjectIdentity`）、`internal/tools/defaults.go` variadic options 模式、`modernc.org/sqlite` 既有迁移链路、`provider.Provider` 既有 LLM 客户端。
 
@@ -34,7 +34,7 @@
 
 ### 新增
 - `internal/config/config.go` — `Loaded.ProjectIdentity` 字段 + `ProjectIdentityValue()` 方法（新增 1 个字段 + 1 个方法）
-- `internal/tools/defaults.go` — `DefaultToolsOption` 函子类型 + `WithMemoryRetriever`/`WithProjectIdentity` 函子 + 改 `DefaultTools` 签名为 variadic
+- `internal/tools/defaults.go` — `DefaultToolsOption` 函子类型 + `WithMemoryRetriever`/`WithProjectIdentityForTools` 函子 + 改 `DefaultTools` 签名为 variadic
 - `internal/memory/extractor/extractor.go` — `Extractor` interface 定义
 - `internal/memory/extractor/rules.go` — Rules 实现
 - `internal/memory/extractor/llm.go` — LLM 实现
@@ -47,8 +47,8 @@
 
 ### 修改
 - `internal/agent/runtime.go` — `Options` 新增 `MemoryStore *memory.Store` + `MemoryExtractor MemoryExtractor` 字段；`Agent` struct 同步；`New()` 初始化；`Run` 末尾加 `applyMemoryExtraction(ctx, request)` 钩子
-- `internal/app/runtime.go` — `runAgent` 中构造 `*memory.Store` + `*memory.Retriever` + `*memory.Extractor` + adapter + 注入 `agent.Options` + `tools.DefaultTools(WithMemoryRetriever(...), WithProjectIdentity(...))`
-- `cmd/mengdie/main.go` — `DefaultTools()` 调用点更新为 `DefaultTools(WithProjectIdentity(...))`（如适用）
+- `internal/app/runtime.go` — `runAgent` 中构造 `*memory.Store` + `*memory.Retriever` + `*memory.Extractor` + adapter + 注入 `agent.Options` + `tools.DefaultTools(WithMemoryRetriever(...), WithProjectIdentityForTools(...))`
+- `cmd/mengdie/main.go` — `DefaultTools()` 调用点更新为 `DefaultTools(WithProjectIdentityForTools(...))`（如适用）
 - `internal/memory/trustset/runner.go` — 支持 `actions[].type = "extract"` + `expected.extracted_memories[]` 验证
 - `evals/memory/trust-set-v1.json` — 新增 5 个 `inferred_extraction` 场景
 - `.github/workflows/ci.yml` — quality job 加 `go test -race ./internal/memory/extractor/... -count=1` 步骤
@@ -96,7 +96,7 @@ func (l Loaded) ProjectIdentityValue() string  // NEW
 type DefaultToolsOption func(*defaultToolsConfig)
 type defaultToolsConfig struct { memoryRetriever MemoryRecallRetriever; projectIdentity string }
 func WithMemoryRetriever(r MemoryRecallRetriever) DefaultToolsOption
-func WithProjectIdentity(id string) DefaultToolsOption
+func WithProjectIdentityForTools(id string) DefaultToolsOption
 func DefaultTools(opts ...DefaultToolsOption) []Tool
 ```
 
@@ -199,7 +199,7 @@ git commit -m "feat(config): add Loaded.ProjectIdentity + ProjectIdentityValue()
 
 **Interfaces:**
 - Consumes: 既有 `DefaultTools() []Tool` 返回值不变；`MemoryRecallRetriever` interface（Task 8 ship 时已定义）
-- Produces: `DefaultTools(opts ...DefaultToolsOption) []Tool` + `WithMemoryRetriever` + `WithProjectIdentity` 函子
+- Produces: `DefaultTools(opts ...DefaultToolsOption) []Tool` + `WithMemoryRetriever` + `WithProjectIdentityForTools` 函子
 
 - [ ] **Step 1: 写失败测试**
 
@@ -263,11 +263,11 @@ func WithMemoryRetriever(retriever MemoryRecallRetriever) DefaultToolsOption {
     }
 }
 
-// WithProjectIdentity sets the project-scope identity used by tools that
+// WithProjectIdentityForTools sets the project-scope identity used by tools that
 // need a target scope value (e.g. memory_recall's catalogue injection).
 // Empty string disables the override; tools that need it will fall back
 // to their own scope resolution.
-func WithProjectIdentity(projectIdentity string) DefaultToolsOption {
+func WithProjectIdentityForTools(projectIdentity string) DefaultToolsOption {
     return func(c *defaultToolsConfig) {
         c.projectIdentity = strings.TrimSpace(projectIdentity)
     }
@@ -285,7 +285,7 @@ func DefaultTools(opts ...DefaultToolsOption) []Tool {
     if cfg.memoryRetriever != nil {
         tools = append(tools, NewMemoryRecallTool(
             cfg.memoryRetriever,
-            WithProjectIdentity(cfg.projectIdentity),
+            WithProjectIdentityForTools(cfg.projectIdentity),
         ))
     }
     return tools
@@ -308,7 +308,7 @@ Expected: 全 PASS（除 Windows pre-existing `TestShellExecute`）
 
 - [ ] **Step 6: 更新 `cmd/mengdie/main.go` 调用点**
 
-读 `cmd/mengdie/main.go` 中所有 `tools.DefaultTools()` 调用（应该有 1-2 处）；如不需要 `memory_recall` 工具，保持 `DefaultTools()` 不传 options；如有上下文需要，加 `WithProjectIdentity(...)`。Task 7 会在 `internal/app/runtime.go` 处理 main runAgent 路径。
+读 `cmd/mengdie/main.go` 中所有 `tools.DefaultTools()` 调用（应该有 1-2 处）；如不需要 `memory_recall` 工具，保持 `DefaultTools()` 不传 options；如有上下文需要，加 `WithProjectIdentityForTools(...)`。Task 7 会在 `internal/app/runtime.go` 处理 main runAgent 路径。
 
 - [ ] **Step 7: Commit**
 
@@ -1611,7 +1611,7 @@ git commit -m "test(memory): add live provider extractor test + CI + docs"
 | Order | Task | Output |
 |---|---|---|
 | 1 | Task 1: ProjectIdentity 字段 + 方法 | `Loaded.ProjectIdentity` + `ProjectIdentityValue()` + 3 测试 |
-| 2 | Task 2: DefaultTools 签名扩展 | `DefaultToolsOption` + `WithMemoryRetriever` + `WithProjectIdentity` + 2 测试 |
+| 2 | Task 2: DefaultTools 签名扩展 | `DefaultToolsOption` + `WithMemoryRetriever` + `WithProjectIdentityForTools` + 2 测试 |
 | 3 | Task 3: Extractor interface + Rules | `Extractor` interface + `Rules` + 6 unit 测试 |
 | 4 | Task 4: EventReader interface + 重构 loadEvents | `EventReader` + `session.Store.Events` + 2 测试 |
 | 5 | Task 5: LLM Extractor | `LLM` + redact + JSON parse + 1 测试 |
