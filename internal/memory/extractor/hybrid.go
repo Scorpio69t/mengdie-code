@@ -5,10 +5,8 @@ package extractor
 
 import (
 	"context"
-	"strings"
 
 	"github.com/Scorpio69t/mengdie-code/internal/memory"
-	"golang.org/x/text/unicode/norm"
 )
 
 // Hybrid 把两个 Extractor 串起来：先跑确定性 Rules，再用 LLM 候选补齐
@@ -36,9 +34,14 @@ func NewHybrid(rules, llm Extractor) *Hybrid {
 	return &Hybrid{rules: rules, llm: llm}
 }
 
-// Extract 先跑 rules，再（可选地）跑 llm，按 normalizeClaim 后的 claim
-// 字符串去重。返回值是全新 backing array；调用方可自由修改，不会影响
-// 任何缓存。
+// Extract 先跑 rules，再（可选地）跑 llm，按 memory.CanonicalizeClaim
+// 规范化后的 claim 字符串去重。返回值是全新 backing array；调用方可
+// 自由修改，不会影响任何缓存。
+//
+// 规范化函数与 Store.Save 的 idempotency SELECT 共用同一份实现
+// （memory.CanonicalizeClaim），保证 Rule / LLM 之间的 dedup 与
+// Store.Save 写库时的归一化判定完全等价：同一 (claim, scope) 下不
+// 会出现"Hybrid 视为同一条但 DB 视为两条"或反之的情况。
 func (h *Hybrid) Extract(ctx context.Context, sessionID string) ([]memory.Memory, error) {
 	if h == nil {
 		return nil, nil
@@ -50,24 +53,14 @@ func (h *Hybrid) Extract(ctx context.Context, sessionID string) ([]memory.Memory
 	llmOut, _ := h.llm.Extract(ctx, sessionID)
 	seen := make(map[string]struct{}, len(rulesOut))
 	for _, m := range rulesOut {
-		seen[normalizeClaim(m.Claim)] = struct{}{}
+		seen[memory.CanonicalizeClaim(m.Claim)] = struct{}{}
 	}
 	out := append([]memory.Memory(nil), rulesOut...)
 	for _, m := range llmOut {
-		if _, dup := seen[normalizeClaim(m.Claim)]; dup {
+		if _, dup := seen[memory.CanonicalizeClaim(m.Claim)]; dup {
 			continue
 		}
 		out = append(out, m)
 	}
 	return out, nil
-}
-
-// normalizeClaim 把 claim 折成可比较的稳定形式：小写 + 去首尾空白 +
-// NFC→NFD 往返，把组合字符（比如带变音符的拉丁字母）展开后再合成。
-// 这一步足够让"edit_file" 和 "  EDIT_FILE " 和 "éXAMPLE" 等变体
-// 在 seen map 里命中同一条 key，避免 Rule / LLM 给出的同义 claim
-// 被误判成不同条目。
-func normalizeClaim(s string) string {
-	s = strings.ToLower(strings.TrimSpace(s))
-	return norm.NFD.String(norm.NFC.String(s))
 }

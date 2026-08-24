@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // Authority classifies how a memory entered the system. The wire value is the
@@ -189,4 +191,30 @@ func GenerateID(claim string, scope Scope, authority string, sessionID string) s
 	h.Write([]byte(sessionID))
 	sum := h.Sum(nil)
 	return "mem_" + hex.EncodeToString(sum[:16])
+}
+
+// CanonicalizeClaim returns the claim string in a form suitable for
+// idempotency / deduplication comparisons per spec §4.2: case-folded via
+// strings.ToLower, then round-tripped through NFD→NFC so that composed
+// ("é" = U+00E9) and decomposed ("e" + U+0301) sequences collide.
+//
+// This is the **single source of truth** for claim normalization across
+// the memory package. Store.Save uses it for the idempotent-insert SELECT
+// (and the conflict-marking loop) and the Hybrid extractor uses it for
+// rules-vs-LLM deduplication; both paths therefore see exactly the same
+// equality semantics, so a rule-extracted claim and a DB-stored row with
+// the same canonical form cannot drift apart.
+//
+// Order choice: NFD first decomposes to the canonical base form (so a
+// precomposed "é" and a decomposed "e+◌́" both yield "e" + combining
+// acute), then NFC re-composes for storage / hash stability. NFD-first
+// is the safe default for case-folded equality and is the order the
+// Store.Save idempotency path already implemented. Leading / trailing
+// whitespace is intentionally NOT trimmed: callers should validate
+// non-empty claims explicitly (Store.Save rejects empty / whitespace-only
+// claims at the validation gate) and the persisted claim is whatever
+// the caller passed in.
+func CanonicalizeClaim(claim string) string {
+	lower := strings.ToLower(claim)
+	return norm.NFC.String(norm.NFD.String(lower))
 }
