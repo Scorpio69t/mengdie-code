@@ -1,0 +1,882 @@
+{
+  "schema_version": 1,
+  "suite_id": "memory-trust-set-v1",
+  "started_at": "2026-08-24T04:31:56.0511231Z",
+  "ended_at": "2026-08-24T04:31:56.0511231Z",
+  "precision_at_5": 0.5,
+  "false_recall_rate": 0,
+  "source_traceability": 0.9666666666666667,
+  "authority_fidelity": 1,
+  "why_completeness": 1,
+  "scenarios": [
+    {
+      "id": "user-confirms-test-command",
+      "category": "explicit",
+      "passed": true,
+      "observed_id": "mem_a22136f915ac16b6ae9b0e38ddbec31d",
+      "observed": {
+        "ID": "mem_a22136f915ac16b6ae9b0e38ddbec31d",
+        "Claim": "用 go test ./... 作为测试入口",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "explicit",
+        "Source": {
+          "Type": "user_message",
+          "Ref": "cli:remember"
+        },
+        "ObservedAt": "2026-08-24T04:31:49.8974941Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:49.8974941Z",
+        "UpdatedAt": "2026-08-24T04:31:49.8974941Z"
+      }
+    },
+    {
+      "id": "user-confirms-lint-config",
+      "category": "explicit",
+      "passed": true,
+      "observed_id": "mem_cc97f4a3c60d686ed9c665d26733a41d",
+      "observed": {
+        "ID": "mem_cc97f4a3c60d686ed9c665d26733a41d",
+        "Claim": "项目使用 golangci-lint run ./... 做静态检查",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "explicit",
+        "Source": {
+          "Type": "user_message",
+          "Ref": "cli:remember"
+        },
+        "ObservedAt": "2026-08-24T04:31:50.0772607Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:50.0772607Z",
+        "UpdatedAt": "2026-08-24T04:31:50.0772607Z"
+      }
+    },
+    {
+      "id": "user-supersede-old-rule",
+      "category": "explicit",
+      "passed": true,
+      "observed_id": "mem_2734d253fa20921518bf553c999da8b0",
+      "observed": {
+        "ID": "mem_2734d253fa20921518bf553c999da8b0",
+        "Claim": "用 go test ./... 全量测试",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "explicit",
+        "Source": {
+          "Type": "user_message",
+          "Ref": "cli:remember"
+        },
+        "ObservedAt": "2026-08-24T04:31:50.3309145Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "disputed",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:50.3309145Z",
+        "UpdatedAt": "2026-08-24T04:31:50.3309145Z"
+      }
+    },
+    {
+      "id": "user-cross-project-scope",
+      "category": "explicit",
+      "passed": true,
+      "observed_id": "mem_45f5d4eaf7b899c543734acc5e0f332f",
+      "observed": {
+        "ID": "mem_45f5d4eaf7b899c543734acc5e0f332f",
+        "Claim": "B 项目用 npm",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "b"
+        },
+        "Authority": "explicit",
+        "Source": {
+          "Type": "user_message",
+          "Ref": "cli:remember"
+        },
+        "ObservedAt": "2026-08-24T04:31:50.5198908Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:50.5198908Z",
+        "UpdatedAt": "2026-08-24T04:31:50.5198908Z"
+      }
+    },
+    {
+      "id": "user-explicit-forget",
+      "category": "explicit",
+      "passed": true,
+      "observed_id": "mem_ba5790e7e98aaddfb00e4c9a5b683386",
+      "observed": {
+        "ID": "mem_ba5790e7e98aaddfb00e4c9a5b683386",
+        "Claim": "已废弃的旧规则",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "explicit",
+        "Source": {
+          "Type": "user_message",
+          "Ref": "seed:explicit"
+        },
+        "ObservedAt": "2026-08-24T04:31:50.697328Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "archived",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:50.697328Z",
+        "UpdatedAt": "2026-08-24T04:31:50.7043269Z"
+      }
+    },
+    {
+      "id": "user-hard-forget",
+      "category": "explicit",
+      "passed": true,
+      "observed": {
+        "ID": "",
+        "Claim": "硬删除测试",
+        "Kind": "",
+        "Scope": {
+          "Kind": "",
+          "Value": ""
+        },
+        "Authority": "",
+        "Source": {
+          "Type": "",
+          "Ref": ""
+        },
+        "ObservedAt": "0001-01-01T00:00:00Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "archived",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "0001-01-01T00:00:00Z",
+        "UpdatedAt": "0001-01-01T00:00:00Z"
+      }
+    },
+    {
+      "id": "user-confirms-commit-format",
+      "category": "explicit",
+      "passed": true,
+      "observed_id": "mem_de7fb5eceb43fc22909ef6cad33ca1d8",
+      "observed": {
+        "ID": "mem_de7fb5eceb43fc22909ef6cad33ca1d8",
+        "Claim": "commit message 用 Conventional Commits",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "explicit",
+        "Source": {
+          "Type": "user_message",
+          "Ref": "cli:remember"
+        },
+        "ObservedAt": "2026-08-24T04:31:51.0528073Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:51.0528073Z",
+        "UpdatedAt": "2026-08-24T04:31:51.0528073Z"
+      }
+    },
+    {
+      "id": "user-confirms-doc-language",
+      "category": "explicit",
+      "passed": true,
+      "observed_id": "mem_2501998bdf0a54684cc64a500ba11ee7",
+      "observed": {
+        "ID": "mem_2501998bdf0a54684cc64a500ba11ee7",
+        "Claim": "用户文档默认中文优先",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "explicit",
+        "Source": {
+          "Type": "user_message",
+          "Ref": "cli:remember"
+        },
+        "ObservedAt": "2026-08-24T04:31:51.2311221Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:51.2311221Z",
+        "UpdatedAt": "2026-08-24T04:31:51.2311221Z"
+      }
+    },
+    {
+      "id": "user-confirms-secret-handling",
+      "category": "explicit",
+      "passed": true,
+      "observed_id": "mem_5ea75085d0837129d19a5ed06de3e50d",
+      "observed": {
+        "ID": "mem_5ea75085d0837129d19a5ed06de3e50d",
+        "Claim": "凭据只在受保护 Environment 注入，不进仓库",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "explicit",
+        "Source": {
+          "Type": "user_message",
+          "Ref": "cli:remember"
+        },
+        "ObservedAt": "2026-08-24T04:31:51.4074982Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:51.4074982Z",
+        "UpdatedAt": "2026-08-24T04:31:51.4074982Z"
+      }
+    },
+    {
+      "id": "user-agents-md-style",
+      "category": "explicit",
+      "passed": true,
+      "observed_id": "mem_0e6f5ae90e46cac399787fa14884b73b",
+      "observed": {
+        "ID": "mem_0e6f5ae90e46cac399787fa14884b73b",
+        "Claim": "AGENTS.md 引用本地 skills，不放通用教程",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "explicit",
+        "Source": {
+          "Type": "user_message",
+          "Ref": "cli:remember"
+        },
+        "ObservedAt": "2026-08-24T04:31:51.5811596Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:51.5811596Z",
+        "UpdatedAt": "2026-08-24T04:31:51.5811596Z"
+      }
+    },
+    {
+      "id": "user-confirms-error-style",
+      "category": "explicit",
+      "passed": true,
+      "observed_id": "mem_654017b628bb3ad1d34753c1469545ae",
+      "observed": {
+        "ID": "mem_654017b628bb3ad1d34753c1469545ae",
+        "Claim": "错误信息中文 + errors.Is 匹配",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "explicit",
+        "Source": {
+          "Type": "user_message",
+          "Ref": "cli:remember"
+        },
+        "ObservedAt": "2026-08-24T04:31:51.7535414Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:51.7535414Z",
+        "UpdatedAt": "2026-08-24T04:31:51.7535414Z"
+      }
+    },
+    {
+      "id": "user-confirms-go-version",
+      "category": "explicit",
+      "passed": true,
+      "observed_id": "mem_47a3eb4a3aa589c64db8d55776dac90d",
+      "observed": {
+        "ID": "mem_47a3eb4a3aa589c64db8d55776dac90d",
+        "Claim": "项目使用 Go 1.26.6",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "explicit",
+        "Source": {
+          "Type": "user_message",
+          "Ref": "cli:remember"
+        },
+        "ObservedAt": "2026-08-24T04:31:51.9299049Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:51.9299049Z",
+        "UpdatedAt": "2026-08-24T04:31:51.9299049Z"
+      }
+    },
+    {
+      "id": "user-confirms-license-header",
+      "category": "explicit",
+      "passed": true,
+      "observed_id": "mem_8cf179f3651ed82f62d098c63f52a98c",
+      "observed": {
+        "ID": "mem_8cf179f3651ed82f62d098c63f52a98c",
+        "Claim": "Go 源文件必须含 MengDie Code Contributors + Apache-2.0 header",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "explicit",
+        "Source": {
+          "Type": "user_message",
+          "Ref": "cli:remember"
+        },
+        "ObservedAt": "2026-08-24T04:31:52.1043445Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:52.1043445Z",
+        "UpdatedAt": "2026-08-24T04:31:52.1043445Z"
+      }
+    },
+    {
+      "id": "user-confirms-merge-gate",
+      "category": "explicit",
+      "passed": true,
+      "observed_id": "mem_6b512df639010a11f7af7352334f24fb",
+      "observed": {
+        "ID": "mem_6b512df639010a11f7af7352334f24fb",
+        "Claim": "PR 合并前必须本地质量门禁全过 + 用户审核",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "explicit",
+        "Source": {
+          "Type": "user_message",
+          "Ref": "cli:remember"
+        },
+        "ObservedAt": "2026-08-24T04:31:52.277663Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:52.277663Z",
+        "UpdatedAt": "2026-08-24T04:31:52.277663Z"
+      }
+    },
+    {
+      "id": "user-confirms-toolchain",
+      "category": "explicit",
+      "passed": true,
+      "observed_id": "mem_ce6e67f91f12d517ed05d8320fe53122",
+      "observed": {
+        "ID": "mem_ce6e67f91f12d517ed05d8320fe53122",
+        "Claim": "本地工具链 go fmt / vet / test -race / golangci-lint / govulncheck",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "explicit",
+        "Source": {
+          "Type": "user_message",
+          "Ref": "cli:remember"
+        },
+        "ObservedAt": "2026-08-24T04:31:52.4490215Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:52.4490215Z",
+        "UpdatedAt": "2026-08-24T04:31:52.4490215Z"
+      }
+    },
+    {
+      "id": "repo-go-mod-version",
+      "category": "repository",
+      "passed": true,
+      "observed_id": "mem_3e9202f5933b15cab0cb6f32d9540c02",
+      "observed": {
+        "ID": "mem_3e9202f5933b15cab0cb6f32d9540c02",
+        "Claim": "go.mod declares Go 1.26.6",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "repository",
+        "Source": {
+          "Type": "file",
+          "Ref": "go.mod:3"
+        },
+        "ObservedAt": "2026-08-24T04:31:52.6235071Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:52.6235071Z",
+        "UpdatedAt": "2026-08-24T04:31:52.6235071Z"
+      }
+    },
+    {
+      "id": "repo-lint-rule",
+      "category": "repository",
+      "passed": true,
+      "observed_id": "mem_b0d2c55c1116441bd68e89eed8a0eff4",
+      "observed": {
+        "ID": "mem_b0d2c55c1116441bd68e89eed8a0eff4",
+        "Claim": "golangci-lint enable errcheck govet",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "repository",
+        "Source": {
+          "Type": "file",
+          "Ref": ".golangci.yml:2"
+        },
+        "ObservedAt": "2026-08-24T04:31:52.8295924Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:52.8295924Z",
+        "UpdatedAt": "2026-08-24T04:31:52.8295924Z"
+      }
+    },
+    {
+      "id": "repo-ci-workflow-os",
+      "category": "repository",
+      "passed": true,
+      "observed_id": "mem_f18972ec56fa7a6e589d9597e9f37ca3",
+      "observed": {
+        "ID": "mem_f18972ec56fa7a6e589d9597e9f37ca3",
+        "Claim": "CI matrix: macos-latest + windows-latest + ubuntu-latest",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "repository",
+        "Source": {
+          "Type": "file",
+          "Ref": ".github/workflows/ci.yml:5"
+        },
+        "ObservedAt": "2026-08-24T04:31:53.088926Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:53.088926Z",
+        "UpdatedAt": "2026-08-24T04:31:53.088926Z"
+      }
+    },
+    {
+      "id": "repo-agents-md-rule",
+      "category": "repository",
+      "passed": true,
+      "observed_id": "mem_77c68a1ecd5c6fa57f5fc367532f74be",
+      "observed": {
+        "ID": "mem_77c68a1ecd5c6fa57f5fc367532f74be",
+        "Claim": "AGENTS.md 声明 MengDie Code 中文优先单二进制定位",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "repository",
+        "Source": {
+          "Type": "file",
+          "Ref": "AGENTS.md:1"
+        },
+        "ObservedAt": "2026-08-24T04:31:53.3443926Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:53.3443926Z",
+        "UpdatedAt": "2026-08-24T04:31:53.3443926Z"
+      }
+    },
+    {
+      "id": "repo-git-commit-fact",
+      "category": "repository",
+      "passed": true,
+      "observed_id": "mem_4804456c0959081ee1a7f0ce7bd02559",
+      "observed": {
+        "ID": "mem_4804456c0959081ee1a7f0ce7bd02559",
+        "Claim": "最近 commit: feat(chaos): 添加随机故障注入",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "repository",
+        "Source": {
+          "Type": "file",
+          "Ref": "git log -1"
+        },
+        "ObservedAt": "2026-08-24T04:31:53.670273Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:53.670273Z",
+        "UpdatedAt": "2026-08-24T04:31:53.670273Z"
+      }
+    },
+    {
+      "id": "verified-go-test-passes",
+      "category": "verified",
+      "passed": true,
+      "observed_id": "mem_bc081a79ae068c3f2cde80c2b9df66d7",
+      "observed": {
+        "ID": "mem_bc081a79ae068c3f2cde80c2b9df66d7",
+        "Claim": "go test ./... exit 0",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "verified",
+        "Source": {
+          "Type": "command_result",
+          "Ref": "go test ./...:exit=0"
+        },
+        "ObservedAt": "2026-08-24T04:31:53.9490614Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:53.9490614Z",
+        "UpdatedAt": "2026-08-24T04:31:53.9490614Z"
+      }
+    },
+    {
+      "id": "verified-go-vet-passes",
+      "category": "verified",
+      "passed": true,
+      "observed_id": "mem_2aeee94a8c66448427780025cd87b850",
+      "observed": {
+        "ID": "mem_2aeee94a8c66448427780025cd87b850",
+        "Claim": "go vet ./... exit 0",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "verified",
+        "Source": {
+          "Type": "command_result",
+          "Ref": "go vet ./...:exit=0"
+        },
+        "ObservedAt": "2026-08-24T04:31:54.1647717Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:54.1647717Z",
+        "UpdatedAt": "2026-08-24T04:31:54.1647717Z"
+      }
+    },
+    {
+      "id": "verified-golangci-lint-clean",
+      "category": "verified",
+      "passed": true,
+      "observed_id": "mem_bf90093e94b0efa5e471b740757171af",
+      "observed": {
+        "ID": "mem_bf90093e94b0efa5e471b740757171af",
+        "Claim": "golangci-lint 0 issue",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "verified",
+        "Source": {
+          "Type": "command_result",
+          "Ref": "golangci-lint:issue=0"
+        },
+        "ObservedAt": "2026-08-24T04:31:54.3809216Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:54.3809216Z",
+        "UpdatedAt": "2026-08-24T04:31:54.3809216Z"
+      }
+    },
+    {
+      "id": "verified-govulncheck-clean",
+      "category": "verified",
+      "passed": true,
+      "observed_id": "mem_13e89922237d1a1b4d9eb492a70dd16f",
+      "observed": {
+        "ID": "mem_13e89922237d1a1b4d9eb492a70dd16f",
+        "Claim": "govulncheck no vulnerabilities",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "verified",
+        "Source": {
+          "Type": "command_result",
+          "Ref": "govulncheck:vuln=0"
+        },
+        "ObservedAt": "2026-08-24T04:31:54.5935619Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:54.5935619Z",
+        "UpdatedAt": "2026-08-24T04:31:54.5935619Z"
+      }
+    },
+    {
+      "id": "verified-4-target-build",
+      "category": "verified",
+      "passed": true,
+      "observed_id": "mem_3b5b12d3d24160f3cda54e8dcb18eaf5",
+      "observed": {
+        "ID": "mem_3b5b12d3d24160f3cda54e8dcb18eaf5",
+        "Claim": "4-target build OK: darwin-arm64 + darwin-amd64 + windows-amd64 + linux-amd64",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "verified",
+        "Source": {
+          "Type": "command_result",
+          "Ref": "build:targets=4:exit=0"
+        },
+        "ObservedAt": "2026-08-24T04:31:54.9485834Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "active",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:54.9485834Z",
+        "UpdatedAt": "2026-08-24T04:31:54.9485834Z"
+      }
+    },
+    {
+      "id": "inferred-from-successful-run",
+      "category": "inferred",
+      "passed": true,
+      "observed_id": "mem_0a4502b5df4bdff338fb2814e24ff968",
+      "observed": {
+        "ID": "mem_0a4502b5df4bdff338fb2814e24ff968",
+        "Claim": "项目测试入口是 go test ./...",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "inferred",
+        "Source": {
+          "Type": "agent_message",
+          "Ref": "agent:inferred"
+        },
+        "ObservedAt": "2026-08-24T04:31:55.1914167Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "proposed",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:55.1914167Z",
+        "UpdatedAt": "2026-08-24T04:31:55.1914167Z"
+      }
+    },
+    {
+      "id": "inferred-project-structure",
+      "category": "inferred",
+      "passed": true,
+      "observed_id": "mem_e00939c014b4b5c5129747c5f3a24f19",
+      "observed": {
+        "ID": "mem_e00939c014b4b5c5129747c5f3a24f19",
+        "Claim": "项目按 cmd/internal/evals 分层",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "inferred",
+        "Source": {
+          "Type": "agent_message",
+          "Ref": "agent:inferred"
+        },
+        "ObservedAt": "2026-08-24T04:31:55.4194236Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "proposed",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:55.4194236Z",
+        "UpdatedAt": "2026-08-24T04:31:55.4194236Z"
+      }
+    },
+    {
+      "id": "inferred-file-pattern",
+      "category": "inferred",
+      "passed": true,
+      "observed_id": "mem_91aab77d40aac512f23e97f2e8ef3620",
+      "observed": {
+        "ID": "mem_91aab77d40aac512f23e97f2e8ef3620",
+        "Claim": "Go 源文件用 snake_case_test.go 命名测试文件",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "inferred",
+        "Source": {
+          "Type": "agent_message",
+          "Ref": "agent:inferred"
+        },
+        "ObservedAt": "2026-08-24T04:31:55.6147264Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "proposed",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:55.6147264Z",
+        "UpdatedAt": "2026-08-24T04:31:55.6147264Z"
+      }
+    },
+    {
+      "id": "inferred-tool-preference",
+      "category": "inferred",
+      "passed": true,
+      "observed_id": "mem_5fa2d1d986b22e0326bf7ee2450942ab",
+      "observed": {
+        "ID": "mem_5fa2d1d986b22e0326bf7ee2450942ab",
+        "Claim": "用户偏好 edit_file 多于 write_file",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "inferred",
+        "Source": {
+          "Type": "agent_message",
+          "Ref": "agent:inferred"
+        },
+        "ObservedAt": "2026-08-24T04:31:55.8481637Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "proposed",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:55.8481637Z",
+        "UpdatedAt": "2026-08-24T04:31:55.8481637Z"
+      }
+    },
+    {
+      "id": "inferred-naming-convention",
+      "category": "inferred",
+      "passed": true,
+      "observed_id": "mem_e55af4a3b5ddae605627a2ef22b5b95d",
+      "observed": {
+        "ID": "mem_e55af4a3b5ddae605627a2ef22b5b95d",
+        "Claim": "Go 包名用单数小写名词",
+        "Kind": "fact",
+        "Scope": {
+          "Kind": "project",
+          "Value": "mengdie"
+        },
+        "Authority": "inferred",
+        "Source": {
+          "Type": "agent_message",
+          "Ref": "agent:inferred"
+        },
+        "ObservedAt": "2026-08-24T04:31:56.0361399Z",
+        "ValidFrom": null,
+        "ValidUntil": null,
+        "Status": "proposed",
+        "Confidence": 0,
+        "EvidenceScore": 0,
+        "Supersedes": "",
+        "CreatedAt": "2026-08-24T04:31:56.0361399Z",
+        "UpdatedAt": "2026-08-24T04:31:56.0361399Z"
+      }
+    }
+  ]
+}

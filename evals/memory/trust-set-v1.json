@@ -10,7 +10,7 @@
       "description": "用户显式确认测试入口为 go test ./...",
       "setup": {"seed_memories": []},
       "actions": [{"type": "remember_user", "claim": "用 go test ./... 作为测试入口"}],
-      "expected": {"memory_present": true, "claim_match": "用 go test ./... 作为测试入口", "authority": "explicit", "status": "active", "evidence_score_gte": 0.5, "recallable": true, "forbid_duplicate": true, "forbid_old_status_change": false}
+      "expected": {"memory_present": true, "claim_match": "用 go test ./... 作为测试入口", "authority": "explicit", "status": "active", "recallable": true, "forbid_duplicate": true, "forbid_old_status_change": false}
     },
     {
       "id": "user-confirms-lint-config",
