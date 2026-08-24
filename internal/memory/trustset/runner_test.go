@@ -8,10 +8,10 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/Scorpio69t/mengdie-code/internal/memory"
 	"github.com/Scorpio69t/mengdie-code/internal/session"
 )
 
@@ -24,17 +24,21 @@ import (
 // contamination (the same-scope same-authority different-claim dispute
 // rule from Task 3 fix d21118d) cannot leak between scenarios. This matches
 // Trust Set's intent: per-scenario evidence is independent.
+//
+// M3 Slice 02 Task 9 extends the manifest to 35 scenarios (30 slice-01 +
+// 5 inferred-extraction scenarios). The new scenarios exercise the
+// run_run + extract action verbs introduced in this task and rely on the
+// same per-scenario fresh-store invariant.
 func TestRunnerProducesAllMetrics(t *testing.T) {
 	manifestPath := locateManifest(t)
 	scenarios := loadScenarios(t, manifestPath)
-	if len(scenarios) != 30 {
-		t.Fatalf("trust-set-v1.json must have 30 scenarios, got %d", len(scenarios))
+	if len(scenarios) != 35 {
+		t.Fatalf("trust-set-v1.json must have 35 scenarios, got %d", len(scenarios))
 	}
 	results := make([]ScenarioResult, 0, len(scenarios))
 	for _, scenario := range scenarios {
 		store := openStore(t)
-		store2 := memory.OpenMemory(store)
-		report, _ := Run(context.Background(), store2, []Scenario{scenario}, "")
+		report, _ := Run(context.Background(), store, []Scenario{scenario}, "")
 		_ = store.Close()
 		if len(report.Scenarios) > 0 {
 			results = append(results, report.Scenarios[0])
@@ -129,4 +133,47 @@ func writeEvidence(path string, report Report) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o600)
+}
+
+// TestRunnerHandlesExtractScenario pins the contract for the new extract
+// action verb introduced by M3 Slice 02 Task 9: the runner must (a) recognise
+// the `run_run` + `extract` action pair, (b) route extracted candidates
+// through ProposeMemory (so they land as authority=inferred, status=proposed
+// regardless of which Extractor stamped the candidate), and (c) match the
+// expected extracted_memories[] list by claim_contains + authority + status.
+//
+// This test targets extractor-rules-edits because it is the simplest case
+// (deterministic Rules extractor, single tool.completed event) and therefore
+// the cleanest regression signal if the runner wiring drifts. Scenarios 4
+// and 5 (LLM stub / Hybrid) get their own coverage via the existing 35-scenario
+// TestRunnerProducesAllMetrics loop below.
+func TestRunnerHandlesExtractScenario(t *testing.T) {
+	manifestPath := locateManifest(t)
+	scenarios := loadScenarios(t, manifestPath)
+	var target *Scenario
+	for i := range scenarios {
+		if scenarios[i].ID == "extractor-rules-edits" {
+			target = &scenarios[i]
+			break
+		}
+	}
+	if target == nil {
+		t.Fatal("extractor-rules-edits scenario not found in trust-set-v1.json")
+	}
+	store := openStore(t)
+	defer func() { _ = store.Close() }()
+	report, runErr := Run(context.Background(), store, []Scenario{*target}, "")
+	if runErr != nil {
+		t.Fatalf("Run returned error: %v", runErr)
+	}
+	if len(report.Scenarios) == 0 {
+		t.Fatal("no scenario results")
+	}
+	got := report.Scenarios[0]
+	if !got.Passed {
+		if strings.Contains(got.Reason, "unknown action type") {
+			t.Fatalf("runner does not yet support extract / run_run actions: %s", got.Reason)
+		}
+		t.Fatalf("scenario %s failed: %s", got.ID, got.Reason)
+	}
 }
