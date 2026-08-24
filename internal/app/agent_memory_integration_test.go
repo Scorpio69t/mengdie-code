@@ -72,6 +72,18 @@ func TestAgentFirstTurnReceivesMemoryCatalogue(t *testing.T) {
 	if !strings.Contains(systemContent, "go test ./internal/...") {
 		t.Fatalf("first-turn system message must include the seeded explicit claim; got %q", systemContent)
 	}
+	// Format-pin assertions: catalogue bullets are rendered as
+	// `{id} (authority={auth}, evidence={score:.2f}) {claim}`. A regression
+	// that drops the authority column from the Tier 1 projection (so the
+	// adapter sends an empty Authority and the renderer prints
+	// `authority=`) would still pass the header + claim checks above but
+	// must fail these substring assertions.
+	if !strings.Contains(systemContent, "authority=explicit") {
+		t.Fatalf("first-turn system message must include seeded explicit authority stamp; got %q", systemContent)
+	}
+	if !strings.Contains(systemContent, "evidence=") {
+		t.Fatalf("first-turn system message must include evidence= format token; got %q", systemContent)
+	}
 }
 
 // TestAgentFirstTurnSkipsInjectionOnResume verifies spec §6.2 + brief

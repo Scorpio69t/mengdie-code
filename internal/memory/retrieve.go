@@ -89,12 +89,16 @@ func NewRetriever(store *Store) *Retriever {
 
 // CatalogueEntry is the trimmed Tier 1 row projection: id is the durable
 // memory id, Claim is truncated to 60 chars per spec §6.1 / §5 list
-// output, EvidenceScore is the raw recomputed value (no rounding) so the
-// downstream UI can format it consistently.
+// output, Authority is the source authority classification (explicit /
+// verified / repository / inferred) so the Agent renderer can stamp it on
+// every catalogue bullet without a follow-up Get, and EvidenceScore is the
+// raw recomputed value (no rounding) so the downstream UI can format it
+// consistently.
 type CatalogueEntry struct {
 	ID            string
 	Claim         string
 	EvidenceScore float64
+	Authority     Authority
 }
 
 // RecallHit embeds the full Memory plus a Score field carrying the spec
@@ -127,7 +131,7 @@ func (r *Retriever) Tier1Catalogue(ctx context.Context, scope Scope, limit int) 
 	now := formatStamp(r.store.now().UTC())
 
 	rows, err := r.store.db.QueryContext(ctx, `
-SELECT id, substr(claim, 1, ?), evidence_score
+SELECT id, substr(claim, 1, ?), evidence_score, authority
 FROM memories
 WHERE scope_kind = ? AND scope_value = ?
   AND status = 'active'
@@ -143,10 +147,14 @@ LIMIT ?`,
 
 	out := make([]CatalogueEntry, 0, limit)
 	for rows.Next() {
-		var e CatalogueEntry
-		if err := rows.Scan(&e.ID, &e.Claim, &e.EvidenceScore); err != nil {
+		var (
+			e         CatalogueEntry
+			authority string
+		)
+		if err := rows.Scan(&e.ID, &e.Claim, &e.EvidenceScore, &authority); err != nil {
 			return nil, fmt.Errorf("scan tier1 entry: %w", err)
 		}
+		e.Authority = Authority(authority)
 		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {

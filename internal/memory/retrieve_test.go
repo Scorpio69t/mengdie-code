@@ -89,6 +89,36 @@ func TestTier1CatalogueFiltersStale(t *testing.T) {
 		if e.ID == "" {
 			t.Fatal("empty id")
 		}
+		if e.Authority == "" {
+			t.Fatalf("catalogue entry %s has empty authority; Tier 1 projection must surface authority alongside claim and evidence_score", e.ID)
+		}
+	}
+	// The Authority surfaced on each CatalogueEntry must round-trip the
+	// stored wire value: a regression that scanned it into the wrong column
+	// (or dropped the column entirely, which used to render `authority=`
+	// empty in the agent catalogue) would still pass the non-empty check
+	// above but fail this per-authority match.
+	seedExpectations := map[string]memory.Authority{
+		"项目测试入口是 go test ./...":     memory.AuthorityExplicit,
+		"go.mod declares Go 1.26.6": memory.AuthorityRepository,
+		"go test ./... exits 0":     memory.AuthorityVerified,
+	}
+	for claim, want := range seedExpectations {
+		var got memory.Authority
+		var gotID string
+		for _, e := range entries {
+			if e.Claim == claim {
+				got = e.Authority
+				gotID = e.ID
+				break
+			}
+		}
+		if got == "" {
+			t.Fatalf("seeded claim %q missing from catalogue; cannot verify authority surface", claim)
+		}
+		if got != want {
+			t.Fatalf("claim %q surfaced with authority=%s, want %s (id=%s)", claim, got, want, gotID)
+		}
 	}
 	for _, e := range entries {
 		if e.ID == "" {

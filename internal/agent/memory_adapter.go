@@ -75,6 +75,7 @@ func (adapter *RetrieverAdapter) Recall(ctx context.Context, _ string, topK int,
 				ID:            entry.ID,
 				Claim:         entry.Claim,
 				EvidenceScore: entry.EvidenceScore,
+				Authority:     entry.Authority,
 			},
 			Score: entry.EvidenceScore,
 		})
