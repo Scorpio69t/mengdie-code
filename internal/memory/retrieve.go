@@ -143,7 +143,7 @@ LIMIT ?`,
 	if err != nil {
 		return nil, fmt.Errorf("tier1 catalogue query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	out := make([]CatalogueEntry, 0, limit)
 	for rows.Next() {
@@ -191,7 +191,7 @@ LIMIT ?`,
 	if err != nil {
 		return nil, fmt.Errorf("tier2 task topics query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	out := make([]Memory, 0, tier2DefaultLimit)
 	for rows.Next() {
@@ -270,7 +270,7 @@ LIMIT ?`,
 	if err != nil {
 		return nil, fmt.Errorf("tier3 fts search: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	// Memory scanning is duplicated from store.go's scanMemoryFields because
 	// this query selects one extra column (fts.rank) at the end; inlining

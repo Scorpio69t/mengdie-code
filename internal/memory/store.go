@@ -392,7 +392,7 @@ func loadSameScope(ctx context.Context, tx *sql.Tx, scope Scope) ([]existingRow,
 	if err != nil {
 		return nil, fmt.Errorf("scan scope memories: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var result []existingRow
 	for rows.Next() {
 		var r existingRow
@@ -542,7 +542,7 @@ func (s *Store) List(ctx context.Context, q ListQuery) ([]Memory, error) {
 	if err != nil {
 		return nil, fmt.Errorf("list memories: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]Memory, 0, limit)
 	for rows.Next() {
 		m, err := scanMemoryFields(rows)
@@ -605,7 +605,7 @@ ORDER BY created_at DESC`, id)
 	if err != nil {
 		return WhyReport{}, fmt.Errorf("list evidence: %w", err)
 	}
-	defer evRows.Close()
+	defer func() { _ = evRows.Close() }()
 	for evRows.Next() {
 		var (
 			ev        Evidence
@@ -633,7 +633,7 @@ LIMIT 5`, id)
 	if err != nil {
 		return WhyReport{}, fmt.Errorf("list usage: %w", err)
 	}
-	defer usageRows.Close()
+	defer func() { _ = usageRows.Close() }()
 	for usageRows.Next() {
 		var (
 			rec        UsageRecord
@@ -674,7 +674,7 @@ ORDER BY observed_at DESC`, mem.Scope.Kind, mem.Scope.Value, mem.ID, mem.ID, mem
 	if err != nil {
 		return WhyReport{}, fmt.Errorf("list conflicts: %w", err)
 	}
-	defer conflictRows.Close()
+	defer func() { _ = conflictRows.Close() }()
 	for conflictRows.Next() {
 		peer, err := scanMemoryFields(conflictRows)
 		if err != nil {
@@ -983,7 +983,7 @@ func (s *Store) RecomputeEvidenceScore(ctx context.Context, memoryID string) err
 	if err != nil {
 		return fmt.Errorf("group evidence kinds: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var (
 		userConfirmed int
 		reobserved    int

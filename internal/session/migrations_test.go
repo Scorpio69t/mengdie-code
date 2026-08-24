@@ -29,7 +29,7 @@ func TestMigration008MemoryApplied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	seen := map[string]bool{}
 	for rows.Next() {
 		var n string

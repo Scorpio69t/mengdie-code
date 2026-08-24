@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "suite_id": "memory-trust-set-v1",
-  "started_at": "2026-08-24T04:31:56.0511231Z",
-  "ended_at": "2026-08-24T04:31:56.0511231Z",
+  "started_at": "2026-08-24T04:36:40.9828511Z",
+  "ended_at": "2026-08-24T04:36:40.9828511Z",
   "precision_at_5": 0.5,
   "false_recall_rate": 0,
   "source_traceability": 0.9666666666666667,
@@ -27,15 +27,15 @@
           "Type": "user_message",
           "Ref": "cli:remember"
         },
-        "ObservedAt": "2026-08-24T04:31:49.8974941Z",
+        "ObservedAt": "2026-08-24T04:36:34.1901156Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:49.8974941Z",
-        "UpdatedAt": "2026-08-24T04:31:49.8974941Z"
+        "CreatedAt": "2026-08-24T04:36:34.1901156Z",
+        "UpdatedAt": "2026-08-24T04:36:34.1901156Z"
       }
     },
     {
@@ -56,15 +56,15 @@
           "Type": "user_message",
           "Ref": "cli:remember"
         },
-        "ObservedAt": "2026-08-24T04:31:50.0772607Z",
+        "ObservedAt": "2026-08-24T04:36:34.3671182Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:50.0772607Z",
-        "UpdatedAt": "2026-08-24T04:31:50.0772607Z"
+        "CreatedAt": "2026-08-24T04:36:34.3671182Z",
+        "UpdatedAt": "2026-08-24T04:36:34.3671182Z"
       }
     },
     {
@@ -85,15 +85,15 @@
           "Type": "user_message",
           "Ref": "cli:remember"
         },
-        "ObservedAt": "2026-08-24T04:31:50.3309145Z",
+        "ObservedAt": "2026-08-24T04:36:34.550266Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "disputed",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:50.3309145Z",
-        "UpdatedAt": "2026-08-24T04:31:50.3309145Z"
+        "CreatedAt": "2026-08-24T04:36:34.550266Z",
+        "UpdatedAt": "2026-08-24T04:36:34.550266Z"
       }
     },
     {
@@ -114,15 +114,15 @@
           "Type": "user_message",
           "Ref": "cli:remember"
         },
-        "ObservedAt": "2026-08-24T04:31:50.5198908Z",
+        "ObservedAt": "2026-08-24T04:36:34.7406664Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:50.5198908Z",
-        "UpdatedAt": "2026-08-24T04:31:50.5198908Z"
+        "CreatedAt": "2026-08-24T04:36:34.7406664Z",
+        "UpdatedAt": "2026-08-24T04:36:34.7406664Z"
       }
     },
     {
@@ -143,15 +143,15 @@
           "Type": "user_message",
           "Ref": "seed:explicit"
         },
-        "ObservedAt": "2026-08-24T04:31:50.697328Z",
+        "ObservedAt": "2026-08-24T04:36:34.9194886Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "archived",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:50.697328Z",
-        "UpdatedAt": "2026-08-24T04:31:50.7043269Z"
+        "CreatedAt": "2026-08-24T04:36:34.9194886Z",
+        "UpdatedAt": "2026-08-24T04:36:34.9265559Z"
       }
     },
     {
@@ -200,15 +200,15 @@
           "Type": "user_message",
           "Ref": "cli:remember"
         },
-        "ObservedAt": "2026-08-24T04:31:51.0528073Z",
+        "ObservedAt": "2026-08-24T04:36:35.2844521Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:51.0528073Z",
-        "UpdatedAt": "2026-08-24T04:31:51.0528073Z"
+        "CreatedAt": "2026-08-24T04:36:35.2844521Z",
+        "UpdatedAt": "2026-08-24T04:36:35.2844521Z"
       }
     },
     {
@@ -229,15 +229,15 @@
           "Type": "user_message",
           "Ref": "cli:remember"
         },
-        "ObservedAt": "2026-08-24T04:31:51.2311221Z",
+        "ObservedAt": "2026-08-24T04:36:35.4696143Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:51.2311221Z",
-        "UpdatedAt": "2026-08-24T04:31:51.2311221Z"
+        "CreatedAt": "2026-08-24T04:36:35.4696143Z",
+        "UpdatedAt": "2026-08-24T04:36:35.4696143Z"
       }
     },
     {
@@ -258,15 +258,15 @@
           "Type": "user_message",
           "Ref": "cli:remember"
         },
-        "ObservedAt": "2026-08-24T04:31:51.4074982Z",
+        "ObservedAt": "2026-08-24T04:36:35.6539216Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:51.4074982Z",
-        "UpdatedAt": "2026-08-24T04:31:51.4074982Z"
+        "CreatedAt": "2026-08-24T04:36:35.6539216Z",
+        "UpdatedAt": "2026-08-24T04:36:35.6539216Z"
       }
     },
     {
@@ -287,15 +287,15 @@
           "Type": "user_message",
           "Ref": "cli:remember"
         },
-        "ObservedAt": "2026-08-24T04:31:51.5811596Z",
+        "ObservedAt": "2026-08-24T04:36:35.8324178Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:51.5811596Z",
-        "UpdatedAt": "2026-08-24T04:31:51.5811596Z"
+        "CreatedAt": "2026-08-24T04:36:35.8324178Z",
+        "UpdatedAt": "2026-08-24T04:36:35.8324178Z"
       }
     },
     {
@@ -316,15 +316,15 @@
           "Type": "user_message",
           "Ref": "cli:remember"
         },
-        "ObservedAt": "2026-08-24T04:31:51.7535414Z",
+        "ObservedAt": "2026-08-24T04:36:36.0137658Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:51.7535414Z",
-        "UpdatedAt": "2026-08-24T04:31:51.7535414Z"
+        "CreatedAt": "2026-08-24T04:36:36.0137658Z",
+        "UpdatedAt": "2026-08-24T04:36:36.0137658Z"
       }
     },
     {
@@ -345,15 +345,15 @@
           "Type": "user_message",
           "Ref": "cli:remember"
         },
-        "ObservedAt": "2026-08-24T04:31:51.9299049Z",
+        "ObservedAt": "2026-08-24T04:36:36.1933256Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:51.9299049Z",
-        "UpdatedAt": "2026-08-24T04:31:51.9299049Z"
+        "CreatedAt": "2026-08-24T04:36:36.1933256Z",
+        "UpdatedAt": "2026-08-24T04:36:36.1933256Z"
       }
     },
     {
@@ -374,15 +374,15 @@
           "Type": "user_message",
           "Ref": "cli:remember"
         },
-        "ObservedAt": "2026-08-24T04:31:52.1043445Z",
+        "ObservedAt": "2026-08-24T04:36:36.372025Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:52.1043445Z",
-        "UpdatedAt": "2026-08-24T04:31:52.1043445Z"
+        "CreatedAt": "2026-08-24T04:36:36.372025Z",
+        "UpdatedAt": "2026-08-24T04:36:36.372025Z"
       }
     },
     {
@@ -403,15 +403,15 @@
           "Type": "user_message",
           "Ref": "cli:remember"
         },
-        "ObservedAt": "2026-08-24T04:31:52.277663Z",
+        "ObservedAt": "2026-08-24T04:36:36.6497068Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:52.277663Z",
-        "UpdatedAt": "2026-08-24T04:31:52.277663Z"
+        "CreatedAt": "2026-08-24T04:36:36.6497068Z",
+        "UpdatedAt": "2026-08-24T04:36:36.6497068Z"
       }
     },
     {
@@ -432,15 +432,15 @@
           "Type": "user_message",
           "Ref": "cli:remember"
         },
-        "ObservedAt": "2026-08-24T04:31:52.4490215Z",
+        "ObservedAt": "2026-08-24T04:36:36.830501Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:52.4490215Z",
-        "UpdatedAt": "2026-08-24T04:31:52.4490215Z"
+        "CreatedAt": "2026-08-24T04:36:36.830501Z",
+        "UpdatedAt": "2026-08-24T04:36:36.830501Z"
       }
     },
     {
@@ -461,15 +461,15 @@
           "Type": "file",
           "Ref": "go.mod:3"
         },
-        "ObservedAt": "2026-08-24T04:31:52.6235071Z",
+        "ObservedAt": "2026-08-24T04:36:37.0131901Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:52.6235071Z",
-        "UpdatedAt": "2026-08-24T04:31:52.6235071Z"
+        "CreatedAt": "2026-08-24T04:36:37.0131901Z",
+        "UpdatedAt": "2026-08-24T04:36:37.0131901Z"
       }
     },
     {
@@ -490,15 +490,15 @@
           "Type": "file",
           "Ref": ".golangci.yml:2"
         },
-        "ObservedAt": "2026-08-24T04:31:52.8295924Z",
+        "ObservedAt": "2026-08-24T04:36:37.3014109Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:52.8295924Z",
-        "UpdatedAt": "2026-08-24T04:31:52.8295924Z"
+        "CreatedAt": "2026-08-24T04:36:37.3014109Z",
+        "UpdatedAt": "2026-08-24T04:36:37.3014109Z"
       }
     },
     {
@@ -519,15 +519,15 @@
           "Type": "file",
           "Ref": ".github/workflows/ci.yml:5"
         },
-        "ObservedAt": "2026-08-24T04:31:53.088926Z",
+        "ObservedAt": "2026-08-24T04:36:37.5898442Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:53.088926Z",
-        "UpdatedAt": "2026-08-24T04:31:53.088926Z"
+        "CreatedAt": "2026-08-24T04:36:37.5898442Z",
+        "UpdatedAt": "2026-08-24T04:36:37.5898442Z"
       }
     },
     {
@@ -548,15 +548,15 @@
           "Type": "file",
           "Ref": "AGENTS.md:1"
         },
-        "ObservedAt": "2026-08-24T04:31:53.3443926Z",
+        "ObservedAt": "2026-08-24T04:36:37.8722244Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:53.3443926Z",
-        "UpdatedAt": "2026-08-24T04:31:53.3443926Z"
+        "CreatedAt": "2026-08-24T04:36:37.8722244Z",
+        "UpdatedAt": "2026-08-24T04:36:37.8722244Z"
       }
     },
     {
@@ -577,15 +577,15 @@
           "Type": "file",
           "Ref": "git log -1"
         },
-        "ObservedAt": "2026-08-24T04:31:53.670273Z",
+        "ObservedAt": "2026-08-24T04:36:38.1556481Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:53.670273Z",
-        "UpdatedAt": "2026-08-24T04:31:53.670273Z"
+        "CreatedAt": "2026-08-24T04:36:38.1556481Z",
+        "UpdatedAt": "2026-08-24T04:36:38.1556481Z"
       }
     },
     {
@@ -606,15 +606,15 @@
           "Type": "command_result",
           "Ref": "go test ./...:exit=0"
         },
-        "ObservedAt": "2026-08-24T04:31:53.9490614Z",
+        "ObservedAt": "2026-08-24T04:36:38.4481036Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:53.9490614Z",
-        "UpdatedAt": "2026-08-24T04:31:53.9490614Z"
+        "CreatedAt": "2026-08-24T04:36:38.4481036Z",
+        "UpdatedAt": "2026-08-24T04:36:38.4481036Z"
       }
     },
     {
@@ -635,15 +635,15 @@
           "Type": "command_result",
           "Ref": "go vet ./...:exit=0"
         },
-        "ObservedAt": "2026-08-24T04:31:54.1647717Z",
+        "ObservedAt": "2026-08-24T04:36:38.7522162Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:54.1647717Z",
-        "UpdatedAt": "2026-08-24T04:31:54.1647717Z"
+        "CreatedAt": "2026-08-24T04:36:38.7522162Z",
+        "UpdatedAt": "2026-08-24T04:36:38.7522162Z"
       }
     },
     {
@@ -664,15 +664,15 @@
           "Type": "command_result",
           "Ref": "golangci-lint:issue=0"
         },
-        "ObservedAt": "2026-08-24T04:31:54.3809216Z",
+        "ObservedAt": "2026-08-24T04:36:39.0581573Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:54.3809216Z",
-        "UpdatedAt": "2026-08-24T04:31:54.3809216Z"
+        "CreatedAt": "2026-08-24T04:36:39.0581573Z",
+        "UpdatedAt": "2026-08-24T04:36:39.0581573Z"
       }
     },
     {
@@ -693,15 +693,15 @@
           "Type": "command_result",
           "Ref": "govulncheck:vuln=0"
         },
-        "ObservedAt": "2026-08-24T04:31:54.5935619Z",
+        "ObservedAt": "2026-08-24T04:36:39.3206944Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:54.5935619Z",
-        "UpdatedAt": "2026-08-24T04:31:54.5935619Z"
+        "CreatedAt": "2026-08-24T04:36:39.3206944Z",
+        "UpdatedAt": "2026-08-24T04:36:39.3206944Z"
       }
     },
     {
@@ -722,15 +722,15 @@
           "Type": "command_result",
           "Ref": "build:targets=4:exit=0"
         },
-        "ObservedAt": "2026-08-24T04:31:54.9485834Z",
+        "ObservedAt": "2026-08-24T04:36:39.6060793Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "active",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:54.9485834Z",
-        "UpdatedAt": "2026-08-24T04:31:54.9485834Z"
+        "CreatedAt": "2026-08-24T04:36:39.6060793Z",
+        "UpdatedAt": "2026-08-24T04:36:39.6060793Z"
       }
     },
     {
@@ -751,15 +751,15 @@
           "Type": "agent_message",
           "Ref": "agent:inferred"
         },
-        "ObservedAt": "2026-08-24T04:31:55.1914167Z",
+        "ObservedAt": "2026-08-24T04:36:39.884301Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "proposed",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:55.1914167Z",
-        "UpdatedAt": "2026-08-24T04:31:55.1914167Z"
+        "CreatedAt": "2026-08-24T04:36:39.884301Z",
+        "UpdatedAt": "2026-08-24T04:36:39.884301Z"
       }
     },
     {
@@ -780,15 +780,15 @@
           "Type": "agent_message",
           "Ref": "agent:inferred"
         },
-        "ObservedAt": "2026-08-24T04:31:55.4194236Z",
+        "ObservedAt": "2026-08-24T04:36:40.131144Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "proposed",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:55.4194236Z",
-        "UpdatedAt": "2026-08-24T04:31:55.4194236Z"
+        "CreatedAt": "2026-08-24T04:36:40.131144Z",
+        "UpdatedAt": "2026-08-24T04:36:40.131144Z"
       }
     },
     {
@@ -809,15 +809,15 @@
           "Type": "agent_message",
           "Ref": "agent:inferred"
         },
-        "ObservedAt": "2026-08-24T04:31:55.6147264Z",
+        "ObservedAt": "2026-08-24T04:36:40.4158985Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "proposed",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:55.6147264Z",
-        "UpdatedAt": "2026-08-24T04:31:55.6147264Z"
+        "CreatedAt": "2026-08-24T04:36:40.4158985Z",
+        "UpdatedAt": "2026-08-24T04:36:40.4158985Z"
       }
     },
     {
@@ -838,15 +838,15 @@
           "Type": "agent_message",
           "Ref": "agent:inferred"
         },
-        "ObservedAt": "2026-08-24T04:31:55.8481637Z",
+        "ObservedAt": "2026-08-24T04:36:40.6800947Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "proposed",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:55.8481637Z",
-        "UpdatedAt": "2026-08-24T04:31:55.8481637Z"
+        "CreatedAt": "2026-08-24T04:36:40.6800947Z",
+        "UpdatedAt": "2026-08-24T04:36:40.6800947Z"
       }
     },
     {
@@ -867,15 +867,15 @@
           "Type": "agent_message",
           "Ref": "agent:inferred"
         },
-        "ObservedAt": "2026-08-24T04:31:56.0361399Z",
+        "ObservedAt": "2026-08-24T04:36:40.9691601Z",
         "ValidFrom": null,
         "ValidUntil": null,
         "Status": "proposed",
         "Confidence": 0,
         "EvidenceScore": 0,
         "Supersedes": "",
-        "CreatedAt": "2026-08-24T04:31:56.0361399Z",
-        "UpdatedAt": "2026-08-24T04:31:56.0361399Z"
+        "CreatedAt": "2026-08-24T04:36:40.9691601Z",
+        "UpdatedAt": "2026-08-24T04:36:40.9691601Z"
       }
     }
   ]
