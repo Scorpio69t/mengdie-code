@@ -853,6 +853,88 @@ LIMIT ?`, sessionID, afterSeq, limit)
 	return result, nil
 }
 
+// Events returns a narrow projection of the session's durable events for
+// downstream consumers (the memory extractor in M3 Slice 02 and future
+// reporting). Rows are ordered oldest-first by session_seq and capped at
+// `limit`. A non-positive limit returns no rows; callers should pass a
+// positive value (the extractor default is 500).
+//
+// The projection is deliberately narrow: only Kind, the tool name and
+// success flag for tool.completed, the failure category for run.failed,
+// and the wall-clock timestamp. Callers do not need to know the full
+// events schema or the payload JSON shape. Rows whose payload cannot be
+// decoded are still surfaced with the kind + timestamp populated, leaving
+// Name/Success/SourceRef at their zero values so downstream rules that
+// inspect those fields stay silent instead of firing on garbage.
+func (s *SQLiteStore) Events(ctx context.Context, sessionID string, limit int) (result []EventRow, resultErr error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, errors.New("session events session id is required")
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT kind, payload_json, created_at
+FROM events
+WHERE session_id = ?
+ORDER BY session_seq ASC
+LIMIT ?`, sessionID, limit)
+	if err != nil {
+		return nil, classifySQLiteError("load session event rows", err)
+	}
+	defer closeRows(rows, &resultErr, "close session event row scan")
+	result = []EventRow{}
+	for rows.Next() {
+		var row EventRow
+		var payload []byte
+		var createdAt string
+		if err := rows.Scan(&row.Kind, &payload, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan session event row: %w", err)
+		}
+		row.Timestamp, err = time.Parse(time.RFC3339Nano, createdAt)
+		if err != nil {
+			return nil, fmt.Errorf("decode session event time: %w", err)
+		}
+		projectEventPayload(row.Kind, payload, &row)
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, classifySQLiteError("iterate session event rows", err)
+	}
+	return result, nil
+}
+
+// projectEventPayload fills the kind-specific columns of an EventRow by
+// decoding the payload JSON written to the events table. Unknown kinds
+// leave Name / Success / SourceRef at their zero values; malformed
+// payloads also leave the row partially populated so that kind / timestamp
+// still flow to callers.
+func projectEventPayload(kind string, payload []byte, row *EventRow) {
+	if len(payload) == 0 {
+		return
+	}
+	switch kind {
+	case "tool.completed":
+		var p struct {
+			Tool    string `json:"tool"`
+			Success bool   `json:"success"`
+			Summary string `json:"summary"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return
+		}
+		row.Name, row.Success, row.SourceRef = p.Tool, p.Success, p.Summary
+	case "run.failed":
+		var p struct {
+			Category string `json:"category"`
+		}
+		if err := json.Unmarshal(payload, &p); err != nil {
+			return
+		}
+		row.SourceRef = "category=" + p.Category
+	}
+}
+
 // Path returns the local database path for diagnostics without exposing its
 // contents.
 func (s *SQLiteStore) Path() string { return s.path }

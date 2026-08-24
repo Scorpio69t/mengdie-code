@@ -8,13 +8,14 @@ import (
 	"testing"
 
 	"github.com/Scorpio69t/mengdie-code/internal/memory"
+	"github.com/Scorpio69t/mengdie-code/internal/session"
 )
 
 // TestRuleEditFile covers the edit_file → repository trigger: at least one
 // successful tool.completed with name=edit_file must produce a single
 // AuthorityRepository memory claiming the project uses edit_file.
 func TestRuleEditFile(t *testing.T) {
-	events := []eventRow{
+	events := []session.EventRow{
 		{Kind: "tool.completed", Name: "edit_file", Success: true},
 	}
 	got := ruleEditFile(events)
@@ -32,7 +33,7 @@ func TestRuleEditFile(t *testing.T) {
 // TestRuleEditFileSkipsFailed confirms a failed edit_file invocation must
 // not produce the repository claim.
 func TestRuleEditFileSkipsFailed(t *testing.T) {
-	events := []eventRow{
+	events := []session.EventRow{
 		{Kind: "tool.completed", Name: "edit_file", Success: false},
 	}
 	if got := ruleEditFile(events); got != nil {
@@ -42,7 +43,7 @@ func TestRuleEditFileSkipsFailed(t *testing.T) {
 
 // TestRuleWriteFile covers the write_file → repository trigger.
 func TestRuleWriteFile(t *testing.T) {
-	events := []eventRow{
+	events := []session.EventRow{
 		{Kind: "tool.completed", Name: "write_file", Success: true},
 	}
 	got := ruleWriteFile(events)
@@ -61,7 +62,7 @@ func TestRuleWriteFile(t *testing.T) {
 // text lives in SourceRef per the brief; ruleGoTest is permissive about the
 // rest of the command line.
 func TestRuleGoTest(t *testing.T) {
-	events := []eventRow{
+	events := []session.EventRow{
 		{Kind: "tool.completed", Name: "shell", Success: true, SourceRef: "go test ./..."},
 	}
 	got := ruleGoTest(events)
@@ -79,7 +80,7 @@ func TestRuleGoTest(t *testing.T) {
 // TestRuleGoTestIgnoresUnrelatedCommands confirms the rule does not fire on
 // shell commands that happen to share the prefix but are not test commands.
 func TestRuleGoTestIgnoresUnrelatedCommands(t *testing.T) {
-	events := []eventRow{
+	events := []session.EventRow{
 		{Kind: "tool.completed", Name: "shell", Success: true, SourceRef: "go build ./..."},
 	}
 	if got := ruleGoTest(events); got != nil {
@@ -89,7 +90,7 @@ func TestRuleGoTestIgnoresUnrelatedCommands(t *testing.T) {
 
 // TestRuleGoLint covers the shell+golangci-lint → verified trigger.
 func TestRuleGoLint(t *testing.T) {
-	events := []eventRow{
+	events := []session.EventRow{
 		{Kind: "tool.completed", Name: "shell", Success: true, SourceRef: "golangci-lint run"},
 	}
 	got := ruleGoLint(events)
@@ -108,7 +109,7 @@ func TestRuleGoLint(t *testing.T) {
 // with zero failed tool.completed events produces a single
 // AuthorityInferred memory.
 func TestRuleRunAllSuccess(t *testing.T) {
-	events := []eventRow{
+	events := []session.EventRow{
 		{Kind: "tool.completed", Name: "edit_file", Success: true},
 		{Kind: "tool.completed", Name: "shell", Success: true, SourceRef: "go test ./..."},
 		{Kind: "run.completed"},
@@ -128,7 +129,7 @@ func TestRuleRunAllSuccess(t *testing.T) {
 // TestRuleRunAllSuccessRequiresRunCompleted confirms the rule stays silent
 // when no run.completed event is present even if all tools succeeded.
 func TestRuleRunAllSuccessRequiresRunCompleted(t *testing.T) {
-	events := []eventRow{
+	events := []session.EventRow{
 		{Kind: "tool.completed", Name: "edit_file", Success: true},
 	}
 	if got := ruleRunAllSuccess(events); got != nil {
@@ -139,7 +140,7 @@ func TestRuleRunAllSuccessRequiresRunCompleted(t *testing.T) {
 // TestRuleRunAllSuccessRejectsFailedTool confirms a single failed
 // tool.completed disqualifies the run even when run.completed is present.
 func TestRuleRunAllSuccessRejectsFailedTool(t *testing.T) {
-	events := []eventRow{
+	events := []session.EventRow{
 		{Kind: "tool.completed", Name: "edit_file", Success: true},
 		{Kind: "tool.completed", Name: "shell", Success: false, SourceRef: "go test ./..."},
 		{Kind: "run.completed"},
@@ -153,7 +154,7 @@ func TestRuleRunAllSuccessRejectsFailedTool(t *testing.T) {
 // category=provider_protocol → inferred trigger. The category lives in
 // SourceRef per the brief's placeholder shape.
 func TestRuleProviderProtocolFailures(t *testing.T) {
-	events := []eventRow{
+	events := []session.EventRow{
 		{Kind: "run.failed", SourceRef: "category=provider_protocol"},
 		{Kind: "run.failed", SourceRef: "category=provider_protocol"},
 	}
@@ -172,7 +173,7 @@ func TestRuleProviderProtocolFailures(t *testing.T) {
 // TestRuleProviderProtocolFailuresRequiresTwo confirms a single failure
 // stays silent — the threshold is ≥ 2 per spec §4.
 func TestRuleProviderProtocolFailuresRequiresTwo(t *testing.T) {
-	events := []eventRow{
+	events := []session.EventRow{
 		{Kind: "run.failed", SourceRef: "category=provider_protocol"},
 	}
 	if got := ruleProviderProtocolFailures(events); got != nil {
@@ -184,7 +185,7 @@ func TestRuleProviderProtocolFailuresRequiresTwo(t *testing.T) {
 // provider_protocol category drives the rule; other categories do not
 // accumulate toward the threshold.
 func TestRuleProviderProtocolFailuresIgnoresOtherCategories(t *testing.T) {
-	events := []eventRow{
+	events := []session.EventRow{
 		{Kind: "run.failed", SourceRef: "category=rate_limit"},
 		{Kind: "run.failed", SourceRef: "category=timeout"},
 	}
@@ -193,18 +194,18 @@ func TestRuleProviderProtocolFailuresIgnoresOtherCategories(t *testing.T) {
 	}
 }
 
-// TestRulesExtractPlaceholder documents the Task 3 contract for
-// Rules.Extract: until Task 4 wires the real event source, the method
-// returns (nil, nil) without error. The nil/nil shape lets app.Runtime
-// short-circuit cleanly while the extractor is being developed.
-func TestRulesExtractPlaceholder(t *testing.T) {
-	rules := NewRules()
+// TestRulesExtractNilReader documents the defensive contract for Task 4:
+// when Rules is built without an EventReader, Extract returns
+// (nil, nil) so app.Runtime short-circuits cleanly while the wiring is
+// being assembled.
+func TestRulesExtractNilReader(t *testing.T) {
+	rules := NewRules(nil)
 	got, err := rules.Extract(context.Background(), "session-1")
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
 	}
 	if got != nil {
-		t.Fatalf("expected nil memories (Task 3 placeholder), got %+v", got)
+		t.Fatalf("expected nil memories with nil reader, got %+v", got)
 	}
 }
 
@@ -212,7 +213,7 @@ func TestRulesExtractPlaceholder(t *testing.T) {
 // spec §4 is wired into Rules.allRules. A new rule added to spec §4 must
 // be added here too; otherwise this list-driven test will start failing.
 func TestRulesAllRulesRegistered(t *testing.T) {
-	rules := NewRules()
+	rules := NewRules(nil)
 	all := rules.allRules()
 	if len(all) != 6 {
 		t.Fatalf("want 6 rules registered, got %d", len(all))

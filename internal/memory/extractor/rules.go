@@ -6,80 +6,67 @@
 // listed in spec §4. It is the cheap default; LLM is opt-in for the
 // cases the rules can't cover (Task 5).
 //
-// The rule* functions are deliberately pure: they take a []eventRow and
-// return []memory.Memory with no I/O, no clock, no randomness. That
-// makes them trivially unit-testable (rules_test.go exercises each one
-// with synthetic events) and lets Task 4 wire Rules.Extract to the real
-// event source without touching the rule logic itself.
+// The rule* functions are deliberately pure: they take a
+// []session.EventRow and return []memory.Memory with no I/O, no clock,
+// no randomness. That makes them trivially unit-testable
+// (rules_test.go exercises each one with synthetic events) and lets
+// Rules.Extract wire a real EventReader in Task 4 without touching the
+// rule logic itself.
 package extractor
 
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/Scorpio69t/mengdie-code/internal/memory"
+	"github.com/Scorpio69t/mengdie-code/internal/session"
 )
 
-// eventRow is the minimal projection of session events the rules read.
-// It is intentionally narrower than *session.SQLiteStore's event table;
-// only the columns the spec §4 triggers actually inspect are surfaced.
-// Task 4 will populate this projection from the session event log.
-type eventRow struct {
-	Kind      string    // event kind (e.g. "tool.completed", "run.completed", "run.failed")
-	Name      string    // tool name for tool.completed; empty otherwise
-	Success   bool      // tool.completed exit status; false for failed runs
-	Timestamp time.Time // wall-clock stamp; kept for downstream scoring
-	SourceRef string    // shell command text, run-failure category, etc
-}
+// rulesLoadLimit caps how many events Rules.Extract asks the reader for
+// in one call. The value matches Task 4's brief and is intentionally
+// small enough to bound memory use on long-running sessions.
+const rulesLoadLimit = 500
 
 // ruleFunc is the pure signature every rule shares. Implementations
 // MUST NOT mutate the input slice and SHOULD return nil (not an empty
 // slice) when the trigger does not fire so callers can append cheaply.
-type ruleFunc func([]eventRow) []memory.Memory
+type ruleFunc func([]session.EventRow) []memory.Memory
 
-// Rules is the deterministic Extractor implementation. It is intentionally
-// thin in Task 3: the real event source is wired in by Task 4
-// (EventReader interface + 重构 loadEvents). Until then Extract returns
-// (nil, nil) so the app.Runtime call site stays stable while the
-// upstream event surface is being finalised.
+// Rules is the deterministic Extractor implementation. It reads events
+// through an EventReader (typically a session.SQLiteStore wrapped by
+// NewSQLiteReader) and runs the rule set in allRules().
 type Rules struct {
-	// source will be populated by Task 4. Until then it is nil and
-	// Extract short-circuits to (nil, nil) per the Task 3 contract.
-	source eventSource
+	// eventReader is the read-side hook Task 4 wires against
+	// session.SQLiteStore. A nil reader makes Extract short-circuit to
+	// (nil, nil) so callers can register Rules before the wiring is in
+	// place without breaking app.Runtime.
+	eventReader EventReader
 }
 
-// eventSource is the read-side hook Task 4 will satisfy with a session-
-// backed implementation. Defining it here (and returning nil from
-// Task 3) keeps the wiring visible without committing to a session
-// import in this file.
-type eventSource interface {
-	LoadEvents(ctx context.Context, sessionID string) ([]eventRow, error)
+// NewRules returns a Rules bound to the supplied EventReader. Passing
+// nil is allowed and keeps the Task 3 placeholder contract alive —
+// Extract returns (nil, nil) without error when the reader is missing.
+// Production wiring is NewRules(NewSQLiteReader(sessionStore)).
+func NewRules(reader EventReader) *Rules {
+	return &Rules{eventReader: reader}
 }
 
-// NewRules returns a Rules with no event source attached. The Task 4
-// wiring (e.g. NewRules(sessionStore)) will replace this constructor;
-// for now callers use it to register Rules against the Extractor
-// interface in app.Runtime.
-func NewRules() *Rules {
-	return &Rules{}
-}
-
-// Extract returns candidate memory rows for sessionID. The Task 3
-// implementation is a placeholder that returns (nil, nil) until Task 4
-// supplies the real event source. The nil-error / nil-slice shape lets
-// app.Runtime short-circuit cleanly while the extractor is being
-// developed and matches the documented "no I/O yet" contract.
+// Extract loads the session's events through the reader and runs each
+// rule in order. The slice returned by the rules is appended into a
+// fresh backing array; rules MUST NOT share state across calls.
 func (r *Rules) Extract(ctx context.Context, sessionID string) ([]memory.Memory, error) {
-	if r == nil {
+	if r == nil || r.eventReader == nil {
 		return nil, nil
 	}
-	if r.source == nil {
-		return nil, nil
+	events, err := r.eventReader.Events(ctx, sessionID, rulesLoadLimit)
+	if err != nil {
+		return nil, err
 	}
-	_ = ctx
-	_ = sessionID
-	return nil, nil
+	out := make([]memory.Memory, 0, len(events))
+	for _, rule := range r.allRules() {
+		out = append(out, rule(events)...)
+	}
+	return out, nil
 }
 
 // allRules returns the canonical, ordered list of rule functions. The
@@ -102,7 +89,7 @@ func (r *Rules) allRules() []ruleFunc {
 // Trigger: kind=tool.completed ∧ name=edit_file ∧ success=true.
 // Authority: repository (the project's tool choice is observable from
 // the file edits themselves).
-func ruleEditFile(events []eventRow) []memory.Memory {
+func ruleEditFile(events []session.EventRow) []memory.Memory {
 	for _, e := range events {
 		if e.Kind == "tool.completed" && e.Name == "edit_file" && e.Success {
 			return []memory.Memory{{
@@ -117,7 +104,7 @@ func ruleEditFile(events []eventRow) []memory.Memory {
 // ruleWriteFile: at least one successful tool.completed for write_file.
 // Trigger: kind=tool.completed ∧ name=write_file ∧ success=true.
 // Authority: repository.
-func ruleWriteFile(events []eventRow) []memory.Memory {
+func ruleWriteFile(events []session.EventRow) []memory.Memory {
 	for _, e := range events {
 		if e.Kind == "tool.completed" && e.Name == "write_file" && e.Success {
 			return []memory.Memory{{
@@ -131,12 +118,12 @@ func ruleWriteFile(events []eventRow) []memory.Memory {
 
 // ruleGoTest: any successful tool.completed shell whose SourceRef
 // contains the substring "go test". The SourceRef carries the command
-// text per Task 4's event projection; substring matching (rather than
-// full-parse) keeps the rule robust to flag variations.
+// summary per Task 4's event projection; substring matching (rather
+// than full-parse) keeps the rule robust to flag variations.
 // Trigger: kind=tool.completed ∧ name=shell ∧ success=true ∧
 // SourceRef ⊇ "go test".
 // Authority: verified (test invocation is a build-verifiable signal).
-func ruleGoTest(events []eventRow) []memory.Memory {
+func ruleGoTest(events []session.EventRow) []memory.Memory {
 	for _, e := range events {
 		if e.Kind == "tool.completed" && e.Name == "shell" && e.Success && strings.Contains(e.SourceRef, "go test") {
 			return []memory.Memory{{
@@ -151,7 +138,7 @@ func ruleGoTest(events []eventRow) []memory.Memory {
 // ruleGoLint: any successful tool.completed shell whose SourceRef
 // contains "golangci-lint". Mirrors ruleGoTest in shape.
 // Authority: verified.
-func ruleGoLint(events []eventRow) []memory.Memory {
+func ruleGoLint(events []session.EventRow) []memory.Memory {
 	for _, e := range events {
 		if e.Kind == "tool.completed" && e.Name == "shell" && e.Success && strings.Contains(e.SourceRef, "golangci-lint") {
 			return []memory.Memory{{
@@ -169,7 +156,7 @@ func ruleGoLint(events []eventRow) []memory.Memory {
 // Trigger: ∃ kind=run.completed ∧ ∀ tool.completed, success=true.
 // Authority: inferred (the run was successful, but the conclusion is
 // the agent's, not the user's).
-func ruleRunAllSuccess(events []eventRow) []memory.Memory {
+func ruleRunAllSuccess(events []session.EventRow) []memory.Memory {
 	hasCompleted := false
 	for _, e := range events {
 		if e.Kind == "run.completed" {
@@ -194,7 +181,7 @@ func ruleRunAllSuccess(events []eventRow) []memory.Memory {
 // categories do not accumulate toward the threshold.
 // Trigger: #{run.failed ∧ SourceRef ⊇ "category=provider_protocol"} ≥ 2.
 // Authority: inferred.
-func ruleProviderProtocolFailures(events []eventRow) []memory.Memory {
+func ruleProviderProtocolFailures(events []session.EventRow) []memory.Memory {
 	n := 0
 	for _, e := range events {
 		if e.Kind == "run.failed" && strings.Contains(e.SourceRef, "category=provider_protocol") {
