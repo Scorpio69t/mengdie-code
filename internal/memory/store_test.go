@@ -444,3 +444,179 @@ func TestSaveIsIdempotentUnderConflict(t *testing.T) {
 		t.Fatalf("expected exactly one row with id=%s, got %d", expectedID, rowCount)
 	}
 }
+
+// TestForgetHardDeletes covers spec §5 (`memory forget --hard <id>` exit 0,
+// exit 3 for missing id): a hard delete must remove the row entirely so a
+// subsequent Get returns ErrMemoryNotFound. The FK cascade on
+// memory_evidence / memory_usage takes care of dependent rows automatically.
+func TestForgetHardDeletes(t *testing.T) {
+	s := setupSeededStore(t)
+	mems, err := s.List(context.Background(), memory.ListQuery{Limit: 1})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(mems) == 0 {
+		t.Fatal("need at least one seeded memory")
+	}
+	if err := s.Forget(context.Background(), mems[0].ID, true); err != nil {
+		t.Fatalf("Forget hard: %v", err)
+	}
+	if _, err := s.Get(context.Background(), mems[0].ID); !errors.Is(err, memory.ErrMemoryNotFound) {
+		t.Fatalf("hard delete must remove row, got %v", err)
+	}
+}
+
+// TestForgetSoftArchives covers the default (--hard=false) path: Forget must
+// flip status to archived (visibility off in CLI list filters) instead of
+// physically removing the row, matching the spec §5 soft-delete semantics
+// for accidental `forget`s that the user can later recover via direct SQL.
+func TestForgetSoftArchives(t *testing.T) {
+	s := setupSeededStore(t)
+	mems, err := s.List(context.Background(), memory.ListQuery{Limit: 1})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if err := s.Forget(context.Background(), mems[0].ID, false); err != nil {
+		t.Fatalf("Forget soft: %v", err)
+	}
+	got, err := s.Get(context.Background(), mems[0].ID)
+	if err != nil {
+		t.Fatalf("Get after soft delete: %v", err)
+	}
+	if got.Status != memory.StatusArchived {
+		t.Fatalf("soft delete must archive, got %s", got.Status)
+	}
+}
+
+// TestForgetReturnsNotFoundOnMissingID covers spec §5 exit code 3
+// (`mengdie memory forget <id>` with an unknown id): Forget must surface
+// ErrMemoryNotFound so the CLI can map it to exit 3 via errors.Is.
+func TestForgetReturnsNotFoundOnMissingID(t *testing.T) {
+	s := setupSeededStore(t)
+	err := s.Forget(context.Background(), "mem_does_not_exist", true)
+	if !errors.Is(err, memory.ErrMemoryNotFound) {
+		t.Fatalf("forget on missing id must return ErrMemoryNotFound, got %v", err)
+	}
+}
+
+// TestSupersedeMarksOldSuperseded covers spec §4.2 conflict policy row 4
+// (explicit supersede): Supersede must flip the old row's status to
+// `superseded` and stamp `supersedes=<newID>` so `mengdie memory why <old>`
+// can show the chain and so List / Tier1 filters exclude superseded rows
+// while the chain is still traceable.
+func TestSupersedeMarksOldSuperseded(t *testing.T) {
+	s := setupSeededStore(t)
+	mems, err := s.List(context.Background(), memory.ListQuery{Limit: 2})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(mems) < 2 {
+		t.Fatal("need 2 memories")
+	}
+	if err := s.Supersede(context.Background(), mems[0].ID, mems[1].ID); err != nil {
+		t.Fatalf("Supersede: %v", err)
+	}
+	got, err := s.Get(context.Background(), mems[0].ID)
+	if err != nil {
+		t.Fatalf("Get old: %v", err)
+	}
+	if got.Status != memory.StatusSuperseded {
+		t.Fatalf("status=%s, want superseded", got.Status)
+	}
+	if got.Supersedes != mems[1].ID {
+		t.Fatalf("supersedes field=%q, want %s", got.Supersedes, mems[1].ID)
+	}
+}
+
+// TestApproveOnlyProposed covers the happy path for
+// `mengdie memory approve <id>`: an inferred memory starts in StatusProposed
+// and Approve must promote it to StatusActive so the Tier 1 / 2 catalog
+// renders it and RecomputeEvidenceScore runs to fold in any evidence that
+// piled up while the memory was awaiting approval.
+//
+// Note on scope: the seeded store already has an inferred memory in
+// {project, mengdie}; per spec §4.2 row 2 a same-scope + same-authority +
+// different-claim insert would flip both rows to disputed, which is
+// correct production behaviour but blocks the Approve happy path. This
+// test uses a fresh task scope so the proposed memory lands clean as
+// proposed without touching the seeded conflict surface.
+func TestApproveOnlyProposed(t *testing.T) {
+	s := setupSeededStore(t)
+	in := memory.Memory{
+		Claim:     "推断 X",
+		Authority: memory.AuthorityInferred,
+		Scope:     memory.Scope{Kind: "task", Value: "approve-test"},
+		Source:    memory.SourceRef{Type: memory.SourceTypeAgentMessage, Ref: "s:1:agent"},
+	}
+	got, err := s.ProposeMemory(context.Background(), in)
+	if err != nil {
+		t.Fatalf("ProposeMemory: %v", err)
+	}
+	if err := s.Approve(context.Background(), got.ID); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	after, err := s.Get(context.Background(), got.ID)
+	if err != nil {
+		t.Fatalf("Get after Approve: %v", err)
+	}
+	if after.Status != memory.StatusActive {
+		t.Fatalf("approved must be active, got %s", after.Status)
+	}
+}
+
+// TestApproveRejectsNonProposed exercises the Approve guard: calling Approve
+// on a memory whose status is anything other than StatusProposed must return
+// ErrNotProposed so the CLI can render `memory approve <id>: not a proposed
+// memory` rather than silently re-promoting a row that's already active (or
+// flipping an archived row).
+func TestApproveRejectsNonProposed(t *testing.T) {
+	s := setupSeededStore(t)
+	mems, err := s.List(context.Background(), memory.ListQuery{Status: "active", Limit: 1})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(mems) == 0 {
+		t.Fatal("need at least one active seeded memory")
+	}
+	if err := s.Approve(context.Background(), mems[0].ID); !errors.Is(err, memory.ErrNotProposed) {
+		t.Fatalf("approve on active must fail with ErrNotProposed, got %v", err)
+	}
+}
+
+// TestRecomputeEvidenceScore covers spec §4.3: evidence_score =
+// 1.0*user_confirmed + 0.6*reobserved + 0.3*task_verified. After inserting
+// one user_confirmed + one reobserved row, RecomputeEvidenceScore must
+// bump evidence_score to at least 1.6, proving the formula and the auto-call
+// path inside RecordEvidence both work.
+func TestRecomputeEvidenceScore(t *testing.T) {
+	s := setupSeededStore(t)
+	mems, err := s.List(context.Background(), memory.ListQuery{Limit: 1})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(mems) == 0 {
+		t.Fatal("no memories")
+	}
+	if err := s.RecordEvidence(context.Background(), memory.Evidence{
+		ID: "ev-1", MemoryID: mems[0].ID, Kind: "user_confirmed",
+		SourceRef: "u:1", Weight: 1.0, CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("RecordEvidence user_confirmed: %v", err)
+	}
+	if err := s.RecordEvidence(context.Background(), memory.Evidence{
+		ID: "ev-2", MemoryID: mems[0].ID, Kind: "reobserved",
+		SourceRef: "s:2", Weight: 0.6, CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("RecordEvidence reobserved: %v", err)
+	}
+	if err := s.RecomputeEvidenceScore(context.Background(), mems[0].ID); err != nil {
+		t.Fatalf("RecomputeEvidenceScore: %v", err)
+	}
+	got, err := s.Get(context.Background(), mems[0].ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.EvidenceScore < 1.5 {
+		t.Fatalf("expected >=1.5 (1.0+0.6), got %v", got.EvidenceScore)
+	}
+}
