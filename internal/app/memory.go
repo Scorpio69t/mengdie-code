@@ -39,8 +39,13 @@ const (
 	// ExitAuthorityGuard is returned when the Authority ↔ SourceType gate
 	// rejects a Save call (Store.ErrAuthorityGuard). Matches spec §5 row 4.
 	ExitAuthorityGuard = 4
-	// ExitConflictUnresolvable is returned when the same-scope same-authority
-	// conflict policy cannot settle two memories. Matches spec §5 row 5.
+	// ExitConflictUnresolvable is reserved for the spec §5 row 5 case
+	// ("冲突无法解决 — 双方 Authority 相等且 scope 完全重叠"). The current
+	// Store does not yet emit a sentinel for this scenario (Task 3's
+	// both-disputed fix in d21118d marks rows disputed silently), so
+	// the exit code is declared for forward compatibility but currently
+	// unreachable from the CLI. When the Store eventually emits the
+	// conflict sentinel, exitForStoreError must map it here.
 	ExitConflictUnresolvable = 5
 )
 
@@ -148,13 +153,26 @@ func exitForStoreError(err error) int {
 	case errors.Is(err, memory.ErrAuthorityGuard):
 		return ExitAuthorityGuard
 	case errors.Is(err, memory.ErrScopeMismatch):
-		return ExitConflictUnresolvable
+		// ErrScopeMismatch is raised by Store.Supersede when the two ids
+		// do not share the same Scope (store.go: cross-scope replacement
+		// guard). It is structurally different from spec §5 row 5
+		// ("冲突无法解决 — 双方 Authority 相等且 scope 完全重叠"), which the
+		// current Store does not yet emit (Task 3's both-disputed fix
+		// in d21118d marks rows disputed silently). Map to ExitNotFound
+		// (= 3) on a "found but not applicable here" rationale: both ids
+		// exist individually, but the pair is not in a state the
+		// operation can act on — the same family as ErrMemoryNotFound.
+		// ExitConflictUnresolvable (= 5) stays reserved for the future
+		// same-scope same-authority conflict sentinel.
+		return ExitNotFound
 	case errors.Is(err, memory.ErrNotProposed):
-		// ErrNotProposed maps to spec §5 row 1 ("DB error"): the user
-		// must explicitly propose a new row if they meant to override an
-		// already-active memory, so the failure is operationally a write
-		// error rather than a parameter error.
-		return ExitRunError
+		// ErrNotProposed is raised by Store.Approve when the target row
+		// exists but is not in status=proposed. Same family as the two
+		// above: the id is found but not in a state the operation can
+		// act on, so it maps to ExitNotFound (= 3). The previous mapping
+		// to ExitRunError was misleading — this is a state precondition,
+		// not a write failure.
+		return ExitNotFound
 	default:
 		return ExitRunError
 	}
@@ -640,7 +658,7 @@ func runMemoryForget(ctx context.Context, args []string, a *App, stdout, stderr 
 // runMemorySupersede implements `mengdie memory supersede <old> <new>`.
 // The new id must already exist (the spec §4.2 row 4 chain is an
 // edit-write of an already-saved successor); cross-scope replacements
-// surface as ErrScopeMismatch → exit 5 (spec §5).
+// surface as ErrScopeMismatch → exit 3 (exitForStoreError).
 func runMemorySupersede(ctx context.Context, args []string, a *App, stdout, stderr io.Writer) int {
 	flags, common := a.newMemoryFlagSet("mengdie memory supersede", stderr)
 	if err := flags.Parse(args); err != nil {
@@ -670,8 +688,9 @@ func runMemorySupersede(ctx context.Context, args []string, a *App, stdout, stde
 
 // runMemoryApprove implements `mengdie memory approve <id>`. Only
 // status=proposed memories may be approved; any other status returns
-// ErrNotProposed from the Store (mapped to ExitRunError per the brief,
-// since it is operationally a "you need to propose a new row" error).
+// ErrNotProposed from the Store (mapped to ExitNotFound via
+// exitForStoreError on the "id found but not in the state the operation
+// can act on" rationale).
 func runMemoryApprove(ctx context.Context, args []string, a *App, stdout, stderr io.Writer) int {
 	flags, common := a.newMemoryFlagSet("mengdie memory approve", stderr)
 	if err := flags.Parse(args); err != nil {
