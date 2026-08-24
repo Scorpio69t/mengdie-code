@@ -11,8 +11,10 @@
 //   - Authority 与 SourceType 的绑定关系在 Go 层强制一次，避免静默错把
 //     agent_message 写成 active 的 explicit memory；
 //   - 同 scope + 规范化后同 claim 的 memory 视作同一条（idempotency）；
-//   - 同 scope + 同 authority + 不同 claim 的现有 memory 在新行写入前先置为
-//     disputed，让 `mengdie memory why <id>` 能给出冲突链。
+//   - 同 scope + 同 authority + 不同 claim 时双方都置 disputed（新行随
+//     peer 一起翻转，让 `mengdie memory why <id>` 能给出冲突链）；
+//   - 写采用 INSERT ... ON CONFLICT(id) DO NOTHING RETURNING id 模式，
+//     两个并发写不会因为 SELECT-then-INSERT 之间出现 UNIQUE 冲突。
 package memory
 
 import (
@@ -134,8 +136,11 @@ func methodForAuthority(authority Authority) string {
 }
 
 // save performs the canonical idempotency + conflict + insert flow shared by
-// every public Save* method. It owns its own transaction so the SELECT-then-
-// INSERT pair cannot race with another writer in the same scope.
+// every public Save* method. It owns its own transaction so the normalized
+// SELECT-for-idempotency runs against a consistent snapshot, and the
+// subsequent INSERT relies on ON CONFLICT(id) DO NOTHING so two concurrent
+// writers with the same (claim, scope, authority, sessionID) tuple cannot
+// surface a UNIQUE-constraint error to the caller.
 func (s *Store) save(ctx context.Context, m Memory) (Memory, error) {
 	if err := m.Scope.Valid(); err != nil {
 		return Memory{}, fmt.Errorf("%w: %v", ErrInvalidMemory, err)
@@ -174,9 +179,11 @@ func (s *Store) save(ctx context.Context, m Memory) (Memory, error) {
 		}
 	}()
 
-	// Idempotency: scan same-scope, non-archived rows and short-circuit on a
-	// normalized-claim match. Returning the existing row keeps new wiring in
-	// step with old — see spec §4.2 idempotency row.
+	// Read same-scope, non-archived rows. Two consumers:
+	//   - spec §4.2 row 1: same normalized claim → idempotent short-circuit
+	//     (returns the existing row, no error).
+	//   - spec §4.2 row 2: same authority + different claim → dispute marking,
+	//     and the new row is itself marked disputed.
 	existing, err := loadSameScope(ctx, tx, m.Scope)
 	if err != nil {
 		return Memory{}, fmt.Errorf("scan existing memories: %w", err)
@@ -219,6 +226,14 @@ func (s *Store) save(ctx context.Context, m Memory) (Memory, error) {
 		}
 	}
 
+	// Spec §4.2 row 2 mandates both the existing peer and the incoming row
+	// land as `disputed`. Only override the routed Status when the loop above
+	// actually flipped a peer; inferred / explicit routing stays intact in
+	// every other case.
+	if len(disputeIDs) > 0 {
+		m.Status = StatusDisputed
+	}
+
 	var validFrom, validUntil any
 	if m.ValidFrom != nil {
 		validFrom = formatStamp(m.ValidFrom.UTC())
@@ -227,21 +242,44 @@ func (s *Store) save(ctx context.Context, m Memory) (Memory, error) {
 		validUntil = formatStamp(m.ValidUntil.UTC())
 	}
 
-	if _, err := tx.ExecContext(ctx, `
+	// Race-safe insert: ON CONFLICT(id) DO NOTHING collapses the
+	// SELECT-then-INSERT race window. Two concurrent writers with the same
+	// (claim, scope, authority, sessionID) tuple compute the same id; the
+	// first INSERT wins, the second silently no-ops, and the loser's
+	// RETURNING clause produces no rows so we fall back to loadMemoryByID
+	// and return the durable row. The normalized SELECT above covers the
+	// NFD/NFC same-claim case that ON CONFLICT(id) cannot detect on its own.
+	var insertedID string
+	scanErr := tx.QueryRowContext(ctx, `
 INSERT INTO memories(
     id, claim, kind, scope_kind, scope_value, authority, source_type, source_ref,
     observed_at, valid_from, valid_until, status, confidence, evidence_score,
     supersedes, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO NOTHING RETURNING id`,
 		m.ID, m.Claim, m.Kind, m.Scope.Kind, m.Scope.Value,
 		string(m.Authority), string(m.Source.Type), m.Source.Ref,
 		observedStamp, validFrom, validUntil, string(m.Status),
 		m.Confidence, m.EvidenceScore, m.Supersedes, stamp, stamp,
-	); err != nil {
-		return Memory{}, fmt.Errorf("insert memory: %w", err)
+	).Scan(&insertedID)
+	if errors.Is(scanErr, sql.ErrNoRows) {
+		// Another writer with the same id inserted first. Load the
+		// pre-existing row and return it inside this transaction.
+		loaded, loadErr := loadMemoryByID(ctx, tx, m.ID)
+		if loadErr != nil {
+			return Memory{}, loadErr
+		}
+		if err := tx.Commit(); err != nil {
+			return Memory{}, fmt.Errorf("commit race-resolved memory: %w", err)
+		}
+		committed = true
+		return loaded, nil
+	}
+	if scanErr != nil {
+		return Memory{}, fmt.Errorf("insert memory: %w", scanErr)
 	}
 
-	inserted, err := loadMemoryByID(ctx, tx, m.ID)
+	inserted, err := loadMemoryByID(ctx, tx, insertedID)
 	if err != nil {
 		return Memory{}, err
 	}
