@@ -857,6 +857,13 @@ LIMIT ?`, sessionID, afterSeq, limit)
 // contents.
 func (s *SQLiteStore) Path() string { return s.path }
 
+// DB returns the underlying *sql.DB handle so adjacent packages (notably the
+// memory subsystem sharing this database file) can run schema-bound checks or
+// custom migrations without re-opening the database. Callers must respect the
+// store's single-writer connection limits; concurrent schema migration
+// invocations are still the store's responsibility.
+func (s *SQLiteStore) DB() *sql.DB { return s.db }
+
 // Close releases SQLite and its WAL handles.
 func (s *SQLiteStore) Close() error {
 	if s == nil || s.db == nil {
