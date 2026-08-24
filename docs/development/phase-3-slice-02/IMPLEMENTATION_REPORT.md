@@ -54,7 +54,7 @@ M3 Slice 02 在 M3 Slice 01 的可信记忆 store 之上落地"任务结束自�
 - `source_traceability` = 1
 - `authority_fidelity` = 1（inferred 永不绕过 active）
 - `why_completeness` = 1
-- 5 个 inferred_extraction 场景：`hybrid_both`、`llm_tool_pref`、`hybrid_dedup_case`、`rules_only_when_llm_nil`、`llm_failure_silent` 全过
+- 5 个 inferred_extraction 场景：`extractor-rules-edits`、`extractor-rules-tests`、`extractor-rules-lint`、`extractor-llm-tool-pref`、`extractor-hybrid-both` 全过
 
 Evidence 落 `internal/memory/trustset/evidence/memory-trust-v1.json`（gitignored，CI 自动重生成）。Live Provider evidence 落 `internal/memory/extractor/evidence/live-{os}-{date}.json`（gitignored，仅当 `MENGDIE_LIVE_SMOKE=1` 时由人工 / schedule 触发）。
 
@@ -63,6 +63,7 @@ Evidence 落 `internal/memory/trustset/evidence/memory-trust-v1.json`（gitignor
 - `gofmt -l .`：通过（0 输出）
 - `go vet ./...`：无问题
 - `go test -race ./...`：除 Windows pre-existing `TestShellExecute...` 外全 PASS
+- 注：spec §7 body 写的是 30s 超时，spec README 标题也提到 30s；plan 与实现都按 30s 走。LLM 端用 20s 独立超时，钩子用 30s 兜底。这与 spec §7.2 文字一致。
 - `go test -race ./internal/memory/extractor/...`：21 单元测试 + 1 live provider（SKIP）全过
 - `go test -race ./internal/memory/...`：包括 trustset 35 场景端到端
 - `go test -race ./internal/agent/...`：包括 `applyMemoryExtraction` 钩子 2 测试
