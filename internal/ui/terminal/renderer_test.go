@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Scorpio69t/mengdie-code/internal/cost"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 )
 
@@ -48,14 +49,22 @@ func TestHumanRendererRendersKnownEvents(t *testing.T) {
 		testEvent(t, 1, events.KindRunStarted, events.RunStarted{Model: "deepseek:chat"}),
 		testEvent(t, 2, events.KindTodoUpdated, events.TodoUpdated{Todos: []events.Todo{{Content: "读取失败测试", Status: "in_progress"}}}),
 		testEvent(t, 3, events.KindToolCompleted, events.ToolCompleted{Tool: "go test", Success: true, Summary: "通过"}),
-		testEvent(t, 4, events.KindRunCompleted, events.RunCompleted{Summary: "验证完成"}),
+		testEvent(t, 4, events.KindUsageUpdated, events.UsageUpdated{
+			Purpose: "agent", RequestCount: 1, UsageReported: true,
+			InputTokens: 10, OutputTokens: 2, TotalTokens: 12, CacheReadTokens: 3,
+			Model: "deepseek-v4-flash", ProviderOrigin: "https://api.deepseek.com",
+			CostStatus: cost.StatusEstimated, EstimatedCostPicoUSD: 1_000_000,
+			Currency: cost.CurrencyUSD, PriceTableVersion: cost.TableVersion, PricingSource: "official",
+		}),
+		testEvent(t, 5, events.KindRunCompleted, events.RunCompleted{Summary: "验证完成"}),
 	}
 	for _, event := range inputs {
 		if err := renderer.Emit(context.Background(), event); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, want := range []string{"开始任务", "模型：deepseek:chat", "[进行中] 读取失败测试", "✓ go test：通过", "✓ 任务完成：验证完成"} {
+	for _, want := range []string{"开始任务", "模型：deepseek:chat", "[进行中] 读取失败测试", "✓ go test：通过",
+		"用量（Agent）：请求 1 · 输入 10 · 输出 2 · 总计 12 · 缓存读取 3 tokens · 估算成本 $0.000001 USD", "✓ 任务完成：验证完成"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("output does not contain %q: %s", want, output.String())
 		}

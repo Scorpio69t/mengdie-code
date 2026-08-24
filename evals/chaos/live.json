@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "id": "chaos-live-provider-v1",
+  "description": "MengDie Code P2-08B 真实 Provider 故障注入证据采集（liveprovider build tag）",
+  "fixture_root": "../fixtures",
+  "tasks": [
+    {
+      "id": "live-read-pre-abort",
+      "title": "真实 Provider 下只读工具 abort 故障",
+      "fixture": "go/sum-boundary",
+      "script": "read_then_finish",
+      "verify": {"command": ["go", "test", "./..."], "timeout": "60s"},
+      "hooks": [
+        {"hook": "tools.read.pre", "fire": "abort"}
+      ],
+      "recovery": {
+        "expected_resume_can_resume": false,
+        "expected_resume_reason_contains": "私有边界",
+        "expected_final_exit_code": 1
+      }
+    },
+    {
+      "id": "live-patch-pre-abort",
+      "title": "真实 Provider 下 Patch Journal 写前 abort",
+      "fixture": "go/sum-boundary",
+      "script": "edit_then_finish",
+      "verify": {"command": ["go", "test", "./..."], "timeout": "60s"},
+      "hooks": [
+        {"hook": "patch.pre", "fire": "abort"}
+      ],
+      "recovery": {
+        "expected_resume_can_resume": false,
+        "expected_resume_reason_contains": "私有边界",
+        "expected_final_exit_code": 1
+      }
+    },
+    {
+      "id": "live-event-store-commit-abort",
+      "title": "真实 Provider 下 EventStore commit 边界 abort",
+      "fixture": "go/sum-boundary",
+      "script": "edit_then_finish",
+      "verify": {"command": ["go", "test", "./..."], "timeout": "60s"},
+      "hooks": [
+        {"hook": "event_store.commit", "fire": "abort", "after_event_seq": 3}
+      ],
+      "recovery": {
+        "expected_resume_can_resume": false,
+        "expected_resume_reason_contains": "未完成",
+        "expected_final_exit_code": 1
+      }
+    }
+  ]
+}

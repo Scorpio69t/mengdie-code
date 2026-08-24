@@ -102,6 +102,8 @@ mengdie memory forget <id>
 - [x] 第二阶段 Slice 06A：Patch Journal 写入事实与崩溃判定（[实施报告](./docs/development/phase-2-slice-06a/IMPLEMENTATION_REPORT.md)）
 - [x] 第二阶段 Slice 06B：回滚材料、显式审批与安全 rewind（[实施报告](./docs/development/phase-2-slice-06b/IMPLEMENTATION_REPORT.md)）
 - [x] 第二阶段 Slice 07：项目指令与最小 Skill 按需加载（[实施报告](./docs/development/phase-2-slice-07/IMPLEMENTATION_REPORT.md)）
+- [x] 第二阶段 Slice 08A：可恢复用量事实与版本化成本估算（[实施报告](./docs/development/phase-2-slice-08a/IMPLEMENTATION_REPORT.md)）
+- [x] 第二阶段 Slice 08B：随机故障注入与 M2 退出评测（[实施报告](./docs/development/phase-2-slice-08b/IMPLEMENTATION_REPORT.md)、[M2 退出矩阵](./docs/development/phase-2-slice-08b/M2_EXIT_MATRIX.md)）
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal（[第二阶段详细设计](./docs/design/phase-2/DETAILED_DESIGN.md)）

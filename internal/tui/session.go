@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/Scorpio69t/mengdie-code/internal/cost"
 	"github.com/Scorpio69t/mengdie-code/internal/session"
 )
 
@@ -214,6 +215,28 @@ func renderSessionTimeline(view session.SessionView, width int) string {
 	if len(view.Messages) == 0 {
 		lines = append(lines, "- 暂无完成消息")
 	}
+	lines = append(lines, "", "用量与成本：")
+	if view.Usage.RequestCount == 0 {
+		if view.Usage.InputTokens == 0 && view.Usage.OutputTokens == 0 && view.Usage.TotalTokens == 0 && view.Usage.CacheReadTokens == 0 {
+			lines = append(lines, "- 暂无模型请求事实")
+		} else {
+			lines = append(lines, fmt.Sprintf("- 历史 token：输入 %d · 输出 %d · 总计 %d · 缓存读取 %d（请求数与成本未记录）",
+				view.Usage.InputTokens, view.Usage.OutputTokens, view.Usage.TotalTokens, view.Usage.CacheReadTokens))
+		}
+	} else {
+		lines = append(lines, fmt.Sprintf("- 请求 %d · 已上报 token %d · 输入 %d · 输出 %d · 总计 %d · 缓存读取 %d",
+			view.Usage.RequestCount, view.Usage.UsageReportedRequests, view.Usage.InputTokens,
+			view.Usage.OutputTokens, view.Usage.TotalTokens, view.Usage.CacheReadTokens))
+		if view.Usage.EstimatedCostRequests > 0 {
+			lines = append(lines, fmt.Sprintf("- 估算成本 $%s USD · %d 次请求 · 价表 %s",
+				cost.FormatPicoUSD(view.Usage.EstimatedCostPicoUSD), view.Usage.EstimatedCostRequests,
+				strings.Join(view.Usage.PriceTableVersions, ", ")))
+		}
+		if view.Usage.UnknownCostRequests > 0 {
+			lines = append(lines, fmt.Sprintf("- 成本未知 %d 次 · %s", view.Usage.UnknownCostRequests,
+				strings.Join(usageUnknownReasonLabels(view.Usage.CostUnknownReasons), ", ")))
+		}
+	}
 	lines = append(lines, "", "工具与审批：")
 	for _, tool := range view.Tools {
 		lines = append(lines, fmt.Sprintf("- %s：%s", clip(tool.Tool, 36), tool.Phase))
@@ -231,6 +254,25 @@ func renderSessionTimeline(view session.SessionView, width int) string {
 		lines = append(lines, "- 暂无待办")
 	}
 	return strings.Join(lines, "\n")
+}
+
+func usageUnknownReasonLabels(reasons []string) []string {
+	labels := make([]string, len(reasons))
+	for index, reason := range reasons {
+		switch reason {
+		case cost.UnknownUsageUnreported:
+			labels[index] = "Provider 未上报 token"
+		case cost.UnknownPriceUnavailable:
+			labels[index] = "无匹配价表"
+		case cost.UnknownInvalidUsage:
+			labels[index] = "用量数据无效"
+		case cost.UnknownCostOverflow:
+			labels[index] = "估算超出范围"
+		default:
+			labels[index] = reason
+		}
+	}
+	return labels
 }
 
 func clip(value string, limit int) string {
