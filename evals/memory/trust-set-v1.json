@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "memory-trust-set-v1",
-  "description": "MengDie Code P2 M3 Slice 01 可信记忆 Trust Set v1：30 个跨会话场景，按 explicit 15 / repository 5 / verified 5 / inferred 5 分布",
+  "description": "MengDie Code P2 M3 Slice 01+02 可信记忆 Trust Set v1：35 个跨会话场景，按 explicit 15 / repository 5 / verified 5 / inferred 10 分布；inferred 末 5 个为 M3 Slice 02 Task 9 新增的 MemoryExtractor 集成场景（extractor-rules-* / extractor-llm-* / extractor-hybrid-both）",
   "fixture_root": "../fixtures",
   "tasks": [
     {
@@ -243,6 +243,107 @@
       "setup": {"agent_run": "scan package names", "success": true},
       "actions": [{"type": "propose_memory", "claim": "Go 包名用单数小写名词"}],
       "expected": {"status": "proposed", "authority": "inferred", "forbid_active_before_approve": true}
+    },
+    {
+      "id": "extractor-rules-edits",
+      "category": "inferred",
+      "description": "规则抽取器从 edit_file 工具成功事件中提取记忆（authority=repository 经 SaveRepositoryFact 落为 active）",
+      "setup": {
+        "seed_events": [
+          {"kind": "tool.completed", "name": "edit_file", "success": true}
+        ]
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "rules", "scope": "project/mengdie", "expect_proposed_count_gte": 0}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "edit_file", "authority": "repository", "status": "active"}
+        ]
+      }
+    },
+    {
+      "id": "extractor-rules-tests",
+      "category": "inferred",
+      "description": "规则抽取器从 go test shell 成功事件中提取记忆（authority=verified 经 SaveVerifiedFact 落为 active）",
+      "setup": {
+        "seed_events": [
+          {"kind": "tool.completed", "name": "shell", "success": true, "summary": "go test ./internal/memory/..."}
+        ]
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "rules", "scope": "project/mengdie", "expect_proposed_count_gte": 0}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "go test", "authority": "verified", "status": "active"}
+        ]
+      }
+    },
+    {
+      "id": "extractor-rules-lint",
+      "category": "inferred",
+      "description": "规则抽取器从 golangci-lint shell 成功事件中提取记忆（authority=verified 经 SaveVerifiedFact 落为 active）",
+      "setup": {
+        "seed_events": [
+          {"kind": "tool.completed", "name": "shell", "success": true, "summary": "golangci-lint run ./..."}
+        ]
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "rules", "scope": "project/mengdie", "expect_proposed_count_gte": 0}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "golangci-lint", "authority": "verified", "status": "active"}
+        ]
+      }
+    },
+    {
+      "id": "extractor-llm-tool-pref",
+      "category": "inferred",
+      "description": "LLM 抽取器（stub provider）从 edit_file/write_file 比例推断工具偏好（authority=inferred 经 ProposeMemory 落为 proposed）",
+      "setup": {
+        "seed_events": [
+          {"kind": "tool.completed", "name": "edit_file", "success": true},
+          {"kind": "tool.completed", "name": "edit_file", "success": true},
+          {"kind": "tool.completed", "name": "edit_file", "success": true},
+          {"kind": "tool.completed", "name": "write_file", "success": true}
+        ],
+        "llm_response": "{\"claim\":\"用户偏好 edit_file 工具多于 write_file\",\"source_type\":\"agent_message\",\"reason\":\"frequency\"}"
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "llm", "scope": "project/mengdie", "expect_proposed_count_gte": 1}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "偏好 edit_file", "authority": "inferred", "status": "proposed"}
+        ]
+      }
+    },
+    {
+      "id": "extractor-hybrid-both",
+      "category": "inferred",
+      "description": "Hybrid 抽取器同时跑 Rules 与 LLM（stub），两条候选分别走 SaveRepositoryFact / ProposeMemory 落为不同 authority 与 status（避免 spec §4.2 同 authority 不同 claim 的 dispute 翻转）",
+      "setup": {
+        "seed_events": [
+          {"kind": "tool.completed", "name": "edit_file", "success": true}
+        ],
+        "llm_response": "{\"claim\":\"用户偏好 edit_file 工具多于 write_file\",\"source_type\":\"agent_message\",\"reason\":\"preference\"}"
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "hybrid", "scope": "project/mengdie", "expect_proposed_count_gte": 1}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "edit_file 修改文件", "authority": "repository", "status": "active"},
+          {"claim_contains": "偏好 edit_file", "authority": "inferred", "status": "proposed"}
+        ]
+      }
     }
   ]
 }

@@ -4,7 +4,12 @@
 // Package config loads and validates layered MengDie configuration.
 package config
 
-import "time"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
 
 const (
 	DefaultProfileName = "default"
@@ -76,11 +81,28 @@ type Loaded struct {
 	ProjectConfigPath   string
 	UserConfigLoaded    bool
 	ProjectConfigLoaded bool
+	// ProjectIdentity is the explicit identity used by memory tooling; when empty,
+	// ProjectIdentityValue falls back to the base name of ProjectRoot.
+	ProjectIdentity string
 }
 
 // Profile returns the selected profile after validation.
 func (l Loaded) Profile() Profile {
 	return l.Config.Profiles[l.SelectedProfile]
+}
+
+// ProjectIdentityValue returns the explicit ProjectIdentity when set,
+// otherwise falls back to filepath.Base(ProjectRoot). Both empty inputs
+// return "" so callers can disable the field by zero-loading it.
+func (l Loaded) ProjectIdentityValue() string {
+	if l.ProjectIdentity != "" {
+		return l.ProjectIdentity
+	}
+	trimmed := strings.TrimRight(l.ProjectRoot, string(os.PathSeparator))
+	if trimmed == "" {
+		return ""
+	}
+	return filepath.Base(trimmed)
 }
 
 // Options provides process-specific paths, environment, and CLI overrides.

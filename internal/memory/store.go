@@ -28,8 +28,6 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/text/unicode/norm"
-
 	"github.com/Scorpio69t/mengdie-code/internal/session"
 )
 
@@ -241,7 +239,7 @@ func (s *Store) save(ctx context.Context, m Memory) (Memory, error) {
 	}
 
 	sessionID := sessionIDFromSource(m.Source.Ref)
-	normalized := normalizeClaim(m.Claim)
+	normalized := CanonicalizeClaim(m.Claim)
 
 	now := s.now().UTC()
 	if m.ObservedAt.IsZero() {
@@ -274,7 +272,7 @@ func (s *Store) save(ctx context.Context, m Memory) (Memory, error) {
 		return Memory{}, fmt.Errorf("scan existing memories: %w", err)
 	}
 	for _, row := range existing {
-		if normalizeClaim(row.Claim) == normalized {
+		if CanonicalizeClaim(row.Claim) == normalized {
 			memory, loadErr := loadMemoryByID(ctx, tx, row.ID)
 			if loadErr != nil {
 				return Memory{}, loadErr
@@ -297,7 +295,7 @@ func (s *Store) save(ctx context.Context, m Memory) (Memory, error) {
 		if row.Authority != m.Authority {
 			continue
 		}
-		if normalizeClaim(row.Claim) == normalized {
+		if CanonicalizeClaim(row.Claim) == normalized {
 			continue
 		}
 		disputeIDs = append(disputeIDs, row.ID)
@@ -1031,14 +1029,6 @@ func (s *Store) Rebuild(ctx context.Context) error {
 		return fmt.Errorf("rebuild memories_fts: %w", err)
 	}
 	return nil
-}
-
-// normalizeClaim applies the spec §4.2 equality rule: case-insensitive
-// after decomposing to NFD and re-composing to NFC so equivalent composed
-// and decomposed forms collide in memory-equality checks.
-func normalizeClaim(claim string) string {
-	lower := strings.ToLower(claim)
-	return norm.NFC.String(norm.NFD.String(lower))
 }
 
 // sessionIDFromSource extracts the session identifier from a Source.Ref when

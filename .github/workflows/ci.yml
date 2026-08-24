@@ -59,6 +59,9 @@ jobs:
       - name: 运行 Memory Trust Set
         run: go test -race ./internal/memory/... -count=1
 
+      - name: 运行 Memory Extractor
+        run: go test -race ./internal/memory/extractor/... -count=1
+
       - name: 上传 Memory 证据
         if: always()
         uses: actions/upload-artifact@v4

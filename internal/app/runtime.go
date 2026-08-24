@@ -15,6 +15,8 @@ import (
 	agentcontext "github.com/Scorpio69t/mengdie-code/internal/context"
 	"github.com/Scorpio69t/mengdie-code/internal/cost"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
+	"github.com/Scorpio69t/mengdie-code/internal/memory"
+	"github.com/Scorpio69t/mengdie-code/internal/memory/extractor"
 	"github.com/Scorpio69t/mengdie-code/internal/platform"
 	"github.com/Scorpio69t/mengdie-code/internal/policy"
 	"github.com/Scorpio69t/mengdie-code/internal/project"
@@ -159,7 +161,21 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("加载 Skills 失败：%v", err))
 	}
-	registeredTools := append(tools.DefaultTools(), contextSourceTool)
+	memoryStore := memory.OpenMemory(store)
+	retriever := memory.NewRetriever(memoryStore)
+	hybridExtractor := extractor.NewHybrid(extractor.NewRules(extractor.NewSQLiteReader(store)), nil) // v0.1: LLM 端 nil
+	extractorAdapter := agent.NewExtractorAdapter(hybridExtractor)
+	agentRetrieverAdapter := agent.NewRetrieverAdapter(retriever)
+	toolsRetrieverAdapter := memoryRecallRetrieverAdapter{retriever: retriever}
+	projectIdentity := loaded.ProjectIdentityValue()
+
+	registeredTools := append(
+		tools.DefaultTools(
+			tools.WithMemoryRetriever(toolsRetrieverAdapter),
+			tools.WithProjectIdentityForTools(projectIdentity),
+		),
+		contextSourceTool,
+	)
 	if len(skillCatalog.Skills) > 0 {
 		readSkillTool, err := skills.NewReadTool(skillCatalog)
 		if err != nil {
@@ -214,7 +230,11 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 		Environment: a.environment, AllowedEnvironment: options.AllowedEnvironment,
 		Instructions: contextInstructions, Skills: contextSkills,
 		ContextRecorder: contextRecorder, MutationJournal: patchJournal,
-		CostEstimator: cost.NewEstimator(profile.BaseURL, profile.Model),
+		CostEstimator:   cost.NewEstimator(profile.BaseURL, profile.Model),
+		MemoryRetriever: agentRetrieverAdapter,
+		ProjectIdentity: projectIdentity,
+		MemoryStore:     memoryStore,
+		MemoryExtractor: extractorAdapter,
 	})
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化 Agent Runtime 失败：%v", err))
@@ -268,6 +288,48 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 		return ExitPolicyDenied
 	}
 	return ExitOK
+}
+
+// memoryRecallRetrieverAdapter wraps a *memory.Retriever so it satisfies
+// tools.MemoryRecallRetriever. The tools package declares its own
+// MemoryRecallScope / MemoryRecallHit shadow types to break the
+// tools → memory → session → tools import cycle; this struct is the
+// seam where the two type worlds meet. It is built per runAgent call
+// and references the shared memory.Retriever underneath, so reusing
+// the same Retriever across runs is allocation-free at the adapter
+// layer.
+type memoryRecallRetrieverAdapter struct {
+	retriever *memory.Retriever
+}
+
+// Tier3AtomicRecall adapts the typed scope / hit shapes from
+// internal/memory to the tools-package shadows. An invalid scope is
+// surfaced as an error so a misconfigured memory_recall invocation
+// produces a tool-level failure rather than a silently empty hit
+// list; retriever errors propagate unchanged.
+func (a memoryRecallRetrieverAdapter) Tier3AtomicRecall(
+	ctx context.Context, query string, topK int, scope tools.MemoryRecallScope,
+) ([]tools.MemoryRecallHit, error) {
+	memScope := memory.Scope{Kind: scope.Kind, Value: scope.Value}
+	if err := memScope.Valid(); err != nil {
+		return nil, fmt.Errorf("memory_recall: %w", err)
+	}
+	hits, err := a.retriever.Tier3AtomicRecall(ctx, query, topK, memScope)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]tools.MemoryRecallHit, 0, len(hits))
+	for _, hit := range hits {
+		out = append(out, tools.MemoryRecallHit{
+			ID:            hit.ID,
+			Claim:         hit.Claim,
+			Authority:     string(hit.Authority),
+			SourceRef:     hit.Source.Ref,
+			EvidenceScore: hit.EvidenceScore,
+			Score:         hit.Score,
+		})
+	}
+	return out, nil
 }
 
 func (a *App) replayExistingCommand(ctx context.Context, store *session.SQLiteStore, begin session.BeginCommandResult, sink events.Sink) int {

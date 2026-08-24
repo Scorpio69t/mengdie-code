@@ -59,6 +59,16 @@ type Options struct {
 	// MemoryRetriever is set (the retriever needs a target scope value
 	// to filter by).
 	ProjectIdentity string
+	// MemoryStore is the write target for candidates produced by
+	// MemoryExtractor at the close of a successful Run. Nil disables
+	// the post-Run extraction hook entirely (the brief says the hook
+	// is best-effort and never fails the Run).
+	MemoryStore *memory.Store
+	// MemoryExtractor turns a completed Run into candidate memory rows.
+	// Production callers wire the memory/extractor.Hybrid (or Rules /
+	// LLM) implementation through ExtractorAdapter. Nil disables the
+	// post-Run hook.
+	MemoryExtractor MemoryExtractor
 }
 
 // MemoryRetriever is the agent-facing surface for trusted-memory recall.
@@ -69,6 +79,19 @@ type Options struct {
 // adapter in memory_adapter.go is the production wiring.
 type MemoryRetriever interface {
 	Recall(ctx context.Context, query string, topK int, scope MemoryScope) ([]MemoryHit, error)
+}
+
+// MemoryExtractor is the agent-facing surface for "what memories should
+// we propose from this just-completed run". The interface is the agent
+// package's own contract; the production wiring lives in
+// extractor_adapter.go and adapts the memory/extractor.Extractor
+// implementation (Rules / LLM / Hybrid from M3 Slice 02 Tasks 3+6) onto
+// this surface. Agent.Run calls Extract once at the end of a successful
+// run; the returned candidates are then routed through the configured
+// memory.Store with Scope / Source defaults re-applied so the store's
+// idempotency layer sees a uniform shape.
+type MemoryExtractor interface {
+	Extract(ctx context.Context, sessionID string) ([]memory.Memory, error)
 }
 
 // MemoryScope identifies the lifetime of a recall target. The Kind / Value
@@ -113,6 +136,8 @@ type Agent struct {
 	costEstimator      cost.Estimator
 	memoryRetriever    MemoryRetriever
 	projectIdentity    string
+	memoryStore        *memory.Store
+	memoryExtractor    MemoryExtractor
 }
 
 type RunRequest struct {
@@ -189,6 +214,8 @@ func New(options Options) (*Agent, error) {
 		costEstimator:      options.CostEstimator,
 		memoryRetriever:    options.MemoryRetriever,
 		projectIdentity:    strings.TrimSpace(options.ProjectIdentity),
+		memoryStore:        options.MemoryStore,
+		memoryExtractor:    options.MemoryExtractor,
 	}, nil
 }
 
@@ -354,6 +381,7 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 			}); err != nil {
 				return result, err
 			}
+			a.applyMemoryExtraction(ctx, request)
 			return result, nil
 		}
 
@@ -510,6 +538,65 @@ func (a *Agent) recordContext(ctx context.Context, message provider.Message, com
 	}
 	return nil
 }
+
+// applyMemoryExtraction runs the configured MemoryExtractor at the close
+// of a successful Run and proposes the returned candidates through the
+// configured memory.Store. The hook is best-effort: an extractor error
+// is logged as a warning and never fails the Run, and per-row
+// ProposeMemory errors are logged and skipped. The candidate list is
+// capped at five to bound the propose-time growth of the private
+// context log; production runs usually return 0-2 rows.
+//
+// Scope.Value and Source defaults are re-applied before each
+// ProposeMemory call so the store's idempotency / conflict layer sees a
+// uniform shape regardless of what the extractor implementation filled
+// in. The Authority field is intentionally NOT overridden — extractors
+// (Rules / LLM / Hybrid) stamp Authority themselves, and the Store's
+// guardSave would reject a mismatched Authority pair.
+//
+// The extract call runs under a fresh 30-second timeout detached from
+// the incoming ctx via context.WithoutCancel, so a cancelled Run does
+// not abort the propose-time write.
+func (a *Agent) applyMemoryExtraction(ctx context.Context, request RunRequest) {
+	if a.memoryExtractor == nil || a.memoryStore == nil || a.projectIdentity == "" {
+		return
+	}
+	extCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	candidates, err := a.memoryExtractor.Extract(extCtx, request.RunID)
+	if err != nil {
+		a.warnExtraction(ctx, "memory_extractor_failed", err)
+		return
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	if len(candidates) > 5 {
+		candidates = candidates[:5]
+	}
+	for _, mem := range candidates {
+		if mem.Scope.Value == "" {
+			mem.Scope = memory.Scope{Kind: "project", Value: a.projectIdentity}
+		}
+		if mem.Source.Ref == "" {
+			mem.Source = memory.SourceRef{
+				Type: memory.SourceTypeAgentMessage,
+				Ref:  request.RunID + ":extractor",
+			}
+		}
+		if _, err := a.memoryStore.ProposeMemory(extCtx, mem); err != nil {
+			a.warnExtraction(ctx, "memory_extractor_propose_failed", err)
+		}
+	}
+}
+
+// warnExtraction is the placeholder for emitting extraction-related
+// warnings. Slice 02 deliberately keeps the hook warning-free to avoid
+// coupling agent internals to the events package shape mid-implementation;
+// the real emit call lands in slice 03 alongside the agent-side warning
+// channel. The method exists now so callers do not have to update when
+// the emit path is wired up.
+func (a *Agent) warnExtraction(_ context.Context, _ string, _ error) {}
 
 // applyFirstTurnCatalogue queries the configured MemoryRetriever for the
 // catalogue rows scoped to a.projectIdentity and appends the rendered
