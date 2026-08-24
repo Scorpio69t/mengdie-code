@@ -244,6 +244,119 @@ func TestSaveMarksBothDisputedOnSameScopeDifferentClaim(t *testing.T) {
 	}
 }
 
+// setupSeededStore opens a session-backed SQLite store with the 008_memory
+// migration applied and wraps it in a memory.Store. It is the read-side
+// counterpart of setupMemoryStore: every List/Get/Why test seeds a small
+// fixture set up front so assertions can assume the rows exist.
+//
+// Seeds:
+//   - explicit, project=mengdie, status=active ("项目测试入口")
+//   - repository, project=mengdie, status=active ("go.mod declares Go 1.26.6")
+//   - verified, project=mengdie, status=active ("go test ./... exits 0")
+//   - inferred, project=mengdie, status=proposed ("agent-inferred project structure")
+//
+// The seeded set lets List filter tests exercise per-authority selection and
+// the Why report test assert non-empty Source.Ref and a non-nil Evidence
+// section.
+func setupSeededStore(t *testing.T) *memory.Store {
+	t.Helper()
+	sessionStore := setupMemoryStore(t)
+	s := memory.OpenMemory(sessionStore)
+	ctx := context.Background()
+	projectScope := memory.Scope{Kind: "project", Value: "mengdie"}
+	seeds := []memory.Memory{
+		{
+			Claim: "项目测试入口是 go test ./...", Authority: memory.AuthorityExplicit,
+			Scope:  projectScope,
+			Source: memory.SourceRef{Type: memory.SourceTypeUserMessage, Ref: "session-seed:1:user"},
+		},
+		{
+			Claim: "go.mod declares Go 1.26.6", Authority: memory.AuthorityRepository,
+			Scope:  projectScope,
+			Source: memory.SourceRef{Type: memory.SourceTypeFile, Ref: "go.mod:3"},
+		},
+		{
+			Claim: "go test ./... exits 0", Authority: memory.AuthorityVerified,
+			Scope:  projectScope,
+			Source: memory.SourceRef{Type: memory.SourceTypeCommandResult, Ref: "go test ./... exit=0"},
+		},
+		{
+			Claim: "agent-inferred project structure", Authority: memory.AuthorityInferred,
+			Scope:  projectScope,
+			Source: memory.SourceRef{Type: memory.SourceTypeAgentMessage, Ref: "session-seed:1:agent"},
+		},
+	}
+	for i, in := range seeds {
+		got, err := s.Save(ctx, in)
+		if err != nil {
+			t.Fatalf("seed %d: Save: %v", i, err)
+		}
+		if got.ID == "" {
+			t.Fatalf("seed %d: empty id", i)
+		}
+	}
+	return s
+}
+
+// TestListFiltersByScopeAndAuthority covers the dynamic-WHERE contract: when
+// both ScopeKind/ScopeValue and Authority are set, List must return only the
+// matching rows and never leak a different Authority through. The seed has
+// exactly one explicit project memory, so len > 0 must hold and every returned
+// row's Authority must equal AuthorityExplicit.
+func TestListFiltersByScopeAndAuthority(t *testing.T) {
+	s := setupSeededStore(t)
+	got, err := s.List(context.Background(), memory.ListQuery{
+		ScopeKind: "project", ScopeValue: "mengdie", Authority: "explicit", Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("expected explicit project memories")
+	}
+	for _, m := range got {
+		if m.Authority != memory.AuthorityExplicit {
+			t.Fatalf("filter leaked: %s", m.Authority)
+		}
+	}
+}
+
+// TestWhyReturnsAllSixSections covers the spec §5 / §7 audit surface: the
+// `mengdie memory why <id>` CLI command (and the Trust Set's
+// `why_completeness` metric) require WhyReport to carry all six sections —
+// source, observed_at (encoded in Memory.ObservedAt), scope (encoded in
+// Memory.Scope), evidence, conflicts, recent_usage — with no nil fields so
+// the CLI formatter can render them unconditionally.
+func TestWhyReturnsAllSixSections(t *testing.T) {
+	s := setupSeededStore(t)
+	mems, err := s.List(context.Background(), memory.ListQuery{Limit: 1})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(mems) == 0 {
+		t.Fatal("no memories")
+	}
+	report, err := s.Why(context.Background(), mems[0].ID)
+	if err != nil {
+		t.Fatalf("Why: %v", err)
+	}
+	if report.Memory.ID != mems[0].ID {
+		t.Fatal("id mismatch")
+	}
+	if report.Source.Ref == "" {
+		t.Fatal("source.ref missing")
+	}
+	if report.Evidence == nil {
+		t.Fatal("evidence section missing")
+	}
+	if report.RecentUsage == nil {
+		t.Fatal("usage section missing")
+	}
+	if report.Conflicts == nil {
+		t.Fatal("conflicts section missing")
+	}
+}
+
 // TestSaveIsIdempotentUnderConflict locks in the contract that two
 // concurrent writers in the same scope + authority cannot surface a
 // UNIQUE-constraint failure to the caller: both must return the same id and

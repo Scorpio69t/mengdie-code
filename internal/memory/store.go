@@ -39,7 +39,48 @@ var (
 	// ErrAuthorityGuard reports a Save* call whose Source.Type does not match
 	// the Authority pairing required by spec §4.1.
 	ErrAuthorityGuard = errors.New("memory authority guard violation")
+	// ErrInvalidQuery reports a malformed ListQuery (limit out of [0, 200]
+	// range per spec §5 CLI list limit).
+	ErrInvalidQuery = errors.New("invalid memory query")
+	// ErrMemoryNotFound is returned by Get / Why when no row exists for the
+	// requested id. CLI exit code 3 per spec §5 maps to this sentinel.
+	ErrMemoryNotFound = errors.New("memory not found")
 )
+
+// Memory list bounds per spec §5 (`mengdie memory list --limit N`).
+const (
+	listDefaultLimit = 20
+	listMaxLimit     = 200
+)
+
+// ListQuery is the filter / pagination surface for Store.List. Empty fields
+// mean "no constraint on that column" so the dynamic WHERE clause only adds
+// filters the caller actually supplied. Limit defaults to 20 and is capped at
+// 200 per spec §5; values outside [0, 200] produce ErrInvalidQuery so callers
+// can branch on it with errors.Is.
+type ListQuery struct {
+	ScopeKind  string
+	ScopeValue string
+	Authority  string
+	Status     string
+	Limit      int
+}
+
+// WhyReport is the audit surface for `mengdie memory why <id>` (spec §5) and
+// the Trust Set's why_completeness metric (spec §7). It carries all six
+// sections the spec lists — source, observed_at, scope, evidence, conflicts,
+// recent_usage — in a stable layout the CLI formatter can render
+// unconditionally. Memory embeds the first three sections (Source, ObservedAt,
+// Scope) while the Source field is duplicated for the spec §5 "原始来源"
+// heading without dereferencing Memory. The slice fields are always
+// non-nil so the CLI can range over them without nil checks.
+type WhyReport struct {
+	Memory      Memory
+	Source      SourceRef
+	Evidence    []Evidence
+	Conflicts   []Memory
+	RecentUsage []UsageRecord
+}
 
 // Store is the trusted-memory facade over the session-owned SQLite database.
 // It borrows the connection via session.SQLiteStore.DB() and shares the
@@ -328,6 +369,36 @@ func loadSameScope(ctx context.Context, tx *sql.Tx, scope Scope) ([]existingRow,
 // caller observes persistence roundtrip (timestamps stamped by SQLite, id
 // echoed, etc).
 func loadMemoryByID(ctx context.Context, tx *sql.Tx, id string) (Memory, error) {
+	row := tx.QueryRowContext(ctx, memoryColumnsSelect+` FROM memories WHERE id = ?`, id)
+	m, err := scanMemoryFields(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Memory{}, fmt.Errorf("memory %s disappeared mid-transaction", id)
+	}
+	if err != nil {
+		return Memory{}, fmt.Errorf("load memory: %w", err)
+	}
+	return m, nil
+}
+
+// memoryColumnsSelect is the canonical column projection shared by every
+// read-side query. Keeping it in one place ensures List / Get / Why / future
+// loaders all see the same shape scanMemoryFields expects.
+const memoryColumnsSelect = `SELECT id, claim, kind, scope_kind, scope_value, authority, source_type, source_ref,
+       observed_at, valid_from, valid_until, status, confidence, evidence_score,
+       supersedes, created_at, updated_at`
+
+// rowScanner abstracts over *sql.Row and *sql.Rows so a single helper can
+// parse the memories table projection regardless of whether the caller holds
+// a single-row result (Get, loadMemoryByID) or is iterating rows (List, Why's
+// conflict query).
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanMemoryFields reads one row produced by memoryColumnsSelect and
+// decodes it back into the Memory value type, including the RFC3339Nano
+// timestamp columns that the Store layer persists as strings.
+func scanMemoryFields(scanner rowScanner) (Memory, error) {
 	var (
 		m          Memory
 		authority  string
@@ -342,20 +413,12 @@ func loadMemoryByID(ctx context.Context, tx *sql.Tx, id string) (Memory, error) 
 		createdAt  string
 		updatedAt  string
 	)
-	err := tx.QueryRowContext(ctx, `
-SELECT id, claim, kind, scope_kind, scope_value, authority, source_type, source_ref,
-       observed_at, valid_from, valid_until, status, confidence, evidence_score,
-       supersedes, created_at, updated_at
-FROM memories WHERE id = ?`, id).Scan(
+	if err := scanner.Scan(
 		&m.ID, &m.Claim, &m.Kind, &scopeKind, &scopeValue, &authority, &sourceType, &m.Source.Ref,
 		&observedAt, &validFrom, &validUntil, &status, &m.Confidence, &m.EvidenceScore,
 		&supersedes, &createdAt, &updatedAt,
-	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Memory{}, fmt.Errorf("memory %s disappeared mid-transaction", id)
-	}
-	if err != nil {
-		return Memory{}, fmt.Errorf("load memory: %w", err)
+	); err != nil {
+		return Memory{}, err
 	}
 	m.Scope = Scope{Kind: scopeKind, Value: scopeValue.String}
 	m.Authority = Authority(authority)
@@ -384,6 +447,193 @@ FROM memories WHERE id = ?`, id).Scan(
 		}
 	}
 	return m, nil
+}
+
+// List returns memories matching the dynamic WHERE clause built from q. Empty
+// filter fields mean "no constraint on that column"; an empty q matches every
+// row. Ordering is evidence_score DESC, observed_at DESC per spec §6.1 Tier 1
+// task-topic catalogue. Limit defaults to 20 and is clamped at 200 per spec
+// §5; q.Limit < 0 or q.Limit > 200 returns ErrInvalidQuery.
+func (s *Store) List(ctx context.Context, q ListQuery) ([]Memory, error) {
+	if q.Limit < 0 {
+		return nil, fmt.Errorf("%w: limit %d must be >= 0", ErrInvalidQuery, q.Limit)
+	}
+	if q.Limit > listMaxLimit {
+		return nil, fmt.Errorf("%w: limit %d exceeds max %d", ErrInvalidQuery, q.Limit, listMaxLimit)
+	}
+	limit := q.Limit
+	if limit == 0 {
+		limit = listDefaultLimit
+	}
+
+	var (
+		clauses []string
+		args    []any
+	)
+	if q.ScopeKind != "" {
+		clauses = append(clauses, "scope_kind = ?")
+		args = append(args, q.ScopeKind)
+	}
+	if q.ScopeValue != "" {
+		clauses = append(clauses, "scope_value = ?")
+		args = append(args, q.ScopeValue)
+	}
+	if q.Authority != "" {
+		clauses = append(clauses, "authority = ?")
+		args = append(args, q.Authority)
+	}
+	if q.Status != "" {
+		clauses = append(clauses, "status = ?")
+		args = append(args, q.Status)
+	}
+
+	query := memoryColumnsSelect + " FROM memories"
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY evidence_score DESC, observed_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list memories: %w", err)
+	}
+	defer rows.Close()
+	result := make([]Memory, 0, limit)
+	for rows.Next() {
+		m, err := scanMemoryFields(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan memory row: %w", err)
+		}
+		result = append(result, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate memory rows: %w", err)
+	}
+	return result, nil
+}
+
+// Get returns the single memory row for id, or ErrMemoryNotFound (wrapped
+// with the id) if no such row exists. It is a read-only lookup that does
+// not open a write transaction.
+func (s *Store) Get(ctx context.Context, id string) (Memory, error) {
+	row := s.db.QueryRowContext(ctx, memoryColumnsSelect+` FROM memories WHERE id = ?`, id)
+	m, err := scanMemoryFields(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Memory{}, fmt.Errorf("%w: %s", ErrMemoryNotFound, id)
+	}
+	if err != nil {
+		return Memory{}, fmt.Errorf("load memory %s: %w", id, err)
+	}
+	return m, nil
+}
+
+// Why returns the audit surface for `mengdie memory why <id>` (spec §5) and
+// the Trust Set's why_completeness metric (spec §7). The report contains all
+// six sections the spec lists — source, observed_at, scope (carried inside
+// Memory), evidence, conflicts, recent_usage — assembled from four read-only
+// queries (no write transaction). Evidence is ordered newest-first; usage is
+// capped at the five most-recent recalls; conflicts share the target's
+// scope_kind + scope_value and are currently filtered to status='disputed'
+// peers (cross-authority conflict peers land in Task 5).
+func (s *Store) Why(ctx context.Context, id string) (WhyReport, error) {
+	mem, err := s.Get(ctx, id)
+	if err != nil {
+		return WhyReport{}, err
+	}
+
+	// Pre-allocate the slice fields so the CLI formatter can range over them
+	// unconditionally without nil checks; matches the Trust Set audit metric.
+	report := WhyReport{
+		Memory:      mem,
+		Source:      mem.Source,
+		Evidence:    []Evidence{},
+		Conflicts:   []Memory{},
+		RecentUsage: []UsageRecord{},
+	}
+
+	// Evidence: every corroborating signal, newest-first.
+	evRows, err := s.db.QueryContext(ctx, `
+SELECT id, memory_id, kind, source_ref, weight, created_at
+FROM memory_evidence
+WHERE memory_id = ?
+ORDER BY created_at DESC`, id)
+	if err != nil {
+		return WhyReport{}, fmt.Errorf("list evidence: %w", err)
+	}
+	defer evRows.Close()
+	for evRows.Next() {
+		var (
+			ev        Evidence
+			createdAt string
+		)
+		if err := evRows.Scan(&ev.ID, &ev.MemoryID, &ev.Kind, &ev.SourceRef, &ev.Weight, &createdAt); err != nil {
+			return WhyReport{}, fmt.Errorf("scan evidence: %w", err)
+		}
+		if t, parseErr := time.Parse(time.RFC3339Nano, createdAt); parseErr == nil {
+			ev.CreatedAt = t
+		}
+		report.Evidence = append(report.Evidence, ev)
+	}
+	if err := evRows.Err(); err != nil {
+		return WhyReport{}, fmt.Errorf("iterate evidence: %w", err)
+	}
+
+	// Recent usage: capped at the most-recent five recalls per spec §5.
+	usageRows, err := s.db.QueryContext(ctx, `
+SELECT memory_id, session_id, recalled_at, outcome
+FROM memory_usage
+WHERE memory_id = ?
+ORDER BY recalled_at DESC
+LIMIT 5`, id)
+	if err != nil {
+		return WhyReport{}, fmt.Errorf("list usage: %w", err)
+	}
+	defer usageRows.Close()
+	for usageRows.Next() {
+		var (
+			rec        UsageRecord
+			recalledAt string
+			outcome    sql.NullString
+		)
+		if err := usageRows.Scan(&rec.MemoryID, &rec.SessionID, &recalledAt, &outcome); err != nil {
+			return WhyReport{}, fmt.Errorf("scan usage: %w", err)
+		}
+		if t, parseErr := time.Parse(time.RFC3339Nano, recalledAt); parseErr == nil {
+			rec.RecalledAt = t
+		}
+		if outcome.Valid {
+			rec.Outcome = outcome.String
+		}
+		report.RecentUsage = append(report.RecentUsage, rec)
+	}
+	if err := usageRows.Err(); err != nil {
+		return WhyReport{}, fmt.Errorf("iterate usage: %w", err)
+	}
+
+	// Conflicts: any other same-scope row currently marked disputed. The
+	// cross-authority expansion of spec §4.2 row 3 is intentionally deferred
+	// to Task 5; until then the query is a same-scope + status=disputed sweep.
+	conflictRows, err := s.db.QueryContext(ctx, memoryColumnsSelect+`
+FROM memories
+WHERE scope_kind = ? AND scope_value = ? AND id != ? AND status = 'disputed'
+ORDER BY observed_at DESC`, mem.Scope.Kind, mem.Scope.Value, mem.ID)
+	if err != nil {
+		return WhyReport{}, fmt.Errorf("list conflicts: %w", err)
+	}
+	defer conflictRows.Close()
+	for conflictRows.Next() {
+		peer, err := scanMemoryFields(conflictRows)
+		if err != nil {
+			return WhyReport{}, fmt.Errorf("scan conflict: %w", err)
+		}
+		report.Conflicts = append(report.Conflicts, peer)
+	}
+	if err := conflictRows.Err(); err != nil {
+		return WhyReport{}, fmt.Errorf("iterate conflicts: %w", err)
+	}
+
+	return report, nil
 }
 
 // normalizeClaim applies the spec §4.2 equality rule: case-insensitive
