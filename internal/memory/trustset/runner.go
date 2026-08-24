@@ -49,8 +49,8 @@ type Scenario struct {
 
 // Action is one mutation in the scenario. Type is the action verb.
 type Action struct {
-	Type    string `json:"type"`
-	Claim   string `json:"claim,omitempty"`
+	Type     string `json:"type"`
+	Claim    string `json:"claim,omitempty"`
 	OldClaim string `json:"old_claim,omitempty"`
 	NewClaim string `json:"new_claim,omitempty"`
 	Source   string `json:"source,omitempty"`
@@ -60,42 +60,42 @@ type Action struct {
 
 // Expected captures the per-scenario contract.
 type Expected struct {
-	MemoryPresent  *bool   `json:"memory_present,omitempty"`
-	ClaimMatch     string  `json:"claim_match,omitempty"`
-	Authority      string  `json:"authority,omitempty"`
-	Status         string  `json:"status,omitempty"`
-	OldStatus      string  `json:"old_status,omitempty"`
-	NewStatus      string  `json:"new_status,omitempty"`
-	EvidenceScoreGte float64 `json:"evidence_score_gte,omitempty"`
-	Recallable     *bool   `json:"recallable,omitempty"`
-	ForbidDuplicate *bool   `json:"forbid_duplicate,omitempty"`
-	ForbidActiveBeforeApprove *bool `json:"forbid_active_before_approve,omitempty"`
-	ForbidOtherScopeVisible *bool `json:"forbid_other_scope_visible,omitempty"`
-	SourceType     string  `json:"source_type,omitempty"`
-	EvidenceCascade *bool   `json:"evidence_cascade,omitempty"`
+	MemoryPresent             *bool   `json:"memory_present,omitempty"`
+	ClaimMatch                string  `json:"claim_match,omitempty"`
+	Authority                 string  `json:"authority,omitempty"`
+	Status                    string  `json:"status,omitempty"`
+	OldStatus                 string  `json:"old_status,omitempty"`
+	NewStatus                 string  `json:"new_status,omitempty"`
+	EvidenceScoreGte          float64 `json:"evidence_score_gte,omitempty"`
+	Recallable                *bool   `json:"recallable,omitempty"`
+	ForbidDuplicate           *bool   `json:"forbid_duplicate,omitempty"`
+	ForbidActiveBeforeApprove *bool   `json:"forbid_active_before_approve,omitempty"`
+	ForbidOtherScopeVisible   *bool   `json:"forbid_other_scope_visible,omitempty"`
+	SourceType                string  `json:"source_type,omitempty"`
+	EvidenceCascade           *bool   `json:"evidence_cascade,omitempty"`
 }
 
 // Report is the 5-metric baseline + per-scenario pass/fail.
 type Report struct {
-	SchemaVersion      int          `json:"schema_version"`
-	SuiteID            string       `json:"suite_id"`
-	StartedAt          time.Time    `json:"started_at"`
-	EndedAt            time.Time    `json:"ended_at"`
-	PrecisionAt5       float64      `json:"precision_at_5"`
-	FalseRecallRate    float64      `json:"false_recall_rate"`
-	SourceTraceability float64      `json:"source_traceability"`
-	AuthorityFidelity  float64      `json:"authority_fidelity"`
-	WhyCompleteness    float64      `json:"why_completeness"`
+	SchemaVersion      int              `json:"schema_version"`
+	SuiteID            string           `json:"suite_id"`
+	StartedAt          time.Time        `json:"started_at"`
+	EndedAt            time.Time        `json:"ended_at"`
+	PrecisionAt5       float64          `json:"precision_at_5"`
+	FalseRecallRate    float64          `json:"false_recall_rate"`
+	SourceTraceability float64          `json:"source_traceability"`
+	AuthorityFidelity  float64          `json:"authority_fidelity"`
+	WhyCompleteness    float64          `json:"why_completeness"`
 	Scenarios          []ScenarioResult `json:"scenarios"`
 }
 
 // ScenarioResult is one scenario's pass/fail + observed state.
 type ScenarioResult struct {
-	ID         string `json:"id"`
-	Category   string `json:"category"`
-	Passed     bool   `json:"passed"`
-	Reason     string `json:"reason,omitempty"`
-	ObservedID string `json:"observed_id,omitempty"`
+	ID         string         `json:"id"`
+	Category   string         `json:"category"`
+	Passed     bool           `json:"passed"`
+	Reason     string         `json:"reason,omitempty"`
+	ObservedID string         `json:"observed_id,omitempty"`
 	Observed   *memory.Memory `json:"observed,omitempty"`
 }
 
@@ -224,11 +224,11 @@ func insertSeed(ctx context.Context, store *memory.Store, category string, raw m
 		scope = "project/mengdie"
 	}
 	mem := memory.Memory{
-		Claim:     claim,
-		Authority: memory.Authority(authority),
-		Status:    memory.Status(status),
-		Scope:     parseScope(scope),
-		Source:    sourceForAuthority(memory.Authority(authority)),
+		Claim:      claim,
+		Authority:  memory.Authority(authority),
+		Status:     memory.Status(status),
+		Scope:      parseScope(scope),
+		Source:     sourceForAuthority(memory.Authority(authority)),
 		ObservedAt: time.Now().UTC(),
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
@@ -489,7 +489,7 @@ func aggregate(started time.Time, results []ScenarioResult) Report {
 func populateMetrics(report *Report, results []ScenarioResult) {
 	var (
 		recalled, sourced, total int
-		authorOK, whyComplete int
+		authorOK, whyComplete    int
 	)
 	for _, s := range results {
 		total++

@@ -107,7 +107,8 @@ mengdie memory forget <id>
 - [ ] M0：真实 Coding、长任务与记忆可信度评测集
 - [ ] M1：可完成真实任务的最小 Agent Runtime（[第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)）
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal（[第二阶段详细设计](./docs/design/phase-2/DETAILED_DESIGN.md)）
-- [ ] M3：可审计的可信记忆
+- [x] 第三阶段 Slice 01：可信记忆 schema + FTS5 + 显式 CLI + Agent 集成（[设计稿](./docs/superpowers/specs/2026-08-24-m3-slice-01-trusted-memory-design.md)、[实施报告](./docs/development/phase-3-slice-01/IMPLEMENTATION_REPORT.md)）
+- [ ] M3 Slice 02：任务结束候选提取 + MemoryExtractor（待办）
 - [ ] M4：默认只生成提案的复盘机制
 
 完整产品架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；M1 实施基线见 [第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)。`mengdie` 与 `mengdie exec` 已接入同一套最小 Agent Runtime 和安全工具链；多平台开发预览、连续 20 次 main CI 以及 DeepSeek 在 macOS/Windows 的双平台 10/10 Coding 预验收均已形成证据。外部真实仓库任务与安全出口记录未齐前，M1 仍不标记完成。
