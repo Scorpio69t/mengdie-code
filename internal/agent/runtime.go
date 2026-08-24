@@ -711,6 +711,7 @@ func (a *Agent) executeRecovered(ctx context.Context, state *RunState, emitter *
 		}
 		if _, err := emitter.Emit(ctx, events.KindToolCompleted, events.ToolCompleted{
 			CallID: call.ID, Tool: call.Name, Success: true, Summary: "已确认上次写入完成，未重复执行",
+			SourceCommand: call.Name,
 		}); err != nil {
 			return toolOutcome{fatal: err}
 		}
@@ -778,6 +779,7 @@ func (a *Agent) executeRecovered(ctx context.Context, state *RunState, emitter *
 	if runErr != nil {
 		if _, err := emitter.Emit(context.WithoutCancel(ctx), events.KindToolCompleted, events.ToolCompleted{
 			CallID: call.ID, Tool: call.Name, Success: false, Summary: "恢复执行失败", DurationMS: duration.Milliseconds(),
+			SourceCommand: joinShellArgs(call, prepared),
 		}); err != nil {
 			return toolOutcome{fatal: err}
 		}
@@ -787,6 +789,7 @@ func (a *Agent) executeRecovered(ctx context.Context, state *RunState, emitter *
 	}
 	if _, err := emitter.Emit(ctx, events.KindToolCompleted, events.ToolCompleted{
 		CallID: call.ID, Tool: call.Name, Success: true, Summary: "恢复执行完成", DurationMS: duration.Milliseconds(),
+		SourceCommand: joinShellArgs(call, prepared),
 	}); err != nil {
 		return toolOutcome{fatal: err}
 	}
@@ -851,6 +854,7 @@ func (a *Agent) executeOne(ctx context.Context, state *RunState, emitter *events
 	if runErr != nil {
 		if _, err := emitter.Emit(context.WithoutCancel(ctx), events.KindToolCompleted, events.ToolCompleted{
 			CallID: call.ID, Tool: call.Name, Success: false, Summary: "执行失败", DurationMS: duration.Milliseconds(),
+			SourceCommand: joinShellArgs(call, prepared),
 		}); err != nil {
 			return toolOutcome{fatal: err}
 		}
@@ -863,6 +867,7 @@ func (a *Agent) executeOne(ctx context.Context, state *RunState, emitter *events
 	}
 	if _, err := emitter.Emit(ctx, events.KindToolCompleted, events.ToolCompleted{
 		CallID: call.ID, Tool: call.Name, Success: true, Summary: "完成", DurationMS: duration.Milliseconds(),
+		SourceCommand: joinShellArgs(call, prepared),
 	}); err != nil {
 		return toolOutcome{fatal: err}
 	}
@@ -874,6 +879,7 @@ func (a *Agent) executeOne(ctx context.Context, state *RunState, emitter *events
 func (a *Agent) failedTool(ctx context.Context, emitter *events.Emitter, call provider.ToolCall, category string, cause error) toolOutcome {
 	_, emitErr := emitter.Emit(context.WithoutCancel(ctx), events.KindToolCompleted, events.ToolCompleted{
 		CallID: call.ID, Tool: call.Name, Success: false, Summary: category,
+		SourceCommand: joinShellArgs(call, nil),
 	})
 	if emitErr != nil {
 		return toolOutcome{fatal: emitErr}
@@ -1070,6 +1076,31 @@ func effectStrings(effects []tools.Effect) []string {
 		result[index] = string(effect)
 	}
 	return result
+}
+
+// joinShellArgs derives the human-readable command string for a tool call
+// and returns it for use as events.ToolCompleted.SourceCommand. The agent
+// emits this field on every tool.completed event so memory extractor rules
+// (ruleGoTest / ruleGoLint) can substring-match production shell
+// invocations against the project command surface, per M3 Slice 03.
+//
+// The shell tool stores its argv (shell args + command) inside the
+// canonical argument blob the Prepare step marshals. We only need the
+// user-facing command — the platform-specific shell prefix is noise for
+// rule matching — so we extract just the "command" field. For non-shell
+// tools or when the canonical arg is missing/malformed, we fall back to
+// the tool name so the field always carries a stable, non-empty value.
+func joinShellArgs(call provider.ToolCall, prepared *tools.PreparedCall) string {
+	if prepared == nil || len(prepared.CanonicalArg) == 0 {
+		return call.Name
+	}
+	var meta struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(prepared.CanonicalArg, &meta); err != nil || meta.Command == "" {
+		return call.Name
+	}
+	return meta.Command
 }
 
 func (a *Agent) finishError(ctx context.Context, emitter *events.Emitter, err error) error {
