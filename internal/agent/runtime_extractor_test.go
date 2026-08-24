@@ -6,7 +6,9 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -148,4 +150,183 @@ func newTestEmitter(t *testing.T) *events.Emitter {
 		t.Fatal(err)
 	}
 	return emitter
+}
+
+// stubStore is the test double for the agent.memoryWriter surface used
+// by applyMemoryExtraction. It records every ProposeMemory and Approve
+// call so the two-phase extraction contract can be asserted without
+// spinning up a SQLite session: the production wiring still uses the
+// real *memory.Store (see newTestAgentWithExtractor), but tests for
+// the call-order and per-row auto-approval logic substitute this stub
+// to keep the assertions focused on the hook's branch behaviour rather
+// than on SQLite row state.
+//
+// ProposeMemory stamps each returned memory with a deterministic
+// synthetic id so Approve's id-only signature can be matched back to
+// the proposed row in the test assertions.
+type stubStore struct {
+	proposeCount int
+	approveCount int
+	proposed     []memory.Memory
+	approvedIDs  []string
+	proposeErrAt int // 1-based index; 0 means never error
+	approveErrAt int // 1-based index; 0 means never error
+}
+
+func (s *stubStore) ProposeMemory(_ context.Context, m memory.Memory) (memory.Memory, error) {
+	s.proposeCount++
+	if s.proposeErrAt > 0 && s.proposeCount == s.proposeErrAt {
+		return memory.Memory{}, errors.New("stub propose failure")
+	}
+	if strings.TrimSpace(m.ID) == "" {
+		m.ID = fmt.Sprintf("stub-mem-%d", s.proposeCount)
+	}
+	s.proposed = append(s.proposed, m)
+	return m, nil
+}
+
+func (s *stubStore) Approve(_ context.Context, id string) error {
+	s.approveCount++
+	if s.approveErrAt > 0 && s.approveCount == s.approveErrAt {
+		return errors.New("stub approve failure")
+	}
+	s.approvedIDs = append(s.approvedIDs, id)
+	return nil
+}
+
+// newTestAgentWithExtractorAndStore mirrors newTestAgentWithExtractor
+// but lets the test substitute the memoryWriter surface. The session
+// SQLite store is still opened (and torn down via t.Cleanup) so the
+// Provider / Registry / Policy plumbing stays identical to the real
+// path; only the writer is stubbed.
+func newTestAgentWithExtractorAndStore(t *testing.T, ext MemoryExtractor, store memoryWriter) *Agent {
+	t.Helper()
+	root := t.TempDir()
+	guard, err := platform.NewPathGuard(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := tools.NewRegistry(tools.DefaultTools()...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := policy.NewEngine(policy.Options{Root: root, Mode: policy.ModeHeadless, CLI: nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionStore, err := session.OpenSQLite(context.Background(), session.OpenOptions{
+		DataDir:     t.TempDir(),
+		ProjectRoot: filepath.Join(t.TempDir(), "project"),
+		BusyTimeout: 250 * time.Millisecond,
+		Now:         time.Now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = sessionStore.Close()
+	})
+	// Touch the real *memory.Store so its package stays linked and
+	// future regressions in the wiring surface immediately. The stub
+	// is what applyMemoryExtraction actually calls.
+	_ = memory.OpenMemory(sessionStore)
+
+	fake := &scriptedProvider{responses: []*provider.ChatResponse{
+		assistantFinal("提取完成。", provider.Usage{}),
+	}}
+	agent, err := New(Options{
+		Provider:         fake,
+		Registry:         registry,
+		Guard:            guard,
+		Policy:           engine,
+		Now:              time.Now,
+		MaxContextTokens: 64_000,
+		ProjectIdentity:  "test-project",
+		MemoryStore:      store,
+		MemoryExtractor:  ext,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return agent
+}
+
+// TestRunAppliesExtractionTwoPhaseWithAutoApprove pins the M3 Slice 03
+// two-phase contract for the post-Run extraction hook:
+//
+//  1. Every candidate goes through ProposeMemory (both proposed rows
+//     must show up in the stub store).
+//  2. Only candidates whose Claim matches a fingerprint pattern (here
+//     "edit_file") are auto-promoted via Approve; the other candidate
+//     stays at the ProposeMemory step.
+//  3. RunResult.AutoApprovedCount mirrors the number of Approve calls.
+//
+// The fingerprint claim matches extractor.isProjectUsesEditFile; the
+// non-fingerprint claim is generic enough to clear none of the
+// whitelist patterns. The stub's count fields let us assert the call
+// totals, and the proposed / approvedIDs slices let us assert that the
+// right row was promoted by id-matching Approve back to the stored
+// Memory.
+func TestRunAppliesExtractionTwoPhaseWithAutoApprove(t *testing.T) {
+	const fingerprintClaim = "项目使用 edit_file 修改文件"
+	const manualClaim = "用户偏好每次都跑 npm test"
+	stub := &stubExtractor{mems: []memory.Memory{
+		{Claim: fingerprintClaim, Authority: memory.AuthorityInferred},
+		{Claim: manualClaim, Authority: memory.AuthorityInferred},
+	}}
+	store := &stubStore{}
+	a := newTestAgentWithExtractorAndStore(t, stub, store)
+
+	result, err := a.Run(context.Background(), newTestRequest(), newTestEmitter(t))
+	if err != nil {
+		t.Fatalf("Agent.Run returned error: %v", err)
+	}
+
+	if stub.callCount != 1 {
+		t.Fatalf("Extract called %d times, want 1", stub.callCount)
+	}
+	if store.proposeCount != 2 {
+		t.Fatalf("ProposeMemory called %d times, want 2 (both candidates)", store.proposeCount)
+	}
+	if store.approveCount != 1 {
+		t.Fatalf("Approve called %d times, want 1 (only fingerprint candidate)", store.approveCount)
+	}
+	if len(store.proposed) != 2 {
+		t.Fatalf("len(proposed) = %d, want 2", len(store.proposed))
+	}
+	if len(store.approvedIDs) != 1 {
+		t.Fatalf("len(approvedIDs) = %d, want 1", len(store.approvedIDs))
+	}
+
+	// Match the approved id back to one of the proposed rows; the
+	// row whose Claim is the fingerprint claim must be the one that
+	// was promoted.
+	var promotedClaim string
+	for _, mem := range store.proposed {
+		if mem.ID == store.approvedIDs[0] {
+			promotedClaim = mem.Claim
+			break
+		}
+	}
+	if promotedClaim != fingerprintClaim {
+		t.Fatalf("promoted claim = %q, want %q", promotedClaim, fingerprintClaim)
+	}
+
+	// Manual-review row must still be in the proposed slice (the
+	// hook must NOT touch it beyond ProposeMemory).
+	var manualProposed bool
+	for _, mem := range store.proposed {
+		if mem.Claim == manualClaim {
+			manualProposed = true
+			break
+		}
+	}
+	if !manualProposed {
+		t.Fatalf("manual candidate %q missing from proposed slice", manualClaim)
+	}
+
+	if result.AutoApprovedCount != 1 {
+		t.Fatalf("RunResult.AutoApprovedCount = %d, want 1", result.AutoApprovedCount)
+	}
 }

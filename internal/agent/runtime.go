@@ -18,6 +18,7 @@ import (
 	"github.com/Scorpio69t/mengdie-code/internal/cost"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
 	"github.com/Scorpio69t/mengdie-code/internal/memory"
+	"github.com/Scorpio69t/mengdie-code/internal/memory/extractor"
 	"github.com/Scorpio69t/mengdie-code/internal/platform"
 	"github.com/Scorpio69t/mengdie-code/internal/policy"
 	"github.com/Scorpio69t/mengdie-code/internal/provider"
@@ -62,8 +63,11 @@ type Options struct {
 	// MemoryStore is the write target for candidates produced by
 	// MemoryExtractor at the close of a successful Run. Nil disables
 	// the post-Run extraction hook entirely (the brief says the hook
-	// is best-effort and never fails the Run).
-	MemoryStore *memory.Store
+	// is best-effort and never fails the Run). The field is typed as
+	// the narrow memoryWriter surface (not *memory.Store) so tests
+	// can inject a stub that records ProposeMemory / Approve calls
+	// without a SQLite session.
+	MemoryStore memoryWriter
 	// MemoryExtractor turns a completed Run into candidate memory rows.
 	// Production callers wire the memory/extractor.Hybrid (or Rules /
 	// LLM) implementation through ExtractorAdapter. Nil disables the
@@ -92,6 +96,19 @@ type MemoryRetriever interface {
 // idempotency layer sees a uniform shape.
 type MemoryExtractor interface {
 	Extract(ctx context.Context, sessionID string) ([]memory.Memory, error)
+}
+
+// memoryWriter is the agent's narrow view of the memory store used by
+// the post-Run extraction hook. It exposes only the two methods
+// applyMemoryExtraction invokes — ProposeMemory + Approve — because the
+// hook never reads, recalls, or audits; everything else (Get, List,
+// RecordEvidence, conflicts) is the retriever / app layer's concern.
+// *memory.Store satisfies this interface implicitly; tests substitute
+// a stub that records the call sequence so the two-phase extraction
+// contract can be asserted without spinning up a SQLite session.
+type memoryWriter interface {
+	ProposeMemory(ctx context.Context, m memory.Memory) (memory.Memory, error)
+	Approve(ctx context.Context, id string) error
 }
 
 // MemoryScope identifies the lifetime of a recall target. The Kind / Value
@@ -136,8 +153,15 @@ type Agent struct {
 	costEstimator      cost.Estimator
 	memoryRetriever    MemoryRetriever
 	projectIdentity    string
-	memoryStore        *memory.Store
+	memoryStore        memoryWriter
 	memoryExtractor    MemoryExtractor
+	// lastAutoApprovedCount carries the per-Run auto-Approved count
+	// from applyMemoryExtraction (which writes it) back to Agent.Run
+	// (which fills it into RunResult.AutoApprovedCount). It is a
+	// plain field rather than a return value because the extraction
+	// hook fires from deep inside the Run loop, where reshaping the
+	// error chain to bubble up a second value would be noisy.
+	lastAutoApprovedCount int
 }
 
 type RunRequest struct {
@@ -180,6 +204,15 @@ type RunResult struct {
 	UnknownCostRequests   int64
 	Todos                 []tools.Todo
 	DeniedTools           int
+	// AutoApprovedCount is the number of extractor candidates that
+	// applyMemoryExtraction auto-promoted from StatusProposed to
+	// StatusActive via fingerprint match (see
+	// memory/extractor.ShouldAutoApprove). It is zero when no
+	// extractor / store is wired, when the extractor returned no
+	// candidates, or when every candidate failed its ProposeMemory
+	// call. The field is informational: callers that want the
+	// authoritative row count should query the store directly.
+	AutoApprovedCount int `json:"auto_approved_count,omitempty"`
 }
 
 func New(options Options) (*Agent, error) {
@@ -382,6 +415,7 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 				return result, err
 			}
 			a.applyMemoryExtraction(ctx, request)
+			result.AutoApprovedCount = a.lastAutoApprovedCount
 			return result, nil
 		}
 
@@ -540,23 +574,35 @@ func (a *Agent) recordContext(ctx context.Context, message provider.Message, com
 }
 
 // applyMemoryExtraction runs the configured MemoryExtractor at the close
-// of a successful Run and proposes the returned candidates through the
-// configured memory.Store. The hook is best-effort: an extractor error
-// is logged as a warning and never fails the Run, and per-row
-// ProposeMemory errors are logged and skipped. The candidate list is
-// capped at five to bound the propose-time growth of the private
+// of a successful Run and routes the returned candidates through the
+// configured memory.Store in two phases (per the M3 Slice 03 spec):
+//
+//  1. Every candidate goes through ProposeMemory so it lands as
+//     StatusProposed. Scope / Source defaults are re-applied first so
+//     the store's idempotency layer sees a uniform shape regardless of
+//     what the extractor implementation filled in.
+//  2. Each successfully-proposed candidate is then checked against
+//     extractor.ShouldAutoApprove(claim). A fingerprint match
+//     (e.g., "edit_file", "go test", "中文 README") trusts the
+//     structural signal enough to skip the user-review step, so the
+//     hook calls Approve on the row and increments the per-Run count.
+//     Non-matching candidates stay StatusProposed for manual review.
+//
+// The hook is best-effort: an extractor error is logged as a warning
+// and never fails the Run, and per-row ProposeMemory / Approve errors
+// are logged and skipped without aborting the loop. The candidate list
+// is capped at five to bound the propose-time growth of the private
 // context log; production runs usually return 0-2 rows.
 //
-// Scope.Value and Source defaults are re-applied before each
-// ProposeMemory call so the store's idempotency / conflict layer sees a
-// uniform shape regardless of what the extractor implementation filled
-// in. The Authority field is intentionally NOT overridden — extractors
+// The Authority field is intentionally NOT overridden — extractors
 // (Rules / LLM / Hybrid) stamp Authority themselves, and the Store's
 // guardSave would reject a mismatched Authority pair.
 //
 // The extract call runs under a fresh 30-second timeout detached from
 // the incoming ctx via context.WithoutCancel, so a cancelled Run does
-// not abort the propose-time write.
+// not abort the propose-time write. The Approve call shares the same
+// detached context so a cancelled Run also cannot leave a candidate
+// half-promoted: both calls live or die together.
 func (a *Agent) applyMemoryExtraction(ctx context.Context, request RunRequest) {
 	if a.memoryExtractor == nil || a.memoryStore == nil || a.projectIdentity == "" {
 		return
@@ -574,6 +620,8 @@ func (a *Agent) applyMemoryExtraction(ctx context.Context, request RunRequest) {
 	if len(candidates) > 5 {
 		candidates = candidates[:5]
 	}
+
+	var autoApprovedCount int
 	for _, mem := range candidates {
 		if mem.Scope.Value == "" {
 			mem.Scope = memory.Scope{Kind: "project", Value: a.projectIdentity}
@@ -584,10 +632,20 @@ func (a *Agent) applyMemoryExtraction(ctx context.Context, request RunRequest) {
 				Ref:  request.RunID + ":extractor",
 			}
 		}
-		if _, err := a.memoryStore.ProposeMemory(extCtx, mem); err != nil {
+		stored, err := a.memoryStore.ProposeMemory(extCtx, mem)
+		if err != nil {
 			a.warnExtraction(ctx, "memory_extractor_propose_failed", err)
+			continue
+		}
+		if extractor.ShouldAutoApprove(stored.Claim) {
+			if err := a.memoryStore.Approve(extCtx, stored.ID); err != nil {
+				a.warnExtraction(ctx, "auto_approve_approve_failed", err)
+				continue
+			}
+			autoApprovedCount++
 		}
 	}
+	a.lastAutoApprovedCount = autoApprovedCount
 }
 
 // warnExtraction is the placeholder for emitting extraction-related
