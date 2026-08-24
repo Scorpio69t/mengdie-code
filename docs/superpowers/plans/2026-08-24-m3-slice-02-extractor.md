@@ -1328,7 +1328,7 @@ extractorAdapter := agent.NewExtractorAdapter(hybridExtractor, memoryStore, load
 registeredTools := append(
     tools.DefaultTools(
         tools.WithMemoryRetriever(retrieverAdapter),
-        tools.WithProjectIdentity(loaded.ProjectIdentityValue()),
+        tools.WithProjectIdentityForTools(loaded.ProjectIdentityValue()),
     ),
     contextSourceTool,
 )

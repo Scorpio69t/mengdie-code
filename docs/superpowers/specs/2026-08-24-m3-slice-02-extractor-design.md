@@ -226,7 +226,7 @@ type defaultToolsConfig struct {
 func WithMemoryRetriever(r MemoryRecallRetriever) DefaultToolsOption {
     return func(c *defaultToolsConfig) { c.memoryRetriever = r }
 }
-func WithProjectIdentity(id string) DefaultToolsOption {
+func WithProjectIdentityForTools(id string) DefaultToolsOption {
     return func(c *defaultToolsConfig) { c.projectIdentity = strings.TrimSpace(id) }
 }
 func DefaultTools(opts ...DefaultToolsOption) []Tool {
