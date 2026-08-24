@@ -17,6 +17,7 @@ import (
 	agentcontext "github.com/Scorpio69t/mengdie-code/internal/context"
 	"github.com/Scorpio69t/mengdie-code/internal/cost"
 	"github.com/Scorpio69t/mengdie-code/internal/events"
+	"github.com/Scorpio69t/mengdie-code/internal/memory"
 	"github.com/Scorpio69t/mengdie-code/internal/platform"
 	"github.com/Scorpio69t/mengdie-code/internal/policy"
 	"github.com/Scorpio69t/mengdie-code/internal/provider"
@@ -44,8 +45,48 @@ type Options struct {
 	Skills             []agentcontext.SkillSummary
 	ContextRecorder    ContextRecorder
 	MutationJournal    tools.MutationJournal
-	CostEstimator      cost.Estimator
+	// CostEstimator (P2-08A) emits the per-call usage fact used by
+	// recordUsageCall. nil is acceptable for offline runs; those skip
+	// the cost row but still emit a usage.updated with status=unknown.
+	CostEstimator cost.Estimator
+	// MemoryRetriever, when non-nil, drives the spec §6.2 first-turn
+	// catalogue injection. See MemoryRetriever / MemoryScope for the
+	// contract; production callers wire memory.NewRetriever via the
+	// adapter in memory_adapter.go.
+	MemoryRetriever MemoryRetriever
+	// ProjectIdentity is the project-scope value passed to the retriever
+	// on the first turn. Empty disables injection even when
+	// MemoryRetriever is set (the retriever needs a target scope value
+	// to filter by).
+	ProjectIdentity string
 }
+
+// MemoryRetriever is the agent-facing surface for trusted-memory recall.
+// The agent asks "what memories are relevant for this scope + query" and
+// the retriever decides internally which tier (Tier 1 catalogue, Tier 2
+// task topics, or Tier 3 atomic recall per spec §6.1) to serve. The
+// 3-tier logic is an implementation detail of *memory.Retriever; the
+// adapter in memory_adapter.go is the production wiring.
+type MemoryRetriever interface {
+	Recall(ctx context.Context, query string, topK int, scope MemoryScope) ([]MemoryHit, error)
+}
+
+// MemoryScope identifies the lifetime of a recall target. The Kind / Value
+// pair maps 1:1 onto memory.Scope; ProjectIdentity is the caller's
+// project-scope value (carried alongside so the retriever can apply the
+// spec §6.1 task-scope match bonus without having to re-derive it).
+type MemoryScope struct {
+	Kind            string
+	Value           string
+	ProjectIdentity string
+}
+
+// MemoryHit is a re-exported alias for memory.RecallHit. The agent package
+// owns its public types but does not want to duplicate the
+// Memory /EvidenceScore /Score triple — *memory.Retriever already authors
+// the canonical struct, and aliasing keeps the source of truth in one
+// place while letting callers depend only on internal/agent.
+type MemoryHit = memory.RecallHit
 
 // ContextRecorder persists private, model-visible message boundaries. The
 // bool is false when output-bearing fields were replaced by a safe summary.
@@ -70,6 +111,8 @@ type Agent struct {
 	contextRecorder    ContextRecorder
 	mutationJournal    tools.MutationJournal
 	costEstimator      cost.Estimator
+	memoryRetriever    MemoryRetriever
+	projectIdentity    string
 }
 
 type RunRequest struct {
@@ -144,6 +187,8 @@ func New(options Options) (*Agent, error) {
 		contextRecorder:    options.ContextRecorder,
 		mutationJournal:    options.MutationJournal,
 		costEstimator:      options.CostEstimator,
+		memoryRetriever:    options.MemoryRetriever,
+		projectIdentity:    strings.TrimSpace(options.ProjectIdentity),
 	}, nil
 }
 
@@ -270,6 +315,17 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 		}
 		if err != nil {
 			return state.result(""), a.finishError(ctx, emitter, err)
+		}
+		// Spec §6.2 first-turn injection: the project-memory catalogue is
+		// appended to the outgoing chat request exactly once — on the
+		// first turn of a non-resumed run. Recovery runs skip the
+		// injection because the resumed run already has its original
+		// context; re-injecting would re-flood the catalogue and would
+		// not be persisted to the private context log either way (the
+		// catalogue is only added to the request body, not to
+		// state.Messages).
+		if state.Turn == 1 && request.Recovery == nil && a.memoryRetriever != nil && a.projectIdentity != "" {
+			chatRequest = a.applyFirstTurnCatalogue(ctx, chatRequest, request.Task)
 		}
 		observer := &streamObserver{emitter: emitter}
 		response, providerErr := a.provider.Stream(ctx, chatRequest, observer)
@@ -453,6 +509,80 @@ func (a *Agent) recordContext(ctx context.Context, message provider.Message, com
 		return fmt.Errorf("persist private %s context: %w", message.Role, err)
 	}
 	return nil
+}
+
+// applyFirstTurnCatalogue queries the configured MemoryRetriever for the
+// catalogue rows scoped to a.projectIdentity and appends the rendered
+// markdown section to chatRequest's first system message. A retriever
+// failure is silently swallowed: the first turn proceeds without the
+// catalogue rather than failing the run — recall is a best-effort
+// enhancement, not a hard dependency of the agent loop. The section is
+// applied to the request body only; state.Messages and the private
+// context log remain untouched so the durable run history does not
+// accumulate per-run catalogue copies.
+func (a *Agent) applyFirstTurnCatalogue(ctx context.Context, chatRequest provider.ChatRequest, task string) provider.ChatRequest {
+	hits, err := a.memoryRetriever.Recall(ctx, task, firstTurnCatalogueTopK, MemoryScope{
+		Kind: "project", Value: a.projectIdentity, ProjectIdentity: a.projectIdentity,
+	})
+	if err != nil || len(hits) == 0 {
+		return chatRequest
+	}
+	return injectMemoryCatalogue(chatRequest, renderMemoryCatalogue(hits))
+}
+
+// firstTurnCatalogueTopK is the upper bound the agent asks the retriever
+// for on the first turn. The value matches the spec §6.2 call site
+// (Recall(ctx, task, 20)) and the catalogue-cap rule ("Cap Tier 1 at 20")
+// the brief pins. Tier 1 already caps at tier1MaxLimit=200 per
+// memory.Retriever; Tier 3 caps at tier3MaxTopK=50. The adapter clamps
+// further so neither tier can return more rows than the catalogue
+// section can render meaningfully.
+const firstTurnCatalogueTopK = 20
+
+// renderMemoryCatalogue formats the sorted-by-score hits as a markdown
+// section. The header advertises the row count and the descending sort
+// key; the bullet body carries id, authority, evidence score and the
+// claim truncated to 80 runes (Chinese counts as 1 rune, not 3 bytes,
+// so the bullet stays within one printed line for any seeded claim).
+func renderMemoryCatalogue(hits []MemoryHit) string {
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "\n\n## 项目记忆（%d 条，按证据分数降序）", len(hits))
+	for _, hit := range hits {
+		fmt.Fprintf(&builder, "\n- %s (authority=%s, evidence=%.2f) %s",
+			hit.ID, hit.Authority, hit.EvidenceScore, truncateRunes(hit.Claim, 80))
+	}
+	return builder.String()
+}
+
+// injectMemoryCatalogue appends catalogue to the first system message in
+// request, preserving the leading newline separator so the section reads
+// as a distinct block. When no system message exists (which the
+// context.Builder normally guarantees, but a future caller may not) the
+// catalogue is prepended as a new system message so the catalogue is
+// still model-visible at the head of the request.
+func injectMemoryCatalogue(request provider.ChatRequest, catalogue string) provider.ChatRequest {
+	for index, message := range request.Messages {
+		if message.Role != provider.RoleSystem {
+			continue
+		}
+		request.Messages[index].Content = message.Content + catalogue
+		return request
+	}
+	system := provider.Message{Role: provider.RoleSystem, Content: catalogue}
+	request.Messages = append([]provider.Message{system}, request.Messages...)
+	return request
+}
+
+// truncateRunes trims s to max runes, returning s unchanged when the
+// rune count is within the bound. Using runes (not bytes) means a 80-rune
+// cap on Chinese claim text keeps the rendered bullet the same visual
+// width as an 80-character ASCII claim.
+func truncateRunes(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	return string(runes[:max])
 }
 
 func validateResponse(response *provider.ChatResponse) error {

@@ -1,0 +1,47 @@
+name: Memory Live Provider
+
+on:
+  schedule:
+    # 每周 UTC 周一 02:00 跑一次 macOS / Windows 真实 Provider memory 证据采集
+    - cron: '0 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-memory:
+    name: 真实 Provider memory 证据 · ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - macos-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    env:
+      MENGDIE_LIVE_SMOKE: '1'
+      MENGDIE_LIVE_BASE_URL: ${{ secrets.MENGDIE_LIVE_BASE_URL }}
+      MENGDIE_LIVE_API_KEY: ${{ secrets.MENGDIE_LIVE_API_KEY }}
+      MENGDIE_LIVE_MODEL: ${{ secrets.MENGDIE_LIVE_MODEL }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v7
+
+      - name: 安装 Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 运行 memory live provider 评测
+        run: |
+          mkdir -p evidence
+          go test -tags=liveprovider -run TestLiveProviderMemoryEndToEnd ./internal/memory/ -count=1 -v -timeout 5m
+
+      - name: 上传 memory live provider 证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-live-${{ matrix.os }}-${{ github.run_id }}
+          path: evidence/memory-live-*.json

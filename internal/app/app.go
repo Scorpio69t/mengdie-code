@@ -108,6 +108,8 @@ func (a *App) Run(ctx context.Context, args []string, interactive bool) int {
 			return a.runSession(ctx, args[1:], interactive)
 		case "rewind":
 			return a.runRewind(ctx, args[1:], interactive)
+		case "memory":
+			return a.runMemory(ctx, args[1:], a.stdout, a.stderr)
 		}
 		if !strings.HasPrefix(args[0], "-") {
 			if err := a.writeError("未知命令 %q\n", args[0]); err != nil {

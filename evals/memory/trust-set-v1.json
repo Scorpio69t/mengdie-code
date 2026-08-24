@@ -1,0 +1,248 @@
+{
+  "schema_version": 1,
+  "id": "memory-trust-set-v1",
+  "description": "MengDie Code P2 M3 Slice 01 可信记忆 Trust Set v1：30 个跨会话场景，按 explicit 15 / repository 5 / verified 5 / inferred 5 分布",
+  "fixture_root": "../fixtures",
+  "tasks": [
+    {
+      "id": "user-confirms-test-command",
+      "category": "explicit",
+      "description": "用户显式确认测试入口为 go test ./...",
+      "setup": {"seed_memories": []},
+      "actions": [{"type": "remember_user", "claim": "用 go test ./... 作为测试入口"}],
+      "expected": {"memory_present": true, "claim_match": "用 go test ./... 作为测试入口", "authority": "explicit", "status": "active", "recallable": true, "forbid_duplicate": true, "forbid_old_status_change": false}
+    },
+    {
+      "id": "user-confirms-lint-config",
+      "category": "explicit",
+      "description": "用户显式确认 lint 工具为 golangci-lint",
+      "setup": {"seed_memories": []},
+      "actions": [{"type": "remember_user", "claim": "项目使用 golangci-lint run ./... 做静态检查"}],
+      "expected": {"memory_present": true, "authority": "explicit", "status": "active", "recallable": true, "forbid_duplicate": true}
+    },
+    {
+      "id": "user-supersede-old-rule",
+      "category": "explicit",
+      "description": "用户 supersede 旧规则为新规则",
+      "setup": {"seed_memories": [{"claim": "用 go test ./internal/foo", "authority": "explicit", "status": "active"}]},
+      "actions": [{"type": "remember_user", "claim": "用 go test ./... 全量测试"}, {"type": "supersede", "old_claim": "用 go test ./internal/foo", "new_claim": "用 go test ./... 全量测试"}],
+      "expected": {"old_status": "superseded", "new_status": "active", "forbid_duplicate": true}
+    },
+    {
+      "id": "user-cross-project-scope",
+      "category": "explicit",
+      "description": "用户在不同 project scope 下记录规则",
+      "setup": {"seed_memories": [{"claim": "A 项目用 yarn", "authority": "explicit", "status": "active", "scope": "project/a"}]},
+      "actions": [{"type": "remember_user", "claim": "B 项目用 npm", "scope": "project/b"}],
+      "expected": {"memory_present": true, "claim_match": "B 项目用 npm", "scope_value": "b", "forbid_other_scope_visible": true}
+    },
+    {
+      "id": "user-explicit-forget",
+      "category": "explicit",
+      "description": "用户显式 forget 一条记忆",
+      "setup": {"seed_memories": [{"claim": "已废弃的旧规则", "authority": "explicit", "status": "active"}]},
+      "actions": [{"type": "forget", "claim": "已废弃的旧规则", "hard": false}],
+      "expected": {"memory_present": false, "status": "archived"}
+    },
+    {
+      "id": "user-hard-forget",
+      "category": "explicit",
+      "description": "用户 hard forget 一条记忆",
+      "setup": {"seed_memories": [{"claim": "硬删除测试", "authority": "explicit", "status": "active"}]},
+      "actions": [{"type": "forget", "claim": "硬删除测试", "hard": true}],
+      "expected": {"memory_present": false, "evidence_cascade": true}
+    },
+    {
+      "id": "user-confirms-commit-format",
+      "category": "explicit",
+      "description": "用户显式确认 commit message 格式",
+      "setup": {"seed_memories": []},
+      "actions": [{"type": "remember_user", "claim": "commit message 用 Conventional Commits"}],
+      "expected": {"memory_present": true, "authority": "explicit", "status": "active"}
+    },
+    {
+      "id": "user-confirms-doc-language",
+      "category": "explicit",
+      "description": "用户显式确认文档语言",
+      "setup": {"seed_memories": []},
+      "actions": [{"type": "remember_user", "claim": "用户文档默认中文优先"}],
+      "expected": {"memory_present": true, "authority": "explicit"}
+    },
+    {
+      "id": "user-confirms-secret-handling",
+      "category": "explicit",
+      "description": "用户显式确认凭据处理规则",
+      "setup": {"seed_memories": []},
+      "actions": [{"type": "remember_user", "claim": "凭据只在受保护 Environment 注入，不进仓库"}],
+      "expected": {"memory_present": true, "authority": "explicit"}
+    },
+    {
+      "id": "user-agents-md-style",
+      "category": "explicit",
+      "description": "用户显式确认 AGENTS.md 风格",
+      "setup": {"seed_memories": []},
+      "actions": [{"type": "remember_user", "claim": "AGENTS.md 引用本地 skills，不放通用教程"}],
+      "expected": {"memory_present": true, "authority": "explicit"}
+    },
+    {
+      "id": "user-confirms-error-style",
+      "category": "explicit",
+      "description": "用户显式确认错误风格（中文 + errors.Is）",
+      "setup": {"seed_memories": []},
+      "actions": [{"type": "remember_user", "claim": "错误信息中文 + errors.Is 匹配"}],
+      "expected": {"memory_present": true, "authority": "explicit"}
+    },
+    {
+      "id": "user-confirms-go-version",
+      "category": "explicit",
+      "description": "用户显式确认 Go 版本",
+      "setup": {"seed_memories": []},
+      "actions": [{"type": "remember_user", "claim": "项目使用 Go 1.26.6"}],
+      "expected": {"memory_present": true, "authority": "explicit"}
+    },
+    {
+      "id": "user-confirms-license-header",
+      "category": "explicit",
+      "description": "用户显式确认 license header",
+      "setup": {"seed_memories": []},
+      "actions": [{"type": "remember_user", "claim": "Go 源文件必须含 MengDie Code Contributors + Apache-2.0 header"}],
+      "expected": {"memory_present": true, "authority": "explicit"}
+    },
+    {
+      "id": "user-confirms-merge-gate",
+      "category": "explicit",
+      "description": "用户显式确认合并门槛",
+      "setup": {"seed_memories": []},
+      "actions": [{"type": "remember_user", "claim": "PR 合并前必须本地质量门禁全过 + 用户审核"}],
+      "expected": {"memory_present": true, "authority": "explicit"}
+    },
+    {
+      "id": "user-confirms-toolchain",
+      "category": "explicit",
+      "description": "用户显式确认工具链",
+      "setup": {"seed_memories": []},
+      "actions": [{"type": "remember_user", "claim": "本地工具链 go fmt / vet / test -race / golangci-lint / govulncheck"}],
+      "expected": {"memory_present": true, "authority": "explicit"}
+    },
+    {
+      "id": "repo-go-mod-version",
+      "category": "repository",
+      "description": "从 go.mod 解析出 Go 版本事实",
+      "setup": {"fixture_files": {"go.mod": "module example.com/mengdie\n\ngo 1.26.6\n"}},
+      "actions": [{"type": "save_repository_fact", "claim": "go.mod declares Go 1.26.6", "source": "go.mod:3"}],
+      "expected": {"memory_present": true, "authority": "repository", "status": "active", "source_type": "file"}
+    },
+    {
+      "id": "repo-lint-rule",
+      "category": "repository",
+      "description": "从 .golangci.yml 解析出 lint 规则",
+      "setup": {"fixture_files": {".golangci.yml": "linters:\n  enable: [errcheck, govet]\n"}},
+      "actions": [{"type": "save_repository_fact", "claim": "golangci-lint enable errcheck govet", "source": ".golangci.yml:2"}],
+      "expected": {"authority": "repository", "source_type": "file"}
+    },
+    {
+      "id": "repo-ci-workflow-os",
+      "category": "repository",
+      "description": "从 CI workflow 解析出 OS matrix",
+      "setup": {"fixture_files": {".github/workflows/ci.yml": "jobs:\n  test:\n    strategy:\n      matrix:\n        os: [macos-latest, windows-latest, ubuntu-latest]\n"}},
+      "actions": [{"type": "save_repository_fact", "claim": "CI matrix: macos-latest + windows-latest + ubuntu-latest", "source": ".github/workflows/ci.yml:5"}],
+      "expected": {"authority": "repository", "source_type": "file"}
+    },
+    {
+      "id": "repo-agents-md-rule",
+      "category": "repository",
+      "description": "从 AGENTS.md 解析项目规则",
+      "setup": {"fixture_files": {"AGENTS.md": "项目定位：MengDie Code，中文优先，单二进制。\n"}},
+      "actions": [{"type": "save_repository_fact", "claim": "AGENTS.md 声明 MengDie Code 中文优先单二进制定位", "source": "AGENTS.md:1"}],
+      "expected": {"authority": "repository", "source_type": "file"}
+    },
+    {
+      "id": "repo-git-commit-fact",
+      "category": "repository",
+      "description": "从最近一次 git commit 解析提交事实",
+      "setup": {"fixture_files": {".git/HEAD": "ref: refs/heads/main\n"}, "git_log": ["ac9974d feat(chaos): 添加随机故障注入"]},
+      "actions": [{"type": "save_repository_fact", "claim": "最近 commit: feat(chaos): 添加随机故障注入", "source": "git log -1"}],
+      "expected": {"authority": "repository", "source_type": "file"}
+    },
+    {
+      "id": "verified-go-test-passes",
+      "category": "verified",
+      "description": "go test ./... 通过",
+      "setup": {"command": "go test ./..."},
+      "actions": [{"type": "save_verified_fact", "claim": "go test ./... exit 0", "source": "go test ./...:exit=0"}],
+      "expected": {"authority": "verified", "status": "active", "source_type": "command_result"}
+    },
+    {
+      "id": "verified-go-vet-passes",
+      "category": "verified",
+      "description": "go vet ./... 通过",
+      "setup": {"command": "go vet ./..."},
+      "actions": [{"type": "save_verified_fact", "claim": "go vet ./... exit 0", "source": "go vet ./...:exit=0"}],
+      "expected": {"authority": "verified", "source_type": "command_result"}
+    },
+    {
+      "id": "verified-golangci-lint-clean",
+      "category": "verified",
+      "description": "golangci-lint run ./... 0 issue",
+      "setup": {"command": "golangci-lint run ./..."},
+      "actions": [{"type": "save_verified_fact", "claim": "golangci-lint 0 issue", "source": "golangci-lint:issue=0"}],
+      "expected": {"authority": "verified", "source_type": "command_result"}
+    },
+    {
+      "id": "verified-govulncheck-clean",
+      "category": "verified",
+      "description": "govulncheck 无漏洞",
+      "setup": {"command": "govulncheck ./..."},
+      "actions": [{"type": "save_verified_fact", "claim": "govulncheck no vulnerabilities", "source": "govulncheck:vuln=0"}],
+      "expected": {"authority": "verified", "source_type": "command_result"}
+    },
+    {
+      "id": "verified-4-target-build",
+      "category": "verified",
+      "description": "四目标 CGO_ENABLED=0 build 通过",
+      "setup": {"command": "build darwin-arm64 darwin-amd64 windows-amd64 linux-amd64"},
+      "actions": [{"type": "save_verified_fact", "claim": "4-target build OK: darwin-arm64 + darwin-amd64 + windows-amd64 + linux-amd64", "source": "build:targets=4:exit=0"}],
+      "expected": {"authority": "verified", "source_type": "command_result"}
+    },
+    {
+      "id": "inferred-from-successful-run",
+      "category": "inferred",
+      "description": "模型从成功 run 抽取的事实，必须经 approve 才 active",
+      "setup": {"agent_run": "fix go test 边界 bug", "success": true},
+      "actions": [{"type": "propose_memory", "claim": "项目测试入口是 go test ./..."}],
+      "expected": {"status": "proposed", "authority": "inferred", "forbid_active_before_approve": true}
+    },
+    {
+      "id": "inferred-project-structure",
+      "category": "inferred",
+      "description": "模型从文件树推断项目结构",
+      "setup": {"agent_run": "list repository files", "success": true},
+      "actions": [{"type": "propose_memory", "claim": "项目按 cmd/internal/evals 分层"}],
+      "expected": {"status": "proposed", "authority": "inferred", "forbid_active_before_approve": true}
+    },
+    {
+      "id": "inferred-file-pattern",
+      "category": "inferred",
+      "description": "模型从文件命名推断文件命名约定",
+      "setup": {"agent_run": "list go files", "success": true},
+      "actions": [{"type": "propose_memory", "claim": "Go 源文件用 snake_case_test.go 命名测试文件"}],
+      "expected": {"status": "proposed", "authority": "inferred", "forbid_active_before_approve": true}
+    },
+    {
+      "id": "inferred-tool-preference",
+      "category": "inferred",
+      "description": "模型从使用历史推断工具偏好",
+      "setup": {"agent_run": "recent tool uses: edit_file 80% / write_file 20%", "success": true},
+      "actions": [{"type": "propose_memory", "claim": "用户偏好 edit_file 多于 write_file"}],
+      "expected": {"status": "proposed", "authority": "inferred", "forbid_active_before_approve": true}
+    },
+    {
+      "id": "inferred-naming-convention",
+      "category": "inferred",
+      "description": "模型从代码风格推断命名约定",
+      "setup": {"agent_run": "scan package names", "success": true},
+      "actions": [{"type": "propose_memory", "claim": "Go 包名用单数小写名词"}],
+      "expected": {"status": "proposed", "authority": "inferred", "forbid_active_before_approve": true}
+    }
+  ]
+}

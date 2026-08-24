@@ -44,7 +44,7 @@ jobs:
       - name: 运行 Coding baseline
         run: go run ./cmd/mengdie-eval baseline --manifest evals/coding/smoke.json
 
-      - name: 随机故障注入评测
+      - name: 运行随机故障注入评测
         run: |
           mkdir -p evidence
           go run ./cmd/mengdie-eval chaos --manifest evals/chaos/all.json --rounds 3 --out evidence/chaos-simulated.json --pretty
@@ -55,6 +55,16 @@ jobs:
         with:
           name: chaos-simulated-${{ github.run_id }}
           path: evidence/chaos-simulated.json
+
+      - name: 运行 Memory Trust Set
+        run: go test -race ./internal/memory/... -count=1
+
+      - name: 上传 Memory 证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-trust-v1-${{ github.run_id }}
+          path: evidence/memory-trust-v1.json
 
   test:
     name: 测试 · ${{ matrix.os }}
