@@ -48,7 +48,7 @@ type Options struct {
 	// CostEstimator (P2-08A) emits the per-call usage fact used by
 	// recordUsageCall. nil is acceptable for offline runs; those skip
 	// the cost row but still emit a usage.updated with status=unknown.
-	CostEstimator      cost.Estimator
+	CostEstimator cost.Estimator
 	// MemoryRetriever, when non-nil, drives the spec §6.2 first-turn
 	// catalogue injection. See MemoryRetriever / MemoryScope for the
 	// contract; production callers wire memory.NewRetriever via the
