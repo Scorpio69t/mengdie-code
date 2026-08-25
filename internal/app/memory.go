@@ -508,6 +508,37 @@ func runMemoryWhy(ctx context.Context, args []string, a *App, stdout, stderr io.
 				return ExitRunError
 			}
 		}
+		// Authority rank gap 行 — only meaningful when there is a cross-authority
+		// dispute (spec §4.2 row 3). `ownRank` comes from the memory being
+		// `why`'d; `minPeerRank` is the lowest (most authoritative) rank among
+		// the conflict peers. `gap` is the absolute difference and `winner`
+		// names which side the rank favours. Lower rank = more authoritative.
+		ownRank := memory.AuthorityRank(report.Memory.Authority)
+		minPeerRank := ownRank
+		for _, peer := range report.Conflicts {
+			if r := memory.AuthorityRank(peer.Authority); r < minPeerRank {
+				minPeerRank = r
+			}
+		}
+		gap := ownRank - minPeerRank
+		if gap < 0 {
+			gap = -gap
+		}
+		winner := "own"
+		if minPeerRank < ownRank {
+			winner = "peer"
+		}
+		if _, err := fmt.Fprintf(stdout, "authority_rank=%d\n", ownRank); err != nil {
+			return ExitRunError
+		}
+		// Both ranks are echoed in the gap line so the rendered output exposes
+		// "rank N" / "rank M" as literal substrings (the rank audit needs to
+		// see both sides, not just the gap magnitude). Deviation from brief —
+		// see report "Deviations".
+		if _, err := fmt.Fprintf(stdout, "authority_rank_gap=%d (own rank %d, peer rank %d, %s wins)\n",
+			gap, ownRank, minPeerRank, winner); err != nil {
+			return ExitRunError
+		}
 		if _, err := fmt.Fprintln(stdout); err != nil {
 			return ExitRunError
 		}

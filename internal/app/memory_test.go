@@ -6,6 +6,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -105,5 +106,65 @@ func TestMemoryListStatusAutoApproved(t *testing.T) {
 	}
 	if !strings.Contains(state.stdout.String(), "项目使用 edit_file 修改文件") {
 		t.Fatalf("list --status auto-approved must surface the auto-promoted claim: %q", state.stdout.String())
+	}
+}
+
+// TestMemoryWhyShowsAuthorityRankGap covers M3 Slice 04 Task 3: when a memory
+// has cross-authority peers in its Conflicts section, the `memory why` output
+// must surface the Authority rank gap so a human auditor can see at a glance
+// which side the spec §4.2 row 3 dispute favours. The test seeds one explicit
+// row and one inferred row in the same project scope; both rows land in
+// status=disputed per the spec §4.2 row 3 enforcement (Task 2 commit 34e2411),
+// so `list --status disputed` returns both and `why <id>` exposes the
+// Conflicts section with a rank-1 (explicit) and rank-4 (inferred) peer. The
+// assertion then requires the rank + gap lines to render with both integers
+// so the auditor does not have to recalculate them.
+func TestMemoryWhyShowsAuthorityRankGap(t *testing.T) {
+	state := setupAppTestState(t)
+	code := runApp(state, []string{"memory", "remember", "项目测试入口是 go test ./internal/memory/...", "--scope", "project"})
+	if code != ExitOK {
+		t.Fatalf("remember 1 exit=%d stderr=%q", code, state.stderr.String())
+	}
+	code = runApp(state, []string{"memory", "remember", "项目测试入口是 make test", "--scope", "project", "--authority", "inferred"})
+	if code != ExitOK {
+		t.Fatalf("remember 2 exit=%d stderr=%q", code, state.stderr.String())
+	}
+
+	// Grab the first disputed id from the JSON list — the assertion below
+	// is `why`-driven, so the precise id does not matter; either side of the
+	// dispute exposes a Conflicts section with the other side as peer.
+	state.stdout.Reset()
+	code = runApp(state, []string{"memory", "list", "--status", "disputed", "--json"})
+	if code != ExitOK {
+		t.Fatalf("list exit=%d stderr=%q", code, state.stderr.String())
+	}
+	var firstID string
+	for _, line := range strings.Split(strings.TrimSpace(state.stdout.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var row struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err == nil && row.ID != "" {
+			firstID = row.ID
+			break
+		}
+	}
+	if firstID == "" {
+		t.Fatal("no disputed memory found")
+	}
+
+	state.stdout.Reset()
+	code = runApp(state, []string{"memory", "why", firstID})
+	if code != ExitOK {
+		t.Fatalf("why exit=%d stderr=%q", code, state.stderr.String())
+	}
+	out := state.stdout.String()
+	if !strings.Contains(out, "authority_rank_gap") {
+		t.Fatalf("why output missing authority_rank_gap: %q", out)
+	}
+	if !strings.Contains(out, "rank 1") || !strings.Contains(out, "rank 4") {
+		t.Fatalf("why output missing rank numbers: %q", out)
 	}
 }
