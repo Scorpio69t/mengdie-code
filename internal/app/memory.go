@@ -1002,6 +1002,17 @@ func runMemoryConflicts(ctx context.Context, args []string, a *App, stdout, stde
 			// Embed Memory so the JSON output stays a superset of the
 			// `memory list --json` shape; the Peers field carries the
 			// extra signal the conflicts view promises.
+			//
+			// **JSON wire shape:** fields inherit Go's default
+			// capitalization (`ID`, `Authority`, `Status`, ...),
+			// since `memory.Memory` carries no `json:` tags. This is a
+			// **deliberate** design choice (slice 04 task 6 deviation):
+			// the conflict view is strictly additive on top of `memory
+			// list --json`, so downstream consumers can read either
+			// stream with the same parser and just ignore the trailing
+			// `"peers"` field on the non-conflict side. Downstream tools
+			// that require lower-snake keys should add `json:",omitempty"`
+			// tags on `memory.Memory` in a future slice.
 			type Row struct {
 				memory.Memory
 				Peers int `json:"peers"`
