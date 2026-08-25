@@ -858,9 +858,10 @@ git commit -m "docs: M3 Slice 04 implementation report + README"
 |---|---|---|
 | 1 | Task 1: AuthorityRank 函数 + 单元测试 | `internal/memory/memory.go` + 6-case unit test |
 | 2 | Task 2: Store 跨 Authority 冲突检测 + IsCrossAuthorityConflict | `internal/memory/store.go` dispute 循环改 + 新公开方法 |
+| 2.5 | Task 2.5: Fix 6 failing seeded fixtures | 3 test 文件 fixture scope 拆分 |
 | 3 | Task 3: memory why 输出 Authority 等级差 | `internal/app/memory.go` 渲染 rank gap |
 | 4 | Task 4: memoryWriter interface 扩展 + auto-Approve 守门 | `internal/agent/runtime.go` + stub store |
-| 5 | Task 5: trustset runner.extractAction 同步守门 + 5 新场景 | `internal/memory/trustset/runner.go` + 5 JSON 场景 + 45 计数 |
+| 5 | Task 5: trustset runner.extractAction 同步守门 + 5 新场景 | `internal/memory/trustset/runner.go` + 5 JSON 场景 + 45 计数 + extractor-hybrid-both 重写 |
 | 6 | Task 6: CLI mengdie memory conflicts 子命令 | `internal/app/memory.go` 新增子命令 |
 | 7 | Task 7: Live provider + CI + 文档 | IMPLEMENTATION_REPORT + README |
 
