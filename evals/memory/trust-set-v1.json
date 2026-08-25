@@ -304,7 +304,7 @@
     {
       "id": "extractor-llm-tool-pref",
       "category": "inferred",
-      "description": "LLM 抽取器（stub provider）从 edit_file/write_file 比例推断工具偏好（authority=inferred 经 ProposeMemory 落为 proposed）",
+      "description": "LLM 抽取器（stub provider）从 edit_file/write_file 比例推断工具偏好（authority=inferred 经 ProposeMemory 后被 fingerprint 命中，runtime auto-Approve 升为 active）",
       "setup": {
         "seed_events": [
           {"kind": "tool.completed", "name": "edit_file", "success": true},
@@ -320,14 +320,14 @@
       ],
       "expected": {
         "extracted_memories": [
-          {"claim_contains": "偏好 edit_file", "authority": "inferred", "status": "proposed"}
+          {"claim_contains": "偏好 edit_file", "authority": "inferred", "status": "auto-approved"}
         ]
       }
     },
     {
       "id": "extractor-hybrid-both",
       "category": "inferred",
-      "description": "Hybrid 抽取器同时跑 Rules 与 LLM（stub），两条候选分别走 SaveRepositoryFact / ProposeMemory 落为不同 authority 与 status（避免 spec §4.2 同 authority 不同 claim 的 dispute 翻转）",
+      "description": "Hybrid 抽取器同时跑 Rules 与 LLM（stub），Rules 候选走 SaveRepositoryFact 落为 repository/active，LLM 候选经 fingerprint auto-Approve 落为 inferred/active（避免 spec §4.2 同 authority 不同 claim 的 dispute 翻转）",
       "setup": {
         "seed_events": [
           {"kind": "tool.completed", "name": "edit_file", "success": true}
@@ -341,7 +341,104 @@
       "expected": {
         "extracted_memories": [
           {"claim_contains": "edit_file 修改文件", "authority": "repository", "status": "active"},
-          {"claim_contains": "偏好 edit_file", "authority": "inferred", "status": "proposed"}
+          {"claim_contains": "偏好 edit_file", "authority": "inferred", "status": "auto-approved"}
+        ]
+      }
+    },
+    {
+      "id": "auto-approved-rules-edits",
+      "category": "inferred",
+      "description": "规则抽取器从 edit_file 工具成功事件中提取记忆，claim 命中 fingerprint；Rules 路径直接落为 active，sentinel 'auto-approved' 与 status=active 等价（无需 Approve 调用）",
+      "setup": {
+        "seed_events": [
+          {"kind": "tool.completed", "name": "edit_file", "success": true}
+        ]
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "rules", "scope": "project/mengdie", "expect_proposed_count_gte": 0}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "edit_file", "authority": "repository", "status": "auto-approved"}
+        ]
+      }
+    },
+    {
+      "id": "auto-approved-rules-tests",
+      "category": "inferred",
+      "description": "规则抽取器从 go test shell 成功事件中提取记忆，claim 命中 fingerprint；Rules 路径直接落为 active（authority=verified 经 SaveVerifiedFact）",
+      "setup": {
+        "seed_events": [
+          {"kind": "tool.completed", "name": "shell", "success": true, "summary": "go test ./internal/memory/..."}
+        ]
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "rules", "scope": "project/mengdie", "expect_proposed_count_gte": 0}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "go test", "authority": "verified", "status": "auto-approved"}
+        ]
+      }
+    },
+    {
+      "id": "auto-approved-rules-lint",
+      "category": "inferred",
+      "description": "规则抽取器从 golangci-lint shell 成功事件中提取记忆，claim 命中 fingerprint；Rules 路径直接落为 active（authority=verified 经 SaveVerifiedFact）",
+      "setup": {
+        "seed_events": [
+          {"kind": "tool.completed", "name": "shell", "success": true, "summary": "golangci-lint run ./..."}
+        ]
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "rules", "scope": "project/mengdie", "expect_proposed_count_gte": 0}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "golangci-lint", "authority": "verified", "status": "auto-approved"}
+        ]
+      }
+    },
+    {
+      "id": "auto-approved-llm-fingerprint",
+      "category": "inferred",
+      "description": "LLM 抽取器（stub provider）产出含 fingerprint 关键词的 claim，经 runtime auto-Approve 升为 active（authority=inferred 经 ProposeMemory → Approve），sentinel 'auto-approved' 与 status=active 等价",
+      "setup": {
+        "seed_events": [
+          {"kind": "tool.completed", "name": "edit_file", "success": true}
+        ],
+        "llm_response": "{\"claim\":\"项目代码修改走 edit_file 工具\",\"source_type\":\"agent_message\",\"reason\":\"preference\"}"
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "llm", "scope": "project/mengdie", "expect_proposed_count_gte": 1}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "edit_file", "authority": "inferred", "status": "auto-approved"}
+        ]
+      }
+    },
+    {
+      "id": "auto-approved-llm-non-fingerprint",
+      "category": "inferred",
+      "description": "LLM 抽取器（stub provider）产出不含任何 fingerprint 关键词的 claim（'npm test' 不命中 8 个 fingerprint），ShouldAutoApprove 返回 false，行留在 status=proposed 不被 auto-Approve",
+      "setup": {
+        "seed_events": [
+          {"kind": "tool.completed", "name": "shell", "success": true, "summary": "npm test"}
+        ],
+        "llm_response": "{\"claim\":\"用户偏好每次都跑 npm test\",\"source_type\":\"agent_message\",\"reason\":\"preference\"}"
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "llm", "scope": "project/mengdie", "expect_proposed_count_gte": 1}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "npm test", "authority": "inferred", "status": "proposed"}
         ]
       }
     }

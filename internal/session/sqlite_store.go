@@ -916,14 +916,20 @@ func projectEventPayload(kind string, payload []byte, row *EventRow) {
 	switch kind {
 	case "tool.completed":
 		var p struct {
-			Tool    string `json:"tool"`
-			Success bool   `json:"success"`
-			Summary string `json:"summary"`
+			Tool          string `json:"tool"`
+			Success       bool   `json:"success"`
+			Summary       string `json:"summary"`
+			SourceCommand string `json:"source_command"`
 		}
 		if err := json.Unmarshal(payload, &p); err != nil {
 			return
 		}
-		row.Name, row.Success, row.SourceRef = p.Tool, p.Success, p.Summary
+		row.Name, row.Success = p.Tool, p.Success
+		if p.SourceCommand != "" {
+			row.SourceRef = p.SourceCommand
+		} else {
+			row.SourceRef = p.Summary
+		}
 	case "run.failed":
 		var p struct {
 			Category string `json:"category"`

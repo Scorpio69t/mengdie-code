@@ -158,11 +158,12 @@ type ToolStarted struct {
 }
 
 type ToolCompleted struct {
-	CallID     string `json:"call_id"`
-	Tool       string `json:"tool"`
-	Success    bool   `json:"success"`
-	Summary    string `json:"summary,omitempty"`
-	DurationMS int64  `json:"duration_ms,omitempty"`
+	CallID        string `json:"call_id"`
+	Tool          string `json:"tool"`
+	Success       bool   `json:"success"`
+	Summary       string `json:"summary,omitempty"`
+	SourceCommand string `json:"source_command,omitempty"`
+	DurationMS    int64  `json:"duration_ms,omitempty"`
 }
 
 // RecoveryResolved binds a new-run tool result to an interrupted source tool

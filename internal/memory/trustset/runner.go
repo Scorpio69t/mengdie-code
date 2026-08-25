@@ -497,8 +497,25 @@ func extractAction(ctx context.Context, memStore *memory.Store, sessionStore *se
 		// and an LLM candidate (AuthorityInferred) take different write
 		// paths, so their different claims never collide on the
 		// same-authority dispute rule.
-		if err := routeExtractedCandidate(ctx, memStore, mem); err != nil {
+		stored, err := routeExtractedCandidate(ctx, memStore, mem)
+		if err != nil {
 			return fmt.Errorf("route extracted memory: %w", err)
+		}
+		// Mirror app.Runtime.applyMemoryExtraction (M3 Slice 03 Task 4):
+		// fingerprint-matching candidates get auto-promoted to status=active
+		// via a follow-up Approve call. Trust Set's auto-approved-*
+		// scenarios validate this two-phase contract end-to-end: a Rules
+		// candidate reaches status=active via SaveRepositoryFact /
+		// SaveVerifiedFact (no auto-Approve needed), while an LLM
+		// candidate whose claim matches a fingerprint pattern needs the
+		// ProposeMemory → Approve path to surface at status=active. The
+		// proposed-count assertion below still tracks only the pre-Approve
+		// count because the existing extractor-rules-* / extractor-llm-*
+		// scenarios assert proposed (i.e. non-auto-Approved) candidates.
+		if stored.Status == memory.StatusProposed && extractor.ShouldAutoApprove(stored.Claim) {
+			if approveErr := memStore.Approve(ctx, stored.ID); approveErr != nil {
+				return fmt.Errorf("auto-approve fingerprint match: %w", approveErr)
+			}
 		}
 		if mem.Authority == memory.AuthorityInferred {
 			proposed++
@@ -515,21 +532,19 @@ func extractAction(ctx context.Context, memStore *memory.Store, sessionStore *se
 // Save* method whose Authority routing matches the Authority the extractor
 // stamped. Unknown authorities fall back to ProposeMemory so the candidate
 // still lands rather than silently being dropped — that mirrors the "produce
-// as many as you can" contract the Hybrid.Extractor advertises.
-func routeExtractedCandidate(ctx context.Context, memStore *memory.Store, mem memory.Memory) error {
+// as many as you can" contract the Hybrid.Extractor advertises. Returns the
+// stored Memory so extractAction can run the M3 Slice 03 fingerprint
+// auto-Approve pass on top of the Save* return value.
+func routeExtractedCandidate(ctx context.Context, memStore *memory.Store, mem memory.Memory) (memory.Memory, error) {
 	switch mem.Authority {
 	case memory.AuthorityRepository:
-		_, err := memStore.SaveRepositoryFact(ctx, mem)
-		return err
+		return memStore.SaveRepositoryFact(ctx, mem)
 	case memory.AuthorityVerified:
-		_, err := memStore.SaveVerifiedFact(ctx, mem)
-		return err
+		return memStore.SaveVerifiedFact(ctx, mem)
 	case memory.AuthorityExplicit:
-		_, err := memStore.SaveUserMemory(ctx, mem)
-		return err
+		return memStore.SaveUserMemory(ctx, mem)
 	default:
-		_, err := memStore.ProposeMemory(ctx, mem)
-		return err
+		return memStore.ProposeMemory(ctx, mem)
 	}
 }
 
@@ -810,12 +825,30 @@ func assertExpected(ctx context.Context, memStore *memory.Store, s Scenario, pri
 // satisfied by a single observed memory.Memory. The comparison is
 // case-insensitive on ClaimContains (substring) and exact on Authority +
 // Status; empty expectation fields mean "no constraint".
+//
+// Status accepts a sentinel "auto-approved" alongside the literal DB
+// values: "auto-approved" means "this candidate landed at status=active via
+// the auto-Approve path" (M3 Slice 03 Task 4), which today produces
+// status=active for both the Rules-routed candidates (authority ∈
+// {repository, verified}) and the LLM-routed candidates whose claim
+// matched a fingerprint (authority=inferred, then Approve). The sentinel
+// lives here rather than in the manifest literal set because v0.1
+// simplifies auto-Approve to a single DB status and the alias is a
+// Trust-Set-only concept — the SQLite CHECK constraint still pins the
+// real value to "active".
 func expectedMatches(want ExtractedMemory, got memory.Memory) bool {
 	if want.ClaimContains != "" && !strings.Contains(strings.ToLower(got.Claim), strings.ToLower(want.ClaimContains)) {
 		return false
 	}
 	if want.Authority != "" && string(got.Authority) != want.Authority {
 		return false
+	}
+	// Sentinel: "auto-approved" accepts any auto-promoted candidate. The
+	// authority check above still runs, so a repository-flavored scenario
+	// only matches a repository-flavored observation even though the
+	// status literal widens.
+	if want.Status == "auto-approved" {
+		return got.Status == memory.StatusActive
 	}
 	if want.Status != "" && string(got.Status) != want.Status {
 		return false

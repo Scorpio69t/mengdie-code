@@ -25,15 +25,20 @@ import (
 // rule from Task 3 fix d21118d) cannot leak between scenarios. This matches
 // Trust Set's intent: per-scenario evidence is independent.
 //
-// M3 Slice 02 Task 9 extends the manifest to 35 scenarios (30 slice-01 +
-// 5 inferred-extraction scenarios). The new scenarios exercise the
-// run_run + extract action verbs introduced in this task and rely on the
-// same per-scenario fresh-store invariant.
+// M3 Slice 02 Task 9 extended the manifest to 35 scenarios (30 slice-01 +
+// 5 inferred-extraction scenarios). M3 Slice 03 Task 5 adds 5 more
+// (auto-approved-rules-* / auto-approved-llm-fingerprint /
+// auto-approved-llm-non-fingerprint), bringing the total to 40. The new
+// scenarios exercise the M3 Slice 03 fingerprint auto-Approve path via
+// expected.extracted_memories[].status = "auto-approved" (which
+// expectedMatches translates to "matches any status=active candidate");
+// auto-approved-llm-non-fingerprint is the negative test that asserts a
+// non-fingerprint claim stays at status=proposed.
 func TestRunnerProducesAllMetrics(t *testing.T) {
 	manifestPath := locateManifest(t)
 	scenarios := loadScenarios(t, manifestPath)
-	if len(scenarios) != 35 {
-		t.Fatalf("trust-set-v1.json must have 35 scenarios, got %d", len(scenarios))
+	if len(scenarios) != 40 {
+		t.Fatalf("trust-set-v1.json must have 40 scenarios, got %d", len(scenarios))
 	}
 	results := make([]ScenarioResult, 0, len(scenarios))
 	for _, scenario := range scenarios {

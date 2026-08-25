@@ -263,6 +263,16 @@ registeredTools := append(
 // Agent.Options 同时注入 MemoryStore + MemoryExtractor + ProjectIdentity
 ```
 
+> **v0.1.1 注**：M3 Slice 03 引入 fingerprint auto-Approve。
+> Hybrid.Extract 仍返回纯 `[]Memory`，决策在 app 层：
+> - `internal/agent/runtime.go:applyMemoryExtraction` 钩子分两阶段：先 `ProposeMemory` 所有候选，再对 `extractor.ShouldAutoApprove(claim)` 命中的 id 调 `Store.Approve(id)`。
+> - `internal/memory/trustset/runner.go:extractAction` 同样在 Trust Set 端到端里跑 auto-Approve，让 `expected.extracted_memories[].status: "auto-approved"` 端到端可断言。
+> - `RunResult.AutoApprovedCount int` 公开 JSON tag `auto_approved_count`，让 CLI/下游消费者可见每次 Run 的 auto-Approve 计数。
+>
+> v0.1 简化为 `--status auto-approved` 仅查询 `status=active`（不查 `evidence.source=auto_approve`）；v0.2 加精确过滤后需要 revisit `internal/app/memory.go:memoryStatusAliasFor` map。
+>
+> 设计稿：`docs/superpowers/specs/2026-08-24-m3-slice-03-auto-approve-design.md`。实施报告：`docs/development/phase-3-slice-03/IMPLEMENTATION_REPORT.md`。
+
 ## 11. Trust Set 扩展（`evals/memory/trust-set-v1.json`）
 
 5 个 `inferred_extraction` 增量场景（v0.1 增量；slice 01 的 30 个场景不变）：

@@ -109,7 +109,7 @@ mengdie memory forget <id>
 - [ ] M2：事件持久化、恢复、上下文压缩与 Patch Journal（[第二阶段详细设计](./docs/design/phase-2/DETAILED_DESIGN.md)）
 - [x] 第三阶段 Slice 01：可信记忆 schema + FTS5 + 显式 CLI + Agent 集成（[设计稿](./docs/superpowers/specs/2026-08-24-m3-slice-01-trusted-memory-design.md)、[实施报告](./docs/development/phase-3-slice-01/IMPLEMENTATION_REPORT.md)）
 - [x] 第三阶段 Slice 02：MemoryExtractor 自动候选提取 + memory_recall 工具注册（[设计稿](./docs/superpowers/specs/2026-08-24-m3-slice-02-extractor-design.md)、[实施报告](./docs/development/phase-3-slice-02/IMPLEMENTATION_REPORT.md)）
-- [ ] M3 Slice 03：自动 Approve 高频低风险候选（待办）
+- [x] M3 Slice 03：ruleGoTest/ruleGoLint schema 修复 + fingerprint auto-Approve（[设计稿](./docs/superpowers/specs/2026-08-24-m3-slice-03-auto-approve-design.md)）
 - [ ] M3 Slice 04：跨 Authority dispute 标记（待办）
 - [ ] M4：默认只生成提案的复盘机制
 
