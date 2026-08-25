@@ -4,6 +4,7 @@
 package memory_test
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -126,5 +127,29 @@ func TestGenerateIDLength(t *testing.T) {
 	id := memory.GenerateID("c", memory.Scope{Kind: "project", Value: "p"}, "explicit", "s")
 	if got, want := len(id), len("mem_")+32; got != want {
 		t.Fatalf("GenerateID length = %d, want %d (id=%q)", got, want, id)
+	}
+}
+
+// TestAuthorityRank pins the rank integer returned by AuthorityRank for each
+// known Authority value and the unknown / empty-string fallbacks. Lower is
+// more authoritative; unknown values default to math.MaxInt so a bad value
+// never displaces a known one in cross-authority dispute resolution.
+func TestAuthorityRank(t *testing.T) {
+	cases := []struct {
+		a    memory.Authority
+		want int
+		name string
+	}{
+		{memory.AuthorityExplicit, 1, "explicit"},
+		{memory.AuthorityVerified, 2, "verified"},
+		{memory.AuthorityRepository, 3, "repository"},
+		{memory.AuthorityInferred, 4, "inferred"},
+		{memory.Authority("unknown"), math.MaxInt, "unknown_default"},
+		{memory.Authority(""), math.MaxInt, "empty_default"},
+	}
+	for _, c := range cases {
+		if got := memory.AuthorityRank(c.a); got != c.want {
+			t.Errorf("%s: AuthorityRank(%q) = %d, want %d", c.name, c.a, got, c.want)
+		}
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -43,6 +44,25 @@ const (
 	// a task. Requires explicit approval before becoming active.
 	AuthorityInferred Authority = "inferred"
 )
+
+// AuthorityRank returns the rank integer for an Authority value. Lower is
+// more authoritative. Used by cross-authority dispute detection (spec
+// §4.2 row 3) and by the fingerprint auto-Approve guard (slice 04 §3.4).
+// Unknown values default to math.MaxInt so they never displace known ones.
+func AuthorityRank(a Authority) int {
+	switch a {
+	case AuthorityExplicit:
+		return 1
+	case AuthorityVerified:
+		return 2
+	case AuthorityRepository:
+		return 3
+	case AuthorityInferred:
+		return 4
+	default:
+		return math.MaxInt
+	}
+}
 
 // Scope identifies the lifetime of a memory. Kind is one of the four values
 // pinned by the CHECK constraint on memories.scope_kind; Value is the scope
