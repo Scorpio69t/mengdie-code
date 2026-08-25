@@ -249,11 +249,13 @@ func TestSaveMarksBothDisputedOnSameScopeDifferentClaim(t *testing.T) {
 // counterpart of setupMemoryStore: every List/Get/Why test seeds a small
 // fixture set up front so assertions can assume the rows exist.
 //
-// Seeds:
-//   - explicit, project=mengdie, status=active ("项目测试入口")
-//   - repository, project=mengdie, status=active ("go.mod declares Go 1.26.6")
-//   - verified, project=mengdie, status=active ("go test ./... exits 0")
-//   - inferred, project=mengdie, status=proposed ("agent-inferred project structure")
+// Seeds (each authority occupies its own scope_value within project so spec
+// §4.2 row 3 — cross-authority dispute marking, enforced in M3 Slice 04 —
+// never fires; see commit 34e2411 for the enforcement):
+//   - explicit,  project=mengdie,         status=active  ("项目测试入口")
+//   - repository, project=mengdie-tools,  status=active  ("go.mod declares Go 1.26.6")
+//   - verified,   project=mengdie-deps,   status=active  ("go test ./... exits 0")
+//   - inferred,   project=mengdie-style,  status=proposed ("agent-inferred project structure")
 //
 // The seeded set lets List filter tests exercise per-authority selection and
 // the Why report test assert non-empty Source.Ref and a non-nil Evidence
@@ -263,26 +265,25 @@ func setupSeededStore(t *testing.T) *memory.Store {
 	sessionStore := setupMemoryStore(t)
 	s := memory.OpenMemory(sessionStore)
 	ctx := context.Background()
-	projectScope := memory.Scope{Kind: "project", Value: "mengdie"}
 	seeds := []memory.Memory{
 		{
 			Claim: "项目测试入口是 go test ./...", Authority: memory.AuthorityExplicit,
-			Scope:  projectScope,
+			Scope:  memory.Scope{Kind: "project", Value: "mengdie"},
 			Source: memory.SourceRef{Type: memory.SourceTypeUserMessage, Ref: "session-seed:1:user"},
 		},
 		{
 			Claim: "go.mod declares Go 1.26.6", Authority: memory.AuthorityRepository,
-			Scope:  projectScope,
+			Scope:  memory.Scope{Kind: "project", Value: "mengdie-tools"},
 			Source: memory.SourceRef{Type: memory.SourceTypeFile, Ref: "go.mod:3"},
 		},
 		{
 			Claim: "go test ./... exits 0", Authority: memory.AuthorityVerified,
-			Scope:  projectScope,
+			Scope:  memory.Scope{Kind: "project", Value: "mengdie-deps"},
 			Source: memory.SourceRef{Type: memory.SourceTypeCommandResult, Ref: "go test ./... exit=0"},
 		},
 		{
 			Claim: "agent-inferred project structure", Authority: memory.AuthorityInferred,
-			Scope:  projectScope,
+			Scope:  memory.Scope{Kind: "project", Value: "mengdie-style"},
 			Source: memory.SourceRef{Type: memory.SourceTypeAgentMessage, Ref: "session-seed:1:agent"},
 		},
 	}
@@ -504,27 +505,41 @@ func TestForgetReturnsNotFoundOnMissingID(t *testing.T) {
 // `superseded` and stamp `supersedes=<newID>` so `mengdie memory why <old>`
 // can show the chain and so List / Tier1 filters exclude superseded rows
 // while the chain is still traceable.
+//
+// Supersede requires both rows to share the same Scope (see store.go
+// ErrScopeMismatch), so this test inserts its own pair in a dedicated
+// scope rather than relying on the multi-scope seeded fixture.
 func TestSupersedeMarksOldSuperseded(t *testing.T) {
 	s := setupSeededStore(t)
-	mems, err := s.List(context.Background(), memory.ListQuery{Limit: 2})
+	scope := memory.Scope{Kind: "task", Value: "supersede-test"}
+	oldMem, err := s.SaveUserMemory(context.Background(), memory.Memory{
+		Claim:  "项目测试入口是 go test ./internal/foo",
+		Scope:  scope,
+		Source: memory.SourceRef{Type: memory.SourceTypeUserMessage, Ref: "session-1:1:user"},
+	})
 	if err != nil {
-		t.Fatalf("List: %v", err)
+		t.Fatalf("save old: %v", err)
 	}
-	if len(mems) < 2 {
-		t.Fatal("need 2 memories")
+	newMem, err := s.SaveUserMemory(context.Background(), memory.Memory{
+		Claim:  "项目测试入口是 go test ./...",
+		Scope:  scope,
+		Source: memory.SourceRef{Type: memory.SourceTypeUserMessage, Ref: "session-1:2:user"},
+	})
+	if err != nil {
+		t.Fatalf("save new: %v", err)
 	}
-	if err := s.Supersede(context.Background(), mems[0].ID, mems[1].ID); err != nil {
+	if err := s.Supersede(context.Background(), oldMem.ID, newMem.ID); err != nil {
 		t.Fatalf("Supersede: %v", err)
 	}
-	got, err := s.Get(context.Background(), mems[0].ID)
+	got, err := s.Get(context.Background(), oldMem.ID)
 	if err != nil {
 		t.Fatalf("Get old: %v", err)
 	}
 	if got.Status != memory.StatusSuperseded {
 		t.Fatalf("status=%s, want superseded", got.Status)
 	}
-	if got.Supersedes != mems[1].ID {
-		t.Fatalf("supersedes field=%q, want %s", got.Supersedes, mems[1].ID)
+	if got.Supersedes != newMem.ID {
+		t.Fatalf("supersedes field=%q, want %s", got.Supersedes, newMem.ID)
 	}
 }
 
