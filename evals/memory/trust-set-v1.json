@@ -327,7 +327,7 @@
     {
       "id": "extractor-hybrid-both",
       "category": "inferred",
-      "description": "Hybrid 抽取器同时跑 Rules 与 LLM（stub），Rules 候选走 SaveRepositoryFact 落为 repository/active，LLM 候选经 fingerprint auto-Approve 落为 inferred/active（避免 spec §4.2 同 authority 不同 claim 的 dispute 翻转）",
+      "description": "Hybrid 抽取器同时跑 Rules 与 LLM（stub），Rules 候选走 SaveRepositoryFact 落为 repository/active，LLM 候选经 ProposeMemory 落为 inferred/proposed；双方 claim canonicalize 后不同 → 双方都翻为 disputed（spec §4.2 row 3 跨 authority 翻转）",
       "setup": {
         "seed_events": [
           {"kind": "tool.completed", "name": "edit_file", "success": true}
@@ -340,8 +340,8 @@
       ],
       "expected": {
         "extracted_memories": [
-          {"claim_contains": "edit_file 修改文件", "authority": "repository", "status": "active"},
-          {"claim_contains": "偏好 edit_file", "authority": "inferred", "status": "auto-approved"}
+          {"claim_contains": "edit_file 修改文件", "authority": "repository", "status": "disputed"},
+          {"claim_contains": "偏好 edit_file", "authority": "inferred", "status": "disputed"}
         ]
       }
     },
@@ -439,6 +439,119 @@
       "expected": {
         "extracted_memories": [
           {"claim_contains": "npm test", "authority": "inferred", "status": "proposed"}
+        ]
+      }
+    },
+    {
+      "id": "cross-authority-explicit-vs-inferred",
+      "category": "inferred",
+      "description": "seed explicit 记忆；hybrid 抽取器让 stub LLM 提议 fingerprint 含 'go test' 但表述不同的 inferred claim → save() 内 dispute-marking 把双方都翻为 disputed（spec §4.2 row 3 跨 authority 翻转），extractAction 的 fingerprint auto-Approve 守门看到 StatusDisputed 自然跳过 Approve",
+      "setup": {
+        "seed_memories": [
+          {"claim": "项目测试入口是 go test ./...", "authority": "explicit", "status": "active"}
+        ],
+        "seed_events": [
+          {"kind": "user.message"}
+        ],
+        "llm_response": "{\"claim\":\"项目使用 go test 命令\",\"source_type\":\"agent_message\",\"reason\":\"fingerprint\"}"
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "hybrid", "scope": "project/mengdie", "expect_proposed_count_gte": 0}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "项目使用 go test", "authority": "inferred", "status": "disputed"}
+        ]
+      }
+    },
+    {
+      "id": "cross-authority-verified-vs-inferred",
+      "category": "inferred",
+      "description": "seed verified 记忆；hybrid 抽取器让 stub LLM 提议 fingerprint 含 'go test' 但表述不同的 inferred claim → 双方 disputed（spec §4.2 row 3），extractAction 守门跳过 Approve",
+      "setup": {
+        "seed_memories": [
+          {"claim": "项目测试入口是 go test ./...", "authority": "verified", "status": "active"}
+        ],
+        "seed_events": [
+          {"kind": "user.message"}
+        ],
+        "llm_response": "{\"claim\":\"go test ./... 测试入口\",\"source_type\":\"agent_message\",\"reason\":\"fingerprint\"}"
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "hybrid", "scope": "project/mengdie", "expect_proposed_count_gte": 0}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "go test", "authority": "inferred", "status": "disputed"}
+        ]
+      }
+    },
+    {
+      "id": "cross-authority-repository-vs-inferred",
+      "category": "inferred",
+      "description": "seed repository 记忆；hybrid 抽取器让 stub LLM 提议 fingerprint 含 'edit_file' 但表述不同的 inferred claim → 双方 disputed（spec §4.2 row 3），extractAction 守门跳过 Approve",
+      "setup": {
+        "seed_memories": [
+          {"claim": "项目使用 edit_file 修改文件", "authority": "repository", "status": "active"}
+        ],
+        "seed_events": [
+          {"kind": "user.message"}
+        ],
+        "llm_response": "{\"claim\":\"项目代码修改走 edit_file 工具\",\"source_type\":\"agent_message\",\"reason\":\"fingerprint\"}"
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "hybrid", "scope": "project/mengdie", "expect_proposed_count_gte": 0}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "edit_file", "authority": "repository", "status": "disputed"}
+        ]
+      }
+    },
+    {
+      "id": "auto-approve-skipped-cross-authority",
+      "category": "inferred",
+      "description": "seed explicit 记忆；hybrid 抽取器让 stub LLM 提议 fingerprint 含 'edit_file' 但表述不同的 inferred claim → inferred candidate 经 dispute-marking 翻为 disputed，extractAction 守门看到 IsCrossAuthorityConflict=true 跳过 Approve，candidate 留 disputed 不 auto-approve",
+      "setup": {
+        "seed_memories": [
+          {"claim": "项目使用 edit_file 修改文件", "authority": "explicit", "status": "active"}
+        ],
+        "seed_events": [
+          {"kind": "user.message"}
+        ],
+        "llm_response": "{\"claim\":\"edit_file 工具是首选\",\"source_type\":\"agent_message\",\"reason\":\"fingerprint\"}"
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "hybrid", "scope": "project/mengdie", "expect_proposed_count_gte": 0}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "edit_file", "authority": "inferred", "status": "disputed"}
+        ]
+      }
+    },
+    {
+      "id": "auto-approve-still-runs-no-conflict",
+      "category": "inferred",
+      "description": "无 seed 记忆；hybrid 抽取器让 stub LLM 提议 fingerprint 'go test' 的 inferred claim → 无跨 authority 冲突，IsCrossAuthorityConflict=false，extractAction 守门不触发，candidate 走 Approve 升为 active，sentinel 'auto-approved' 与 status=active 等价（守门不应误伤回归）",
+      "setup": {
+        "seed_memories": [],
+        "seed_events": [
+          {"kind": "user.message"}
+        ],
+        "llm_response": "{\"claim\":\"项目使用 go test ./...\",\"source_type\":\"agent_message\",\"reason\":\"fingerprint\"}"
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "extract", "extractor": "hybrid", "scope": "project/mengdie", "expect_proposed_count_gte": 1}
+      ],
+      "expected": {
+        "extracted_memories": [
+          {"claim_contains": "go test", "authority": "inferred", "status": "auto-approved"}
         ]
       }
     }

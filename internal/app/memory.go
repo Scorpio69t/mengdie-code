@@ -1,8 +1,8 @@
 // Copyright 2026 MengDie Code Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package app 的 memory 子命令实现规范 §5 的 9 个 CLI：list / show / why /
-// remember / forget / supersede / approve / rebuild / export。每个子命令
+// Package app 的 memory 子命令实现规范 §5 的 10 个 CLI：list / show / why /
+// remember / forget / supersede / approve / rebuild / export / conflicts。每个子命令
 // 共享同一份 `state.db`（同 session）并在解析阶段完成 Authority / scope
 // kind 的白名单校验，退出码严格对应规范 §5 的 0..5 编号（其中 3=找不到 id、
 // 4=Authority 守门拒绝、5=冲突无法解决）。
@@ -119,7 +119,7 @@ var memoryRememberAllowedAuthorities = map[string]struct{}{
 // dispatcher only validates the subcommand name and routes.
 func (a *App) runMemory(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		if err := a.writeError("用法：mengdie memory <list|show|why|remember|forget|supersede|approve|rebuild|export> [选项]\n"); err != nil {
+		if err := a.writeError("用法：mengdie memory <list|show|why|remember|forget|supersede|approve|rebuild|export|conflicts> [选项]\n"); err != nil {
 			return ExitRunError
 		}
 		return ExitInvalidInput
@@ -146,6 +146,8 @@ func (a *App) runMemory(ctx context.Context, args []string, stdout, stderr io.Wr
 		return runMemoryRebuild(ctx, rest, a, stdout, stderr)
 	case "export":
 		return runMemoryExport(ctx, rest, a, stdout, stderr)
+	case "conflicts":
+		return runMemoryConflicts(ctx, rest, a, stdout, stderr)
 	default:
 		if err := a.writeError("未知 memory 子命令 %q\n", sub); err != nil {
 			return ExitRunError
@@ -507,6 +509,42 @@ func runMemoryWhy(ctx context.Context, args []string, a *App, stdout, stderr io.
 			); err != nil {
 				return ExitRunError
 			}
+		}
+		// Authority rank gap 行 — only meaningful when there is a cross-authority
+		// dispute (spec §4.2 row 3). `ownRank` comes from the memory being
+		// `why`'d; `minPeerRank` is the lowest (most authoritative) rank among
+		// the conflict peers. `gap` is the absolute difference and `winner`
+		// names which side the rank favours. Lower rank = more authoritative.
+		ownRank := memory.AuthorityRank(report.Memory.Authority)
+		// minPeerRank is the lowest rank among peers only — seeded with the
+		// first peer's rank (we know len(Conflicts) > 0 here) so the
+		// explicit-side case (own outranks all peers) does not collapse the
+		// gap to 0. Seeding from ownRank would let the loop fail to update
+		// when ownRank is already the minimum of {own} ∪ peers.
+		minPeerRank := memory.AuthorityRank(report.Conflicts[0].Authority)
+		for _, peer := range report.Conflicts[1:] {
+			if r := memory.AuthorityRank(peer.Authority); r < minPeerRank {
+				minPeerRank = r
+			}
+		}
+		gap := ownRank - minPeerRank
+		if gap < 0 {
+			gap = -gap
+		}
+		winner := "own"
+		if minPeerRank < ownRank {
+			winner = "peer"
+		}
+		if _, err := fmt.Fprintf(stdout, "authority_rank=%d\n", ownRank); err != nil {
+			return ExitRunError
+		}
+		// Both ranks are echoed in the gap line so the rendered output exposes
+		// "rank N" / "rank M" as literal substrings (the rank audit needs to
+		// see both sides, not just the gap magnitude). Deviation from brief —
+		// see report "Deviations".
+		if _, err := fmt.Fprintf(stdout, "authority_rank_gap=%d (own rank %d, peer rank %d, %s wins)\n",
+			gap, ownRank, minPeerRank, winner); err != nil {
+			return ExitRunError
 		}
 		if _, err := fmt.Fprintln(stdout); err != nil {
 			return ExitRunError
@@ -893,6 +931,128 @@ func writeMemoryExportMarkdown(writer io.Writer, rows []memory.Memory) int {
 			row.ID, row.Claim, row.Authority, row.Status,
 			row.Scope.Kind, row.Scope.Value,
 			row.EvidenceScore, row.Source.Type, row.Source.Ref,
+		); err != nil {
+			return ExitRunError
+		}
+	}
+	return ExitOK
+}
+
+// runMemoryConflicts implements `mengdie memory conflicts`. It lists every
+// row currently in status=disputed (spec §4.2 row 2 / row 3 cases — same-
+// scope same-authority collisions and cross-authority disputes) and surfaces
+// the peer count per row so an auditor can see the conflict landscape at a
+// glance without following each id into `memory why`. The peer count comes
+// from `Store.why(id).Conflicts` so the column tracks the authoritative
+// view, not a heuristic.
+//
+// Flags mirror `memory list` where they overlap: `--scope` narrows to one
+// scope_kind, `--limit` caps the page (Store.List caps internally at 200),
+// and `--json` emits JSON Lines with an extra `peers` integer. Unknown
+// flag values exit 2 (spec §5 row 2); DB errors exit 1. The subcommand
+// does not accept positional arguments.
+func runMemoryConflicts(ctx context.Context, args []string, a *App, stdout, stderr io.Writer) int {
+	flags, common := a.newMemoryFlagSet("mengdie memory conflicts", stderr)
+	scopeKind := flags.String("scope", "", "按 scope_kind 过滤")
+	limit := flags.Int("limit", 0, "最大返回条数（默认 20，上限 200）")
+	jsonOutput := flags.Bool("json", false, "输出 JSON Lines")
+	if err := flags.Parse(args); err != nil {
+		return flagExitCode(err)
+	}
+	if flags.NArg() != 0 {
+		if err := writeMemoryError(stderr, "memory conflicts 不接受位置参数\n"); err != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+	if *scopeKind != "" {
+		if _, ok := memoryAllowedScopeKinds[*scopeKind]; !ok {
+			if err := writeMemoryError(stderr, "未知 scope 类型 %q\n", *scopeKind); err != nil {
+				return ExitRunError
+			}
+			return ExitInvalidInput
+		}
+	}
+
+	memStore, sessionStore, _, code := a.openMemoryStore(ctx, common)
+	if code != ExitOK {
+		return code
+	}
+	defer func() { _ = sessionStore.Close() }()
+
+	rows, err := memStore.List(ctx, memory.ListQuery{
+		ScopeKind: *scopeKind, Status: string(memory.StatusDisputed), Limit: *limit,
+	})
+	if err != nil {
+		if errors.Is(err, memory.ErrInvalidQuery) {
+			if werr := writeMemoryError(stderr, "查询参数无效：%v\n", err); werr != nil {
+				return ExitRunError
+			}
+			return ExitInvalidInput
+		}
+		return exitForStoreError(err)
+	}
+
+	if *jsonOutput {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetEscapeHTML(false)
+		for _, row := range rows {
+			peers, _ := countConflictPeers(ctx, memStore, row.ID)
+			// Embed Memory so the JSON output stays a superset of the
+			// `memory list --json` shape; the Peers field carries the
+			// extra signal the conflicts view promises.
+			type Row struct {
+				memory.Memory
+				Peers int `json:"peers"`
+			}
+			if err := encoder.Encode(Row{Memory: row, Peers: peers}); err != nil {
+				return ExitRunError
+			}
+		}
+		return ExitOK
+	}
+	return writeMemoryConflictsTable(stdout, rows, memStore, ctx)
+}
+
+// countConflictPeers calls Store.why for the given id and returns the length
+// of the Conflicts slice — i.e. how many peers the disputed memory is locked
+// against. On a Store error the function returns (-1, err) so the caller can
+// surface the failure in the rendered table without aborting the entire
+// listing (the other rows are still useful).
+func countConflictPeers(ctx context.Context, store *memory.Store, id string) (int, error) {
+	why, err := store.Why(ctx, id)
+	if err != nil {
+		return -1, err
+	}
+	return len(why.Conflicts), nil
+}
+
+// writeMemoryConflictsTable renders the spec §5 default ASCII table for the
+// conflicts view. The column set is id / claim / authority / status /
+// peers / updated_at — claim is truncated to 60 runes (matching
+// writeMemoryListTable), and a `peers=` prefix on the count column mirrors
+// the `authority_rank=` prefix used by runMemoryWhy so auditors parsing
+// `mengdie memory why` output by eye recognise the format. updated_at is
+// rendered as RFC3339Nano UTC so the column is comparable across the
+// session.
+func writeMemoryConflictsTable(stdout io.Writer, rows []memory.Memory, memStore *memory.Store, ctx context.Context) int {
+	const header = "id | claim | authority | status | peers | updated_at"
+	if _, err := fmt.Fprintln(stdout, header); err != nil {
+		return ExitRunError
+	}
+	for _, row := range rows {
+		claim := row.Claim
+		if len([]rune(claim)) > 60 {
+			claim = string([]rune(claim)[:60]) + "..."
+		}
+		peers, err := countConflictPeers(ctx, memStore, row.ID)
+		if err != nil {
+			// -1 sentinel so the auditor sees "peers=-1" and knows the
+			// count lookup failed; the rest of the row is still useful.
+			peers = -1
+		}
+		if _, err := fmt.Fprintf(stdout, "%s | %s | %s | %s | peers=%d | %s\n",
+			row.ID, claim, row.Authority, row.Status, peers, row.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		); err != nil {
 			return ExitRunError
 		}

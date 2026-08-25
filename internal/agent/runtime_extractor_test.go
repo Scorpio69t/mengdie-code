@@ -171,6 +171,10 @@ type stubStore struct {
 	approvedIDs  []string
 	proposeErrAt int // 1-based index; 0 means never error
 	approveErrAt int // 1-based index; 0 means never error
+	// conflictFn lets tests inject a custom IsCrossAuthorityConflict
+	// response. When nil the stub reports no conflict (false, nil) so
+	// existing tests continue to see the slice-03 auto-Approve path.
+	conflictFn func(context.Context, memory.Memory) (bool, error)
 }
 
 func (s *stubStore) ProposeMemory(_ context.Context, m memory.Memory) (memory.Memory, error) {
@@ -192,6 +196,13 @@ func (s *stubStore) Approve(_ context.Context, id string) error {
 	}
 	s.approvedIDs = append(s.approvedIDs, id)
 	return nil
+}
+
+func (s *stubStore) IsCrossAuthorityConflict(ctx context.Context, m memory.Memory) (bool, error) {
+	if s.conflictFn != nil {
+		return s.conflictFn(ctx, m)
+	}
+	return false, nil
 }
 
 // newTestAgentWithExtractorAndStore mirrors newTestAgentWithExtractor
@@ -328,5 +339,90 @@ func TestRunAppliesExtractionTwoPhaseWithAutoApprove(t *testing.T) {
 
 	if result.AutoApprovedCount != 1 {
 		t.Fatalf("RunResult.AutoApprovedCount = %d, want 1", result.AutoApprovedCount)
+	}
+}
+
+// TestRunAppliesExtractionSkipsAutoApproveOnCrossAuthorityConflict pins
+// the M3 Slice 04 safety gate: a fingerprint-matching candidate that has
+// a cross-authority dispute (per memory.Store.IsCrossAuthorityConflict,
+// spec §4.2 row 3) MUST NOT be auto-promoted from StatusProposed to
+// StatusActive. It stays StatusProposed for human review. The hook
+// must:
+//
+//  1. ProposeMemory both candidates (the dispute does not block the
+//     propose-time path).
+//  2. Skip the Approve call when the conflict check returns true.
+//  3. Leave result.AutoApprovedCount at 0.
+//
+// conflictFn discriminates by claim so the fingerprint candidate is
+// the one blocked while the manual-review candidate is allowed to
+// fall through the non-fingerprint branch (it would never auto-Approve
+// anyway, but the assertion is still that Approve is not called for
+// either row). This pins the "fingerprint auto-Approve must NOT bypass
+// higher-authority active memories" invariant from the Slice 04 brief.
+func TestRunAppliesExtractionSkipsAutoApproveOnCrossAuthorityConflict(t *testing.T) {
+	const fingerprintClaim = "项目使用 edit_file 修改文件"
+	const manualClaim = "用户偏好每次都跑 npm test"
+	stub := &stubExtractor{mems: []memory.Memory{
+		{Claim: fingerprintClaim, Authority: memory.AuthorityInferred},
+		{Claim: manualClaim, Authority: memory.AuthorityInferred},
+	}}
+	store := &stubStore{
+		conflictFn: func(_ context.Context, m memory.Memory) (bool, error) {
+			return m.Claim == fingerprintClaim, nil
+		},
+	}
+	a := newTestAgentWithExtractorAndStore(t, stub, store)
+
+	result, err := a.Run(context.Background(), newTestRequest(), newTestEmitter(t))
+	if err != nil {
+		t.Fatalf("Agent.Run returned error: %v", err)
+	}
+
+	if stub.callCount != 1 {
+		t.Fatalf("Extract called %d times, want 1", stub.callCount)
+	}
+	if store.proposeCount != 2 {
+		t.Fatalf("ProposeMemory called %d times, want 2 (both candidates)", store.proposeCount)
+	}
+	if store.approveCount != 0 {
+		t.Fatalf("Approve called %d times, want 0 (fingerprint candidate blocked by conflict)", store.approveCount)
+	}
+	if len(store.proposed) != 2 {
+		t.Fatalf("len(proposed) = %d, want 2", len(store.proposed))
+	}
+	if len(store.approvedIDs) != 0 {
+		t.Fatalf("len(approvedIDs) = %d, want 0", len(store.approvedIDs))
+	}
+
+	// The fingerprint candidate must remain in the proposed slice as
+	// StatusProposed; the hook must not have promoted it.
+	var fingerprintProposed bool
+	for _, mem := range store.proposed {
+		if mem.Claim == fingerprintClaim {
+			fingerprintProposed = true
+			break
+		}
+	}
+	if !fingerprintProposed {
+		t.Fatalf("fingerprint candidate %q missing from proposed slice", fingerprintClaim)
+	}
+
+	// Manual-review candidate must also still be in the proposed slice
+	// (it would never auto-Approve, but the assertion pins that the
+	// hook still ran ProposeMemory for it).
+	var manualProposed bool
+	for _, mem := range store.proposed {
+		if mem.Claim == manualClaim {
+			manualProposed = true
+			break
+		}
+	}
+	if !manualProposed {
+		t.Fatalf("manual candidate %q missing from proposed slice", manualClaim)
+	}
+
+	if result.AutoApprovedCount != 0 {
+		t.Fatalf("RunResult.AutoApprovedCount = %d, want 0 (conflict blocked the only fingerprint candidate)", result.AutoApprovedCount)
 	}
 }

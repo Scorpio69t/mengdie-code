@@ -26,6 +26,13 @@ import (
 // (explicit vs repository) and the claim truncation rule the renderer applies
 // for long claims. The caller is responsible for closing the store via the
 // returned cleanup.
+//
+// Each authority occupies its own scope_value within scope_kind="project"
+// so spec §4.2 row 3 (cross-authority dispute marking, enforced in M3 Slice
+// 04, commit 34e2411) never fires on this fixture. The explicit seed stays
+// at {project, mengdie-test} because the integration tests pin
+// ProjectIdentity="mengdie-test" — the agent's first-turn catalogue query
+// must resolve to that scope.
 func setupMemoryStoreWithSeeds(t *testing.T) *session.SQLiteStore {
 	t.Helper()
 	directory := t.TempDir()
@@ -43,18 +50,17 @@ func setupMemoryStoreWithSeeds(t *testing.T) *session.SQLiteStore {
 		}
 	})
 	mem := memory.OpenMemory(store)
-	scope := memory.Scope{Kind: "project", Value: "mengdie-test"}
 	seeds := []memory.Memory{
 		{
 			Claim:     "项目测试入口是 go test ./internal/...",
 			Authority: memory.AuthorityExplicit,
-			Scope:     scope,
+			Scope:     memory.Scope{Kind: "project", Value: "mengdie-test"},
 			Source:    memory.SourceRef{Type: memory.SourceTypeUserMessage, Ref: "session-seed:1:user"},
 		},
 		{
 			Claim:     "go.mod declares Go 1.26.6",
 			Authority: memory.AuthorityRepository,
-			Scope:     scope,
+			Scope:     memory.Scope{Kind: "project", Value: "mengdie-test-2"},
 			Source:    memory.SourceRef{Type: memory.SourceTypeFile, Ref: "go.mod:3"},
 		},
 	}

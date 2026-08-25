@@ -501,18 +501,48 @@ func extractAction(ctx context.Context, memStore *memory.Store, sessionStore *se
 		if err != nil {
 			return fmt.Errorf("route extracted memory: %w", err)
 		}
-		// Mirror app.Runtime.applyMemoryExtraction (M3 Slice 03 Task 4):
-		// fingerprint-matching candidates get auto-promoted to status=active
-		// via a follow-up Approve call. Trust Set's auto-approved-*
-		// scenarios validate this two-phase contract end-to-end: a Rules
-		// candidate reaches status=active via SaveRepositoryFact /
-		// SaveVerifiedFact (no auto-Approve needed), while an LLM
-		// candidate whose claim matches a fingerprint pattern needs the
-		// ProposeMemory → Approve path to surface at status=active. The
-		// proposed-count assertion below still tracks only the pre-Approve
-		// count because the existing extractor-rules-* / extractor-llm-*
-		// scenarios assert proposed (i.e. non-auto-Approved) candidates.
+		// Mirror app.Runtime.applyMemoryExtraction (M3 Slice 03 Task 4 +
+		// M3 Slice 04 Task 5 cross-authority guard): fingerprint-matching
+		// candidates get auto-promoted to status=active via a follow-up
+		// Approve call. Trust Set's auto-approved-* scenarios validate this
+		// two-phase contract end-to-end: a Rules candidate reaches
+		// status=active via SaveRepositoryFact / SaveVerifiedFact (no
+		// auto-Approve needed), while an LLM candidate whose claim matches
+		// a fingerprint needs the ProposeMemory → Approve path to surface
+		// at status=active.
+		//
+		// The cross-authority guard added in M3 Slice 04 mirrors the one
+		// in runtime.applyMemoryExtraction: a fingerprint candidate with a
+		// cross-authority dispute (spec §4.2 row 3) MUST NOT be auto-
+		// promoted, leaving the candidate at status=disputed (flipped by
+		// dispute-marking in save()) so the higher-authority peer keeps
+		// recall priority. Today the dispute-marking loop in save() already
+		// flips the candidate to StatusDisputed, so the stored.Status ==
+		// StatusProposed guard below is sufficient for the dispute case;
+		// the explicit IsCrossAuthorityConflict check adds symmetry with
+		// runtime.applyMemoryExtraction and protects against future
+		// refactors that might promote a fingerprint match before dispute-
+		// marking runs.
+		//
+		// The proposed-count assertion below still tracks every inferred
+		// candidate (whether it ends up proposed, disputed, or auto-
+		// approved) because the slice-04 cross-authority scenarios use
+		// expect_proposed_count_gte: 0 and the slice-03 scenarios use 1 —
+		// both pass with the "count every inferred candidate" semantics.
 		if stored.Status == memory.StatusProposed && extractor.ShouldAutoApprove(stored.Claim) {
+			conflict, err := memStore.IsCrossAuthorityConflict(ctx, stored)
+			if err != nil {
+				return fmt.Errorf("check cross-authority conflict: %w", err)
+			}
+			if conflict {
+				// stored.Status is already StatusDisputed (flipped by
+				// dispute-marking in save()); the guard here is a safety
+				// net — never call Approve on a fingerprint match whose
+				// scope has a cross-authority peer. Per spec §4.2 row 3,
+				// the higher-authority peer keeps recall priority; the
+				// inferred candidate stays disputed for human review.
+				continue
+			}
 			if approveErr := memStore.Approve(ctx, stored.ID); approveErr != nil {
 				return fmt.Errorf("auto-approve fingerprint match: %w", approveErr)
 			}

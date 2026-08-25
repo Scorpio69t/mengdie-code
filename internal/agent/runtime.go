@@ -99,16 +99,19 @@ type MemoryExtractor interface {
 }
 
 // memoryWriter is the agent's narrow view of the memory store used by
-// the post-Run extraction hook. It exposes only the two methods
-// applyMemoryExtraction invokes — ProposeMemory + Approve — because the
-// hook never reads, recalls, or audits; everything else (Get, List,
-// RecordEvidence, conflicts) is the retriever / app layer's concern.
-// *memory.Store satisfies this interface implicitly; tests substitute
-// a stub that records the call sequence so the two-phase extraction
-// contract can be asserted without spinning up a SQLite session.
+// the post-Run extraction hook. It exposes only the three methods
+// applyMemoryExtraction invokes — ProposeMemory + Approve +
+// IsCrossAuthorityConflict — because the hook never reads, recalls, or
+// audits; everything else (Get, List, RecordEvidence, scope filters)
+// is the retriever / app layer's concern. *memory.Store satisfies this
+// interface implicitly; tests substitute a stub that records the call
+// sequence so the two-phase extraction contract (and the cross-authority
+// auto-Approve guard from M3 Slice 04) can be asserted without spinning
+// up a SQLite session.
 type memoryWriter interface {
 	ProposeMemory(ctx context.Context, m memory.Memory) (memory.Memory, error)
 	Approve(ctx context.Context, id string) error
+	IsCrossAuthorityConflict(ctx context.Context, m memory.Memory) (bool, error)
 }
 
 // MemoryScope identifies the lifetime of a recall target. The Kind / Value
@@ -587,6 +590,12 @@ func (a *Agent) recordContext(ctx context.Context, message provider.Message, com
 //     structural signal enough to skip the user-review step, so the
 //     hook calls Approve on the row and increments the per-Run count.
 //     Non-matching candidates stay StatusProposed for manual review.
+//  3. A fingerprint candidate with a cross-authority dispute
+//     (memory.Store.IsCrossAuthorityConflict — spec §4.2 row 3) MUST
+//     NOT be auto-promoted: the higher-authority peer takes recall
+//     priority and the inferred / lower-rank row stays StatusProposed
+//     for human review. A conflict-check error is treated as
+//     best-effort and the candidate stays StatusProposed.
 //
 // The hook is best-effort: an extractor error is logged as a warning
 // and never fails the Run, and per-row ProposeMemory / Approve errors
@@ -638,6 +647,15 @@ func (a *Agent) applyMemoryExtraction(ctx context.Context, request RunRequest) {
 			continue
 		}
 		if extractor.ShouldAutoApprove(stored.Claim) {
+			conflict, err := a.memoryStore.IsCrossAuthorityConflict(extCtx, stored)
+			if err != nil {
+				a.warnExtraction(ctx, "auto_approve_conflict_check_failed", err)
+				continue
+			}
+			if conflict {
+				a.warnExtraction(ctx, "auto_approve_skipped_cross_authority_dispute", nil)
+				continue
+			}
 			if err := a.memoryStore.Approve(extCtx, stored.ID); err != nil {
 				a.warnExtraction(ctx, "auto_approve_approve_failed", err)
 				continue

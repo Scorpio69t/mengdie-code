@@ -19,6 +19,12 @@ import (
 // the memory facade does not expose — e.g. memory_usage for the RecordUsage
 // contract test — can query the underlying connection).
 //
+// Each seed occupies its own scope_value within scope_kind="project" so spec
+// §4.2 row 3 (cross-authority dispute marking, enforced in M3 Slice 04,
+// commit 34e2411) never fires on this fixture. The explicit seed remains at
+// {project, mengdie} so the catalogue / Tier 3 queries (which are pinned to
+// that scope) still resolve the same way the assertions expect.
+//
 // The Store surface intentionally does not expose *sql.DB (see store.go), so
 // tests that need raw table access go through sessionStore.DB(). Production
 // callers do not have access to that handle and must rely on the Store API
@@ -28,30 +34,29 @@ func setupSeededRetriever(t *testing.T) (*memory.Store, *session.SQLiteStore) {
 	sessionStore := setupMemoryStore(t)
 	s := memory.OpenMemory(sessionStore)
 	ctx := context.Background()
-	projectScope := memory.Scope{Kind: "project", Value: "mengdie"}
 	seeds := []memory.Memory{
 		{
 			Claim:     "项目测试入口是 go test ./...",
 			Authority: memory.AuthorityExplicit,
-			Scope:     projectScope,
+			Scope:     memory.Scope{Kind: "project", Value: "mengdie"},
 			Source:    memory.SourceRef{Type: memory.SourceTypeUserMessage, Ref: "session-seed:1:user"},
 		},
 		{
 			Claim:     "go.mod declares Go 1.26.6",
 			Authority: memory.AuthorityRepository,
-			Scope:     projectScope,
+			Scope:     memory.Scope{Kind: "project", Value: "mengdie-tools"},
 			Source:    memory.SourceRef{Type: memory.SourceTypeFile, Ref: "go.mod:3"},
 		},
 		{
 			Claim:     "go test ./... exits 0",
 			Authority: memory.AuthorityVerified,
-			Scope:     projectScope,
+			Scope:     memory.Scope{Kind: "project", Value: "mengdie-deps"},
 			Source:    memory.SourceRef{Type: memory.SourceTypeCommandResult, Ref: "go test ./... exit=0"},
 		},
 		{
 			Claim:     "agent-inferred project structure",
 			Authority: memory.AuthorityInferred,
-			Scope:     projectScope,
+			Scope:     memory.Scope{Kind: "project", Value: "mengdie-style"},
 			Source:    memory.SourceRef{Type: memory.SourceTypeAgentMessage, Ref: "session-seed:1:agent"},
 		},
 	}
@@ -69,12 +74,26 @@ func setupSeededRetriever(t *testing.T) (*memory.Store, *session.SQLiteStore) {
 // evidence_score DESC, observed_at DESC. The non-empty-claim check is a
 // proxy for "the projection scanned a real row" so a future regression that
 // returns zero rows from a fully-seeded store still surfaces here.
+//
+// The four seeds live in four distinct scope_values within scope_kind=
+// "project" (see setupSeededRetriever), so the test aggregates per-scope
+// catalogue projections and asserts the union across all authorities.
 func TestTier1CatalogueFiltersStale(t *testing.T) {
 	s, _ := setupSeededRetriever(t)
 	r := memory.NewRetriever(s)
-	entries, err := r.Tier1Catalogue(context.Background(), memory.Scope{Kind: "project", Value: "mengdie"}, 20)
-	if err != nil {
-		t.Fatal(err)
+	scopes := []memory.Scope{
+		{Kind: "project", Value: "mengdie"},
+		{Kind: "project", Value: "mengdie-tools"},
+		{Kind: "project", Value: "mengdie-deps"},
+		{Kind: "project", Value: "mengdie-style"},
+	}
+	var entries []memory.CatalogueEntry
+	for _, sc := range scopes {
+		batch, err := r.Tier1Catalogue(context.Background(), sc, 20)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, batch...)
 	}
 	if len(entries) == 0 {
 		t.Fatal("expected at least one active project memory")
