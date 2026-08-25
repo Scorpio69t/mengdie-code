@@ -12,8 +12,9 @@
 //   - Authority 与 SourceType 的绑定关系在 Go 层强制一次，避免静默错把
 //     agent_message 写成 active 的 explicit memory；
 //   - 同 scope + 规范化后同 claim 的 memory 视作同一条（idempotency）；
-//   - 同 scope + 同 authority + 不同 claim 时双方都置 disputed（新行随
-//     peer 一起翻转，让 `mengdie memory why <id>` 能给出冲突链）；
+//   - 同 scope + 不同 claim 时双方都置 disputed（§4.2 row 2 同 authority +
+//     row 3 跨 authority；新行随 peer 一起翻转，让 `mengdie memory why <id>`
+//     能给出冲突链）；
 //   - Approve / RecordEvidence 自动触发 RecomputeEvidenceScore（spec §4.3
 //     累计公式 1.0·user_confirmed + 0.6·reobserved + 0.3·task_verified）；
 //   - 写采用 INSERT ... ON CONFLICT(id) DO NOTHING RETURNING id 模式，
@@ -183,6 +184,63 @@ func (s *Store) ProposeMemory(ctx context.Context, m Memory) (Memory, error) {
 	return s.guardSave(ctx, m, AuthorityInferred, SourceTypeAgentMessage, StatusProposed)
 }
 
+// IsCrossAuthorityConflict reports whether m has any peer in the same scope
+// whose claim differs after canonicalisation AND whose Authority differs
+// from m.Authority. Spec §4.2 row 3 — cross-authority disputes must mark
+// both sides; the higher-authority peer retains recall priority through the
+// existing scoreRecall (authorityWeight + dispute penalty) formula, not
+// through this function's return value.
+//
+// The check considers any different Authority (not just outranking ones),
+// so the predicate gives symmetric answers on either side of the conflict.
+// For the production caller (applyMemoryExtraction on an inferred
+// candidate) every other Authority outranks AuthorityInferred, so the
+// symmetric form is equivalent to a strict "more-authoritative" check.
+//
+// The query looks at every non-self, non-archived peer in scope (no
+// status='active' filter): the dispute-marking loop in save flips both
+// sides to status='disputed', so an active-only filter would miss the
+// conflict after marking. The auto-Approve guard and the Why audit both
+// need to see the conflict regardless of which side flipped first.
+func (s *Store) IsCrossAuthorityConflict(ctx context.Context, m Memory) (bool, error) {
+	if err := m.Scope.Valid(); err != nil {
+		return false, fmt.Errorf("cross-authority conflict: %w", err)
+	}
+	normalized := CanonicalizeClaim(m.Claim)
+	ownRank := AuthorityRank(m.Authority)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, claim, authority FROM memories
+         WHERE scope_kind = ? AND scope_value = ?
+           AND id != ?
+           AND status != 'archived'`,
+		m.Scope.Kind, m.Scope.Value, m.ID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("query cross-authority peers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			id        string
+			claim     string
+			authority string
+		)
+		if err := rows.Scan(&id, &claim, &authority); err != nil {
+			return false, fmt.Errorf("scan cross-authority peer: %w", err)
+		}
+		if CanonicalizeClaim(claim) == normalized {
+			continue
+		}
+		if AuthorityRank(Authority(authority)) != ownRank {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate cross-authority peers: %w", err)
+	}
+	return false, nil
+}
+
 // guardSave applies the spec §4.1 Authority↔SourceType pairing and delegates
 // to save for the canonical idempotent + conflict-aware insert.
 func (s *Store) guardSave(ctx context.Context, m Memory, authority Authority, source SourceType, status Status) (Memory, error) {
@@ -285,14 +343,13 @@ func (s *Store) save(ctx context.Context, m Memory) (Memory, error) {
 		}
 	}
 
-	// Conflict marking: any other same-scope + same-authority row whose claim
-	// normalises to something different gets flipped to disputed.
+	// Conflict marking: any other same-scope row whose claim canonicalises
+	// differently gets flipped to disputed (spec §4.2 row 2 same-authority +
+	// row 3 cross-authority; the previous same-authority-only check was
+	// relaxed in M3 Slice 04 to land spec §4.2 row 3 fully).
 	disputeIDs := make([]string, 0)
 	for _, row := range existing {
 		if row.ID == m.ID {
-			continue
-		}
-		if row.Authority != m.Authority {
 			continue
 		}
 		if CanonicalizeClaim(row.Claim) == normalized {

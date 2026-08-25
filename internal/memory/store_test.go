@@ -620,3 +620,126 @@ func TestRecomputeEvidenceScore(t *testing.T) {
 		t.Fatalf("expected >=1.5 (1.0+0.6), got %v", got.EvidenceScore)
 	}
 }
+
+// TestStoreCrossAuthorityDispute covers spec §4.2 row 3 (cross-authority
+// disputes must mark both sides) plus the new IsCrossAuthorityConflict
+// public method (slice 04 §3.4). The test seeds three rows in the same
+// scope with different claims:
+//
+//  1. explicit memory with claim A — starts active.
+//  2. explicit memory with claim B — same scope + same authority +
+//     different claim flips both the existing row and the incoming row to
+//     StatusDisputed (regression check for spec §4.2 row 2 same-authority
+//     behavior).
+//  3. inferred memory with claim C — same scope + DIFFERENT authority +
+//     different claim. After M3 Slice 04 removed the Authority skip from
+//     the dispute-marking loop, this third insert flips both earlier
+//     explicit rows AND itself to StatusDisputed (new cross-authority
+//     behavior, spec §4.2 row 3).
+//
+// IsCrossAuthorityConflict is then exercised in three configurations:
+//
+//   - inferred → true (peer explicit exists with higher rank).
+//   - explicit → true (peer inferred exists with different rank).
+//   - isolated candidate in a fresh store → false (no peers).
+func TestStoreCrossAuthorityDispute(t *testing.T) {
+	ctx := context.Background()
+	sqlStore := setupMemoryStore(t)
+	store := memory.OpenMemory(sqlStore)
+
+	// Seed 1 explicit active.
+	explicit, err := store.SaveUserMemory(ctx, memory.Memory{
+		Claim:  "项目测试入口是 go test ./internal/memory/...",
+		Scope:  memory.Scope{Kind: "project", Value: "mengdie"},
+		Source: memory.SourceRef{Type: memory.SourceTypeUserMessage, Ref: "user:cli"},
+	})
+	if err != nil {
+		t.Fatalf("seed explicit: %v", err)
+	}
+	if explicit.Status != memory.StatusActive {
+		t.Fatalf("explicit want active, got %s", explicit.Status)
+	}
+
+	// Save a 2nd explicit with a different claim → both should land
+	// disputed (spec §4.2 row 2, same-authority behavior preserved).
+	peer2, err := store.SaveUserMemory(ctx, memory.Memory{
+		Claim:  "项目测试入口是 go test ./...",
+		Scope:  memory.Scope{Kind: "project", Value: "mengdie"},
+		Source: memory.SourceRef{Type: memory.SourceTypeUserMessage, Ref: "user:cli"},
+	})
+	if err != nil {
+		t.Fatalf("seed peer2: %v", err)
+	}
+
+	explicitReloaded, err := store.Get(ctx, explicit.ID)
+	if err != nil {
+		t.Fatalf("get explicit: %v", err)
+	}
+	peer2Reloaded, err := store.Get(ctx, peer2.ID)
+	if err != nil {
+		t.Fatalf("get peer2: %v", err)
+	}
+	if explicitReloaded.Status != memory.StatusDisputed {
+		t.Fatalf("explicit want disputed, got %s", explicitReloaded.Status)
+	}
+	if peer2Reloaded.Status != memory.StatusDisputed {
+		t.Fatalf("peer2 want disputed, got %s", peer2Reloaded.Status)
+	}
+
+	// Add 1 inferred proposal with a different claim → all 3 should land
+	// disputed (spec §4.2 row 3, cross-authority behavior new in slice 04).
+	inferred, err := store.ProposeMemory(ctx, memory.Memory{
+		Claim:     "项目测试入口是 make test",
+		Scope:     memory.Scope{Kind: "project", Value: "mengdie"},
+		Authority: memory.AuthorityInferred,
+		Source:    memory.SourceRef{Type: memory.SourceTypeAgentMessage, Ref: "run1:extractor"},
+	})
+	if err != nil {
+		t.Fatalf("propose inferred: %v", err)
+	}
+
+	inferredReloaded, err := store.Get(ctx, inferred.ID)
+	if err != nil {
+		t.Fatalf("get inferred: %v", err)
+	}
+	if inferredReloaded.Status != memory.StatusDisputed {
+		t.Fatalf("inferred want disputed, got %s", inferredReloaded.Status)
+	}
+
+	// IsCrossAuthorityConflict(inferred) → true: the earlier explicit peer
+	// (higher rank) is still a cross-authority disagreement even though
+	// both sides have been flipped to disputed.
+	conflict, err := store.IsCrossAuthorityConflict(ctx, inferredReloaded)
+	if err != nil {
+		t.Fatalf("IsCrossAuthorityConflict(inferred): %v", err)
+	}
+	if !conflict {
+		t.Fatal("IsCrossAuthorityConflict(inferred) want true")
+	}
+
+	// IsCrossAuthorityConflict(explicit) → true: the inferred peer is a
+	// cross-authority disagreement from the explicit side as well.
+	conflict2, err := store.IsCrossAuthorityConflict(ctx, explicitReloaded)
+	if err != nil {
+		t.Fatalf("IsCrossAuthorityConflict(explicit): %v", err)
+	}
+	if !conflict2 {
+		t.Fatal("IsCrossAuthorityConflict(explicit) want true")
+	}
+
+	// Isolated candidate in a fresh store → false (no peers).
+	sqlStore2 := setupMemoryStore(t)
+	store2 := memory.OpenMemory(sqlStore2)
+	mem := memory.Memory{
+		Claim:     "孤立条目",
+		Scope:     memory.Scope{Kind: "project", Value: "mengdie"},
+		Authority: memory.AuthorityInferred,
+	}
+	conflict3, err := store2.IsCrossAuthorityConflict(ctx, mem)
+	if err != nil {
+		t.Fatalf("IsCrossAuthorityConflict(isolated): %v", err)
+	}
+	if conflict3 {
+		t.Fatal("IsCrossAuthorityConflict(isolated) want false")
+	}
+}
