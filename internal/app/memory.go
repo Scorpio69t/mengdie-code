@@ -1,8 +1,8 @@
 // Copyright 2026 MengDie Code Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-// Package app 的 memory 子命令实现规范 §5 的 9 个 CLI：list / show / why /
-// remember / forget / supersede / approve / rebuild / export。每个子命令
+// Package app 的 memory 子命令实现规范 §5 的 10 个 CLI：list / show / why /
+// remember / forget / supersede / approve / rebuild / export / conflicts。每个子命令
 // 共享同一份 `state.db`（同 session）并在解析阶段完成 Authority / scope
 // kind 的白名单校验，退出码严格对应规范 §5 的 0..5 编号（其中 3=找不到 id、
 // 4=Authority 守门拒绝、5=冲突无法解决）。
