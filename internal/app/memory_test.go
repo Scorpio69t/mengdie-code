@@ -169,6 +169,44 @@ func TestMemoryWhyShowsAuthorityRankGap(t *testing.T) {
 	}
 }
 
+// TestMemoryConflictsList covers M3 Slice 04 Task 6: the new `mengdie memory
+// conflicts` subcommand must list every disputed memory and surface the peer
+// count (`peers=N`) per row, where N comes from `Store.why(id).Conflicts`. The
+// test seeds a cross-authority dispute (explicit + inferred in project scope;
+// both rows land in status=disputed per spec §4.2 row 3) and then runs
+// `memory conflicts`; the assertions require both the `peers=` column and
+// the literal `disputed` status string in the rendered ASCII table so the
+// auditor can see the conflict landscape at a glance without following each
+// id into `memory why`.
+//
+// Pre-implementation this test fails because `memory conflicts` is not in
+// the runMemory dispatcher (memory.go: runMemory unknown-sub default case
+// returns ExitInvalidInput).
+func TestMemoryConflictsList(t *testing.T) {
+	state := setupAppTestState(t)
+	code := runApp(state, []string{"memory", "remember", "项目测试入口是 go test ./internal/memory/...", "--scope", "project"})
+	if code != ExitOK {
+		t.Fatalf("remember 1 exit=%d stderr=%q", code, state.stderr.String())
+	}
+	code = runApp(state, []string{"memory", "remember", "项目测试入口是 make test", "--scope", "project", "--authority", "inferred"})
+	if code != ExitOK {
+		t.Fatalf("remember 2 exit=%d stderr=%q", code, state.stderr.String())
+	}
+
+	state.stdout.Reset()
+	code = runApp(state, []string{"memory", "conflicts"})
+	if code != ExitOK {
+		t.Fatalf("conflicts exit=%d stderr=%q", code, state.stderr.String())
+	}
+	out := state.stdout.String()
+	if !strings.Contains(out, "peers=") {
+		t.Fatalf("conflicts output missing peers column: %q", out)
+	}
+	if !strings.Contains(out, "disputed") {
+		t.Fatalf("conflicts output missing status: %q", out)
+	}
+}
+
 // TestMemoryWhyShowsAuthorityRankGapExplicitSide is the explicit-side regression
 // for the seed bug fixed in runMemoryWhy: the original code seeded
 // `minPeerRank := ownRank`, so when `why` was invoked against the higher-
