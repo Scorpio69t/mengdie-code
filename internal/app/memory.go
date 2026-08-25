@@ -514,8 +514,13 @@ func runMemoryWhy(ctx context.Context, args []string, a *App, stdout, stderr io.
 		// the conflict peers. `gap` is the absolute difference and `winner`
 		// names which side the rank favours. Lower rank = more authoritative.
 		ownRank := memory.AuthorityRank(report.Memory.Authority)
-		minPeerRank := ownRank
-		for _, peer := range report.Conflicts {
+		// minPeerRank is the lowest rank among peers only — seeded with the
+		// first peer's rank (we know len(Conflicts) > 0 here) so the
+		// explicit-side case (own outranks all peers) does not collapse the
+		// gap to 0. Seeding from ownRank would let the loop fail to update
+		// when ownRank is already the minimum of {own} ∪ peers.
+		minPeerRank := memory.AuthorityRank(report.Conflicts[0].Authority)
+		for _, peer := range report.Conflicts[1:] {
 			if r := memory.AuthorityRank(peer.Authority); r < minPeerRank {
 				minPeerRank = r
 			}

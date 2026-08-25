@@ -168,3 +168,76 @@ func TestMemoryWhyShowsAuthorityRankGap(t *testing.T) {
 		t.Fatalf("why output missing rank numbers: %q", out)
 	}
 }
+
+// TestMemoryWhyShowsAuthorityRankGapExplicitSide is the explicit-side regression
+// for the seed bug fixed in runMemoryWhy: the original code seeded
+// `minPeerRank := ownRank`, so when `why` was invoked against the higher-
+// authority (explicit) row of a cross-authority dispute the loop never
+// updated `minPeerRank` and both the printed peer rank and the gap collapsed
+// to `ownRank`. This test deliberately targets the explicit row (not the
+// inferred one) and pins the three literals that must appear in the
+// explicit-side gap line:
+//   - authority_rank_gap=3 (rank 1 - rank 4 absolute)
+//   - rank 4 (the inferred peer rank, not own rank)
+//   - own wins (own outranks peer on this side)
+//
+// Pre-fix this test fails (gap=0, peer rank=1, no "own wins"); post-fix it
+// passes. The companion TestMemoryWhyShowsAuthorityRankGap above still passes
+// because it accidentally exercises the inferred-side case where ownRank
+// (4) is larger than the peer's (1), so the loop update fires.
+func TestMemoryWhyShowsAuthorityRankGapExplicitSide(t *testing.T) {
+	state := setupAppTestState(t)
+	code := runApp(state, []string{"memory", "remember", "项目测试入口是 go test ./internal/memory/...", "--scope", "project"})
+	if code != ExitOK {
+		t.Fatalf("remember 1 exit=%d stderr=%q", code, state.stderr.String())
+	}
+	code = runApp(state, []string{"memory", "remember", "项目测试入口是 make test", "--scope", "project", "--authority", "inferred"})
+	if code != ExitOK {
+		t.Fatalf("remember 2 exit=%d stderr=%q", code, state.stderr.String())
+	}
+
+	// list --json, find the EXPLICIT row (Authority="explicit" in JSON).
+	// The companion test grabs the "first" row, which the Store.List ordering
+	// (evidence_score DESC, observed_at DESC) makes the inferred row — that
+	// case accidentally hides the seed bug. We must pick the explicit row
+	// to exercise the failing path.
+	state.stdout.Reset()
+	code = runApp(state, []string{"memory", "list", "--status", "disputed", "--json"})
+	if code != ExitOK {
+		t.Fatalf("list exit=%d stderr=%q", code, state.stderr.String())
+	}
+	var explicitID string
+	for _, line := range strings.Split(strings.TrimSpace(state.stdout.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var row struct {
+			ID        string `json:"id"`
+			Authority string `json:"authority"`
+		}
+		if err := json.Unmarshal([]byte(line), &row); err == nil && row.ID != "" && row.Authority == "explicit" {
+			explicitID = row.ID
+			break
+		}
+	}
+	if explicitID == "" {
+		t.Fatal("no explicit disputed memory found")
+	}
+
+	state.stdout.Reset()
+	code = runApp(state, []string{"memory", "why", explicitID})
+	if code != ExitOK {
+		t.Fatalf("why exit=%d stderr=%q", code, state.stderr.String())
+	}
+	out := state.stdout.String()
+
+	if !strings.Contains(out, "authority_rank_gap=3") {
+		t.Fatalf("explicit-side why output must report gap=3, got: %q", out)
+	}
+	if !strings.Contains(out, "rank 4") {
+		t.Fatalf("explicit-side why output must mention peer rank 4 (inferred), got: %q", out)
+	}
+	if !strings.Contains(out, "own wins") {
+		t.Fatalf("explicit-side why output should declare own wins (own rank 1 vs peer rank 4), got: %q", out)
+	}
+}
