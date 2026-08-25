@@ -982,6 +982,7 @@ func runMemoryConflicts(ctx context.Context, args []string, a *App, stdout, stde
 
 	rows, err := memStore.List(ctx, memory.ListQuery{
 		ScopeKind: *scopeKind, Status: string(memory.StatusDisputed), Limit: *limit,
+		OrderBy: memory.OrderByUpdatedAtDesc, // spec §5.1
 	})
 	if err != nil {
 		if errors.Is(err, memory.ErrInvalidQuery) {
