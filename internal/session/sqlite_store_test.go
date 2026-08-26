@@ -22,7 +22,7 @@ var storeTestTime = time.Date(2026, 8, 6, 10, 30, 0, 123, time.UTC)
 func TestOpenSQLiteAppliesSchemaAndConnectionSettings(t *testing.T) {
 	store := openTestStore(t, t.TempDir(), 250*time.Millisecond)
 	defer closeTestStore(t, store)
-	for _, table := range []string{"schema_migrations", "sessions", "runs", "events", "commands", "snapshots", "context_messages", "artifacts", "context_summaries", "patch_journals", "patch_entries", "reflection_proposals"} {
+	for _, table := range []string{"schema_migrations", "sessions", "runs", "events", "commands", "snapshots", "context_messages", "artifacts", "context_summaries", "patch_journals", "patch_entries", "reflection_proposals", "proposal_applies"} {
 		var count int
 		if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil {
 			t.Fatal(err)
@@ -35,7 +35,7 @@ func TestOpenSQLiteAppliesSchemaAndConnectionSettings(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 10 {
+	if migrationCount != 11 {
 		t.Fatalf("migration count=%d", migrationCount)
 	}
 	if _, err := os.Stat(store.Path()); err != nil {
@@ -49,6 +49,32 @@ func TestOpenSQLiteAppliesSchemaAndConnectionSettings(t *testing.T) {
 		if info.Mode().Perm() != 0o600 {
 			t.Fatalf("database mode=%o, want 600", info.Mode().Perm())
 		}
+	}
+}
+
+func TestOpenSQLiteAppliesProposalAppliesTable(t *testing.T) {
+	// 011_proposal_applies migration must create the apply audit table during
+	// OpenSQLite. Task 2 (Store.Apply) writes one row per Apply call
+	// (success / failed / denied_by_policy); this test guarantees the schema
+	// is in place before that code lands.
+	store, err := OpenSQLite(context.Background(), OpenOptions{
+		DataDir:     t.TempDir(),
+		ProjectRoot: filepath.Join(t.TempDir(), "project"),
+		Now:         func() time.Time { return storeTestTime },
+	})
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	defer closeTestStore(t, store)
+	var name string
+	err = store.db.QueryRow(
+		`SELECT name FROM sqlite_master WHERE type='table' AND name='proposal_applies'`,
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("proposal_applies table not found: %v", err)
+	}
+	if name != "proposal_applies" {
+		t.Fatalf("want proposal_applies, got %s", name)
 	}
 }
 
@@ -240,7 +266,7 @@ func TestArtifactMigrationUpgradesExistingContextLedger(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('context_messages') WHERE name='artifact_id'`).Scan(&artifactColumnCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 10 || artifactColumnCount != 1 {
+	if migrationCount != 11 || artifactColumnCount != 1 {
 		t.Fatalf("migration count=%d artifact columns=%d", migrationCount, artifactColumnCount)
 	}
 }
