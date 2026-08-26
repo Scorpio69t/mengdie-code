@@ -262,6 +262,12 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 	if err := validateRunRequest(request); err != nil {
 		return RunResult{}, err
 	}
+	// Reset the per-Run auto-Approved counter at entry so a previous Run's
+	// value cannot leak into the new RunResult if extraction is skipped
+	// (every early-return path below never reaches the line that overwrites
+	// this field). The fix is one line at the top of Run rather than N
+	// resets scattered across the early-return sites.
+	a.lastAutoApprovedCount = 0
 	state := &RunState{
 		RunID: request.RunID, StartedAt: a.now(),
 		Messages:           cloneMessages(request.History),

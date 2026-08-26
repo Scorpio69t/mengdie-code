@@ -260,6 +260,15 @@ func TestSaveMarksBothDisputedOnSameScopeDifferentClaim(t *testing.T) {
 // The seeded set lets List filter tests exercise per-authority selection and
 // the Why report test assert non-empty Source.Ref and a non-nil Evidence
 // section.
+//
+// **Convention (M3 Slice 04):** the four seed rows use DISTINCT
+// scope_value within the same scope_kind="project" — never stack
+// multiple authorities in a single scope. Spec §4.2 row 3 enforces
+// cross-authority dispute marking: same-scope + different-authority
+// + different-claim rows are all flipped to StatusDisputed, which
+// would collapse this seed to 4-disputed and break every downstream
+// test that queries status='active'. One scope per authority keeps
+// the seed landable while exercising the four-authority surface.
 func setupSeededStore(t *testing.T) *memory.Store {
 	t.Helper()
 	sessionStore := setupMemoryStore(t)

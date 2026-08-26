@@ -101,13 +101,26 @@ var validUsageOutcomes = map[string]struct{}{
 // filters the caller actually supplied. Limit defaults to 20 and is capped at
 // 200 per spec §5; values outside [0, 200] produce ErrInvalidQuery so callers
 // can branch on it with errors.Is.
+//
+// OrderBy is an optional sort hint; empty string preserves the default
+// ranking (evidence_score DESC, observed_at DESC) which the Trust Set and
+// most callers want. Set to OrderByUpdatedAtDesc for `memory conflicts`
+// (spec §5.1 — auditors want the most-recently-touched dispute first).
+// Unknown values produce ErrInvalidQuery so callers can branch on it.
 type ListQuery struct {
 	ScopeKind  string
 	ScopeValue string
 	Authority  string
 	Status     string
 	Limit      int
+	OrderBy    string
 }
+
+// Sort hints accepted by ListQuery.OrderBy. Empty string preserves the
+// historical default; concrete constants are the only stable wire values.
+const (
+	OrderByUpdatedAtDesc = "updated_at_desc"
+)
 
 // WhyReport is the audit surface for `mengdie memory why <id>` (spec §5) and
 // the Trust Set's why_completeness metric (spec §7). It carries all six
@@ -590,7 +603,15 @@ func (s *Store) List(ctx context.Context, q ListQuery) ([]Memory, error) {
 	if len(clauses) > 0 {
 		query += " WHERE " + strings.Join(clauses, " AND ")
 	}
-	query += " ORDER BY evidence_score DESC, observed_at DESC LIMIT ?"
+	switch q.OrderBy {
+	case "":
+		query += " ORDER BY evidence_score DESC, observed_at DESC LIMIT ?"
+	case OrderByUpdatedAtDesc:
+		query += " ORDER BY updated_at DESC, observed_at DESC LIMIT ?"
+	default:
+		return nil, fmt.Errorf("list memories: unknown OrderBy %q (want \"\" or %q): %w",
+			q.OrderBy, OrderByUpdatedAtDesc, ErrInvalidQuery)
+	}
 	args = append(args, limit)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
