@@ -43,6 +43,16 @@ const insertProposalSQL = `INSERT INTO reflection_proposals
      evidence, observed_at, reviewed_at, reviewer, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
+// insertApplyResultSQL writes a single row to proposal_applies. The
+// bind list is laid out in the same order as the migration
+// 011_proposal_applies.sql column list so diffing the migration against
+// the Go bind list is mechanical. The apply row id is generated from
+// (now, kind, proposalID+":apply") so the audit trail stays
+// deterministic without colliding across proposals.
+const insertApplyResultSQL = `INSERT INTO proposal_applies
+    (id, proposal_id, kind, target, result, error, applied_at, patch_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+
 // Store is the proposal storage facade over the session-owned SQLite
 // database. It borrows the connection via session.SQLiteStore.DB() and
 // shares the 010_reflection_proposals migration installed by OpenSQLite.
@@ -323,4 +333,126 @@ func nullString(s string) any {
 		return nil
 	}
 	return s
+}
+
+// Apply runs the kind-routed side effect for an approved proposal and
+// records the outcome in proposal_applies. The flow is:
+//
+//  1. Load the proposal; ErrProposalNotFound if missing.
+//  2. Reject anything other than StatusApproved — the executor is
+//     never invoked on a not-approved row, and no proposal_applies
+//     row is written (proposal_applies.proposal_id is UNIQUE, so we
+//     never want half-applied state in the table).
+//  3. Idempotent guard: if a proposal_applies row already exists for
+//     this proposal_id, return it unchanged and skip the executor.
+//     proposal_id is UNIQUE so the second insert would otherwise
+//     error and we save the caller from a double side-effect (memory
+//     row patched twice, AGENTS.md rewritten twice, ...).
+//  4. Dispatch by Kind to the matching ApplyExecutor method. Unknown
+//     Kind values map to ErrProposalNotApplicable.
+//  5. Stamp ProposalID / Kind / AppliedAt when the executor leaves
+//     them empty so every audit row carries the provenance.
+//  6. Persist the ApplyResult via insertApplyResult and return it.
+//
+// The executor's error is propagated as-is so callers can branch on
+// it with errors.Is; a missing executor method (unknown Kind) maps to
+// ErrProposalNotApplicable rather than a bare fmt.Errorf so the CLI
+// can map it to a distinct exit code.
+func (s *Store) Apply(ctx context.Context, proposalID string, executor ApplyExecutor) (ApplyResult, error) {
+	p, err := s.Get(ctx, proposalID)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	if p.Status != StatusApproved {
+		return ApplyResult{}, fmt.Errorf("%w: %s is %s, not approved",
+			ErrProposalNotApplicable, proposalID, p.Status)
+	}
+
+	// Idempotent guard — a second Apply for the same proposal_id
+	// short-circuits with the existing record. ErrProposalNotFound
+	// from getApplyResult means no row exists, which is the expected
+	// first-call outcome, so it is intentionally ignored.
+	if existing, gerr := s.getApplyResult(ctx, proposalID); gerr == nil && !existing.AppliedAt.IsZero() {
+		return existing, nil
+	}
+
+	var (
+		result ApplyResult
+		rerr   error
+	)
+	switch p.Kind {
+	case KindMemoryUpgrade:
+		result, rerr = executor.ApplyMemoryUpgrade(ctx, p)
+	case KindAgentsMdRevision:
+		result, rerr = executor.ApplyAgentsMdRevision(ctx, p)
+	case KindSkillDraft:
+		result, rerr = executor.ApplySkillDraft(ctx, p)
+	case KindObsolete:
+		result, rerr = executor.ApplyObsolete(ctx, p)
+	default:
+		return ApplyResult{}, fmt.Errorf("%w: unknown kind %s", ErrProposalNotApplicable, p.Kind)
+	}
+	if rerr != nil {
+		return ApplyResult{}, rerr
+	}
+	if result.ProposalID == "" {
+		result.ProposalID = proposalID
+	}
+	if result.Kind == "" {
+		result.Kind = p.Kind
+	}
+	if result.AppliedAt.IsZero() {
+		result.AppliedAt = s.now()
+	}
+	if ierr := s.insertApplyResult(ctx, result); ierr != nil {
+		return ApplyResult{}, fmt.Errorf("record apply result: %w", ierr)
+	}
+	return result, nil
+}
+
+// getApplyResult returns the proposal_applies row for proposalID, or
+// ErrProposalNotFound when no row exists. The apply row's own id
+// column is discarded (the ApplyResult value type does not surface
+// it); proposal_id UNIQUE means the result is at most one row. Errors
+// from the parser mirror scanProposalFields: parse failures on
+// applied_at silently leave the timestamp zero so the caller can
+// distinguish "stored row" (AppliedAt != zero) from "no row".
+func (s *Store) getApplyResult(ctx context.Context, proposalID string) (ApplyResult, error) {
+	var (
+		r         ApplyResult
+		rowID     string
+		errMsg    sql.NullString
+		patchID   sql.NullString
+		appliedAt string
+	)
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, proposal_id, kind, target, result, error, applied_at, patch_id
+		 FROM proposal_applies WHERE proposal_id = ?`, proposalID,
+	).Scan(&rowID, &r.ProposalID, &r.Kind, &r.Target, &r.Result, &errMsg, &appliedAt, &patchID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ApplyResult{}, ErrProposalNotFound
+	}
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	r.Error = errMsg.String
+	r.PatchID = patchID.String
+	if t, perr := time.Parse(time.RFC3339Nano, appliedAt); perr == nil {
+		r.AppliedAt = t
+	}
+	return r, nil
+}
+
+// insertApplyResult writes r to proposal_applies. The apply row id is
+// generated via generateProposalID with the ":apply" suffix so the
+// audit row id is distinguishable from the proposal row id without a
+// separate prefix table; error / patch_id use nullString so empty
+// strings land as SQL NULL rather than empty TEXT.
+func (s *Store) insertApplyResult(ctx context.Context, r ApplyResult) error {
+	applyID := generateProposalID(s.now(), r.Kind, r.ProposalID+":apply")
+	_, err := s.db.ExecContext(ctx, insertApplyResultSQL,
+		applyID, r.ProposalID, string(r.Kind), r.Target, r.Result, nullString(r.Error),
+		formatStamp(r.AppliedAt.UTC()), nullString(r.PatchID),
+	)
+	return err
 }

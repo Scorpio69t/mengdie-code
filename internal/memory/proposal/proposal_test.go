@@ -174,3 +174,230 @@ func TestProposalStoreGetNotFound(t *testing.T) {
 		t.Fatalf("want ErrProposalNotFound, got %v", err)
 	}
 }
+
+// mockApplyExecutor is the slice-02 stand-in for the ApplyExecutor
+// interface (slice-03 will add concrete executors; slice-02 ships the
+// Store.Apply + ApplyExecutor surface only). It records which kind
+// method was called and returns the configured ApplyResult / error so
+// tests can assert the apply driver routed to the right dispatcher and
+// that the idempotent guard skips re-invocation on a second Apply.
+type mockApplyExecutor struct {
+	memoryCalled bool
+	memoryResult proposal.ApplyResult
+	memoryErr    error
+
+	agentsMdCalled bool
+	agentsMdResult proposal.ApplyResult
+	agentsMdErr    error
+
+	skillDraftCalled bool
+	skillDraftResult proposal.ApplyResult
+	skillDraftErr    error
+
+	obsoleteCalled bool
+	obsoleteResult proposal.ApplyResult
+	obsoleteErr    error
+}
+
+func (m *mockApplyExecutor) ApplyMemoryUpgrade(_ context.Context, _ proposal.Proposal) (proposal.ApplyResult, error) {
+	m.memoryCalled = true
+	return m.memoryResult, m.memoryErr
+}
+
+func (m *mockApplyExecutor) ApplyAgentsMdRevision(_ context.Context, _ proposal.Proposal) (proposal.ApplyResult, error) {
+	m.agentsMdCalled = true
+	return m.agentsMdResult, m.agentsMdErr
+}
+
+func (m *mockApplyExecutor) ApplySkillDraft(_ context.Context, _ proposal.Proposal) (proposal.ApplyResult, error) {
+	m.skillDraftCalled = true
+	return m.skillDraftResult, m.skillDraftErr
+}
+
+func (m *mockApplyExecutor) ApplyObsolete(_ context.Context, _ proposal.Proposal) (proposal.ApplyResult, error) {
+	m.obsoleteCalled = true
+	return m.obsoleteResult, m.obsoleteErr
+}
+
+// TestStoreApplyApprovedProposal covers the happy path: an approved
+// proposal flows through Store.Apply, the executor's ApplyMemoryUpgrade
+// is invoked, and the returned ApplyResult is stamped with proposal_id,
+// kind, and applied_at. A proposal_applies audit row is written.
+func TestStoreApplyApprovedProposal(t *testing.T) {
+	ctx := context.Background()
+	store, sessionStore := openProposalStore(t)
+	defer func() { _ = sessionStore.Close() }()
+
+	p := proposal.Proposal{
+		Kind:       proposal.KindMemoryUpgrade,
+		Title:      "升级记忆：项目测试入口是 go test ./...",
+		Body:       proposal.ProposalBody{Kind: "memory_upgrade"},
+		Status:     proposal.StatusProposed,
+		ObservedAt: proposalTestTime,
+	}
+	saved, err := store.Insert(ctx, p)
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if err := store.UpdateStatus(ctx, saved.ID, proposal.StatusApproved, "reviewer1"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	exec := &mockApplyExecutor{
+		memoryResult: proposal.ApplyResult{
+			Target: "mem_xxx",
+			Result: proposal.ApplyResultSuccess,
+		},
+	}
+	got, err := store.Apply(ctx, saved.ID, exec)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !exec.memoryCalled {
+		t.Fatal("executor.ApplyMemoryUpgrade not called")
+	}
+	if got.ProposalID != saved.ID {
+		t.Fatalf("ProposalID want %q, got %q", saved.ID, got.ProposalID)
+	}
+	if got.Kind != proposal.KindMemoryUpgrade {
+		t.Fatalf("Kind want %s, got %s", proposal.KindMemoryUpgrade, got.Kind)
+	}
+	if got.Result != proposal.ApplyResultSuccess {
+		t.Fatalf("Result want %s, got %q", proposal.ApplyResultSuccess, got.Result)
+	}
+	if got.Target != "mem_xxx" {
+		t.Fatalf("Target want mem_xxx, got %q", got.Target)
+	}
+	if got.AppliedAt.IsZero() {
+		t.Fatal("AppliedAt not stamped")
+	}
+
+	var count int
+	if err := sessionStore.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM proposal_applies WHERE proposal_id = ?`, saved.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("query proposal_applies: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("proposal_applies count want 1, got %d", count)
+	}
+}
+
+// TestStoreApplyRejectsNotApproved covers the not-approved branch:
+// proposed (or rejected) proposals must be rejected with
+// ErrProposalNotApplicable, the executor is never invoked, and no
+// proposal_applies row is written. proposal_applies.proposal_id is
+// UNIQUE, so we never want half-applied state in the table.
+func TestStoreApplyRejectsNotApproved(t *testing.T) {
+	ctx := context.Background()
+	store, sessionStore := openProposalStore(t)
+	defer func() { _ = sessionStore.Close() }()
+
+	p := proposal.Proposal{
+		Kind:       proposal.KindMemoryUpgrade,
+		Title:      "未审批的提案",
+		Body:       proposal.ProposalBody{Kind: "memory_upgrade"},
+		Status:     proposal.StatusProposed,
+		ObservedAt: proposalTestTime,
+	}
+	saved, err := store.Insert(ctx, p)
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	exec := &mockApplyExecutor{}
+	_, err = store.Apply(ctx, saved.ID, exec)
+	if !errors.Is(err, proposal.ErrProposalNotApplicable) {
+		t.Fatalf("want ErrProposalNotApplicable, got %v", err)
+	}
+	if exec.memoryCalled {
+		t.Fatal("executor.ApplyMemoryUpgrade should not have been called")
+	}
+
+	var count int
+	if err := sessionStore.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM proposal_applies WHERE proposal_id = ?`, saved.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("query proposal_applies: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("proposal_applies count want 0, got %d", count)
+	}
+}
+
+// TestStoreApplyIsIdempotent covers the idempotent guard: a second Apply
+// for the same proposal_id returns the existing proposal_applies row
+// without re-invoking the executor. proposal_applies.proposal_id is
+// UNIQUE, so a second insert would error — the guard prevents that and
+// also saves the caller from a double side-effect (memory row patched
+// twice, AGENTS.md rewritten twice, etc.).
+func TestStoreApplyIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	store, sessionStore := openProposalStore(t)
+	defer func() { _ = sessionStore.Close() }()
+
+	p := proposal.Proposal{
+		Kind:       proposal.KindMemoryUpgrade,
+		Title:      "幂等 Apply 测试",
+		Body:       proposal.ProposalBody{Kind: "memory_upgrade"},
+		Status:     proposal.StatusProposed,
+		ObservedAt: proposalTestTime,
+	}
+	saved, err := store.Insert(ctx, p)
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if err := store.UpdateStatus(ctx, saved.ID, proposal.StatusApproved, "reviewer1"); err != nil {
+		t.Fatalf("UpdateStatus: %v", err)
+	}
+
+	exec := &mockApplyExecutor{
+		memoryResult: proposal.ApplyResult{
+			Target: "mem_xxx",
+			Result: proposal.ApplyResultSuccess,
+		},
+	}
+
+	first, err := store.Apply(ctx, saved.ID, exec)
+	if err != nil {
+		t.Fatalf("Apply first: %v", err)
+	}
+	if !exec.memoryCalled {
+		t.Fatal("executor should be called on first Apply")
+	}
+
+	// Reset the call marker so we can detect a second invocation.
+	exec.memoryCalled = false
+	second, err := store.Apply(ctx, saved.ID, exec)
+	if err != nil {
+		t.Fatalf("Apply second: %v", err)
+	}
+	if exec.memoryCalled {
+		t.Fatal("executor should NOT be called on idempotent re-Apply")
+	}
+	if second.ProposalID != first.ProposalID {
+		t.Fatalf("ProposalID mismatch: first=%q second=%q", first.ProposalID, second.ProposalID)
+	}
+	if second.Kind != first.Kind {
+		t.Fatalf("Kind mismatch: first=%s second=%s", first.Kind, second.Kind)
+	}
+	if second.Result != first.Result {
+		t.Fatalf("Result mismatch: first=%q second=%q", first.Result, second.Result)
+	}
+	if second.Target != first.Target {
+		t.Fatalf("Target mismatch: first=%q second=%q", first.Target, second.Target)
+	}
+	if !second.AppliedAt.Equal(first.AppliedAt) {
+		t.Fatalf("AppliedAt mismatch: first=%v second=%v", first.AppliedAt, second.AppliedAt)
+	}
+
+	var count int
+	if err := sessionStore.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM proposal_applies WHERE proposal_id = ?`, saved.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("query proposal_applies: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("proposal_applies count want 1, got %d", count)
+	}
+}
