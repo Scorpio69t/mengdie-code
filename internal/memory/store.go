@@ -75,6 +75,11 @@ var (
 	// resolve the chain explicitly by superseding the intermediate target
 	// first. Raised by M3 Slice 03 follow-up (Supersede 静默覆盖链 守门).
 	ErrSupersedeChainExists = errors.New("memory already superseded by another id")
+	// ErrMemoryAuthorityRegression is returned by UpgradeMemory when the
+	// new authority has equal or higher rank (less authoritative) than
+	// the current one. Use Archive (Forget) to retire, not downgrade.
+	// Raised by M4 Slice 02 apply driver (DefaultApplyExecutor).
+	ErrMemoryAuthorityRegression = errors.New("memory authority regression not allowed; new rank must be lower (more authoritative)")
 )
 
 // Memory list bounds per spec §5 (`mengdie memory list --limit N`).
@@ -961,6 +966,46 @@ func (s *Store) Approve(ctx context.Context, id string) error {
 		return fmt.Errorf("recompute evidence after approve: %w", err)
 	}
 	return nil
+}
+
+// UpgradeMemory updates an existing memory's claim and promotes its
+// authority. The new authority must outrank the current one (per
+// AuthorityRank); regression or equal rank returns
+// ErrMemoryAuthorityRegression. Used by M4 Slice 02 apply driver when a
+// fingerprint auto-Approved candidate is later promoted to a verified /
+// repository fact — the apply executor calls UpgradeMemory on the
+// inferred row to flip both claim and authority in one statement instead
+// of Save+Forget dance. Same-authority updates belong to Save (spec
+// §4.2 row 2 — dispute marking) rather than this method.
+func (s *Store) UpgradeMemory(ctx context.Context, id, newClaim string, newAuthority Authority) (Memory, error) {
+	if strings.TrimSpace(id) == "" {
+		return Memory{}, fmt.Errorf("%w: id is required", ErrMemoryNotFound)
+	}
+	if strings.TrimSpace(newClaim) == "" {
+		return Memory{}, fmt.Errorf("invalid memory: claim is required")
+	}
+	m, err := s.Get(ctx, id)
+	if err != nil {
+		return Memory{}, err
+	}
+	newRank := AuthorityRank(newAuthority)
+	currentRank := AuthorityRank(m.Authority)
+	if newRank >= currentRank {
+		return Memory{}, fmt.Errorf("%w: %s (rank %d) → %s (rank %d)",
+			ErrMemoryAuthorityRegression, m.Authority, currentRank, newAuthority, newRank)
+	}
+	stamp := formatStamp(s.now().UTC())
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE memories SET claim=?, authority=?, updated_at=? WHERE id=?`,
+		newClaim, string(newAuthority), stamp, id,
+	)
+	if err != nil {
+		return Memory{}, fmt.Errorf("upgrade memory: %w", err)
+	}
+	m.Claim = newClaim
+	m.Authority = newAuthority
+	m.UpdatedAt = s.now().UTC()
+	return m, nil
 }
 
 // RecordEvidence inserts one corroborating signal for a memory. The kind
