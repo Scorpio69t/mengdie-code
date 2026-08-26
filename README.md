@@ -112,6 +112,7 @@ mengdie memory forget <id>
 - [x] M3 Slice 03：ruleGoTest/ruleGoLint schema 修复 + fingerprint auto-Approve（[设计稿](./docs/superpowers/specs/2026-08-24-m3-slice-03-auto-approve-design.md)）
 - [x] M3 Slice 04：跨 Authority dispute 标记 + fingerprint auto-Approve 守门（[设计稿](./docs/superpowers/specs/2026-08-24-m3-slice-04-cross-authority-dispute-design.md)、[实施报告](./docs/development/phase-3-slice-04/IMPLEMENTATION_REPORT.md)）
 - [x] M4 Slice 01：Reflect/Consolidate v0.1 手动复盘提案（[设计稿](./docs/superpowers/specs/2026-08-26-m4-slice-01-reflect-proposal-design.md)、[实施报告](./docs/development/phase-4-slice-01/IMPLEMENTATION_REPORT.md)）
+- [x] M4 Slice 02：v0.2 Apply driver (memory_upgrade / agents_md / skill_draft / obsolete)（[设计稿](./docs/superpowers/specs/2026-08-26-m4-slice-02-apply-driver-design.md)、[实施报告](./docs/development/phase-4-slice-02/IMPLEMENTATION_REPORT.md)）
 
 完整产品架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；M1 实施基线见 [第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)。`mengdie` 与 `mengdie exec` 已接入同一套最小 Agent Runtime 和安全工具链；多平台开发预览、连续 20 次 main CI 以及 DeepSeek 在 macOS/Windows 的双平台 10/10 Coding 预验收均已形成证据。外部真实仓库任务与安全出口记录未齐前，M1 仍不标记完成。
 
