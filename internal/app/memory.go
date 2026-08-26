@@ -190,6 +190,12 @@ func exitForStoreError(err error) int {
 		// to ExitRunError was misleading — this is a state precondition,
 		// not a write failure.
 		return ExitNotFound
+	case errors.Is(err, memory.ErrSupersedeChainExists):
+		// ErrSupersedeChainExists is raised by Store.Supersede when the
+		// old id already has a non-empty supersedes link. Same family as
+		// ErrScopeMismatch / ErrNotProposed: the pair is found but not
+		// in a state the operation can act on, so map to ExitNotFound.
+		return ExitNotFound
 	default:
 		return ExitRunError
 	}

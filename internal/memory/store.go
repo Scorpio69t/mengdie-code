@@ -68,6 +68,13 @@ var (
 	// models within-scope replacements; cross-scope supersedes would
 	// silently invert retention expectations and are rejected up front.
 	ErrScopeMismatch = errors.New("memory scope mismatch")
+	// ErrSupersedeChainExists is returned by Supersede when oldID already
+	// has a non-empty supersedes link from a previous Supersede call.
+	// Silently overwriting the link would drop the intermediate audit
+	// entry and break the `mengdie memory why <id>`>` trace; callers must
+	// resolve the chain explicitly by superseding the intermediate target
+	// first. Raised by M3 Slice 03 follow-up (Supersede 静默覆盖链 守门).
+	ErrSupersedeChainExists = errors.New("memory already superseded by another id")
 )
 
 // Memory list bounds per spec §5 (`mengdie memory list --limit N`).
@@ -849,6 +856,15 @@ func (s *Store) Supersede(ctx context.Context, oldID, newID string) error {
 	if oldMem.Scope != newMem.Scope {
 		return fmt.Errorf("%w: old scope %s/%s vs new scope %s/%s",
 			ErrScopeMismatch, oldMem.Scope.Kind, oldMem.Scope.Value, newMem.Scope.Kind, newMem.Scope.Value)
+	}
+	// Guard against silent overwrite of an existing supersede chain
+	// (slice 03 follow-up: Supersede 静默覆盖链 守门). If oldID already
+	// has a supersedes link, refuse rather than drop the intermediate
+	// audit entry; the caller must resolve the chain explicitly by
+	// superseding the intermediate target first.
+	if oldMem.Supersedes != "" {
+		return fmt.Errorf("%w: %s already superseded by %s; supersede %s first to rebuild the chain",
+			ErrSupersedeChainExists, oldID, oldMem.Supersedes, oldMem.Supersedes)
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
