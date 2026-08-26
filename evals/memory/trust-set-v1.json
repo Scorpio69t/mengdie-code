@@ -554,6 +554,78 @@
           {"claim_contains": "go test", "authority": "inferred", "status": "auto-approved"}
         ]
       }
+    },
+    {
+      "id": "reflect-scan-since-default",
+      "category": "reflect",
+      "description": "空 setup + 默认 since=7d Reflect：0 sessions / 0 memories / 0 proposals（baseline 探测）",
+      "setup": {"seed_memories": []},
+      "actions": [{"type": "reflect", "scope": "project/mengdie"}],
+      "expected": {"proposals_count_gte": 0}
+    },
+    {
+      "id": "reflect-proposal-memory-upgrade",
+      "category": "reflect",
+      "description": "seed_events 5 tool.completed (edit_file×4 + shell×1) → run_run 创建 session → Pipeline.Reflect 触发 DetectRepeatedToolPreference（≥5 tool / ≥4/5 edit_file）→ 1 memory_upgrade proposal（spec §9.3 Stage 4 集成路径）",
+      "setup": {
+        "seed_memories": [],
+        "seed_events": [
+          {"kind": "tool.completed", "name": "edit_file", "success": true},
+          {"kind": "tool.completed", "name": "edit_file", "success": true},
+          {"kind": "tool.completed", "name": "edit_file", "success": true},
+          {"kind": "tool.completed", "name": "edit_file", "success": true},
+          {"kind": "tool.completed", "name": "shell", "success": true}
+        ]
+      },
+      "actions": [
+        {"type": "run_run"},
+        {"type": "reflect", "scope": "project/mengdie"}
+      ],
+      "expected": {"proposals_count": 1, "proposal_kind": "memory_upgrade"}
+    },
+    {
+      "id": "reflect-proposal-obsolete",
+      "category": "reflect",
+      "description": "seed_memories 1 stale 记忆（runner insertSeed 用 raw SQL 绕开 Save* 把 status=stale 持久化；Save* 路径总是把 status 覆写为 active/proposed，所以 v0.1 obsolete 必须直插）→ Reflect 后 runner 扫 status=stale 列表 → 1 obsolete proposal",
+      "setup": {
+        "seed_memories": [
+          {"claim": "过期 claim: legacy v2 hook pattern", "authority": "explicit", "status": "stale", "scope": "project/mengdie"}
+        ]
+      },
+      "actions": [{"type": "reflect", "scope": "project/mengdie"}],
+      "expected": {"proposals_count": 1, "proposal_kind": "obsolete"}
+    },
+    {
+      "id": "reflect-approve-promotes-status",
+      "category": "reflect",
+      "description": "seed_proposals 1 memory_upgrade → reflect_propose INSERT → reflect_approve UpdateStatus(StatusApproved) → status=approved + reviewer 字段非空",
+      "setup": {
+        "seed_memories": [],
+        "seed_proposals": [
+          {"kind": "memory_upgrade", "title": "approve-test-proposal", "status": "proposed"}
+        ]
+      },
+      "actions": [
+        {"type": "reflect_propose"},
+        {"type": "reflect_approve", "reviewer": "trustset-runner"}
+      ],
+      "expected": {"proposal_status": "approved", "reviewer_set": true}
+    },
+    {
+      "id": "reflect-reject-promotes-status",
+      "category": "reflect",
+      "description": "seed_proposals 1 memory_upgrade → reflect_propose INSERT → reflect_reject UpdateStatus(StatusRejected) → status=rejected + reviewer 字段非空",
+      "setup": {
+        "seed_memories": [],
+        "seed_proposals": [
+          {"kind": "memory_upgrade", "title": "reject-test-proposal", "status": "proposed"}
+        ]
+      },
+      "actions": [
+        {"type": "reflect_propose"},
+        {"type": "reflect_reject", "reviewer": "trustset-runner"}
+      ],
+      "expected": {"proposal_status": "rejected", "reviewer_set": true}
     }
   ]
 }

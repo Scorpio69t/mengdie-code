@@ -31,8 +31,12 @@ import (
 // auto-approved-llm-non-fingerprint), bringing the total to 40. M3
 // Slice 04 Task 5 adds another 5 (cross-authority-{explicit,verified,
 // repository}-vs-inferred + auto-approve-{skipped-cross-authority,
-// still-runs-no-conflict}), bringing the total to 45. The slice-03
-// scenarios exercise the M3 Slice 03 fingerprint auto-Approve path via
+// still-runs-no-conflict}), bringing the total to 45. M4 Slice 01
+// Task 5 adds 5 reflect-* scenarios (reflect-scan-since-default /
+// reflect-proposal-memory-upgrade / reflect-proposal-obsolete /
+// reflect-approve-promotes-status / reflect-reject-promotes-status),
+// bringing the total to 50. The slice-03 scenarios exercise the M3
+// Slice 03 fingerprint auto-Approve path via
 // expected.extracted_memories[].status = "auto-approved" (which
 // expectedMatches translates to "matches any status=active candidate");
 // auto-approved-llm-non-fingerprint is the negative test that asserts a
@@ -43,12 +47,17 @@ import (
 // being auto-Approved; auto-approve-skipped-cross-authority is the
 // explicit-vs-inferred pair; auto-approve-still-runs-no-conflict is the
 // regression test that proves the guard does not over-block a clean
-// fingerprint candidate.
+// fingerprint candidate. The slice-05 reflect-* scenarios exercise the
+// M4 Pipeline.Reflect + proposal.Store surface end-to-end; reflect-
+// proposal-obsolete uses insertStaleSeed to bypass the Save* status
+// override so status=stale persists (the only entry point that path),
+// while reflect-proposal-memory-upgrade triggers the pipeline's
+// DetectRepeatedToolPreference via seed_events.
 func TestRunnerProducesAllMetrics(t *testing.T) {
 	manifestPath := locateManifest(t)
 	scenarios := loadScenarios(t, manifestPath)
-	if len(scenarios) != 45 {
-		t.Fatalf("trust-set-v1.json must have 45 scenarios, got %d", len(scenarios))
+	if len(scenarios) != 50 {
+		t.Fatalf("trust-set-v1.json must have 50 scenarios, got %d", len(scenarios))
 	}
 	results := make([]ScenarioResult, 0, len(scenarios))
 	for _, scenario := range scenarios {
