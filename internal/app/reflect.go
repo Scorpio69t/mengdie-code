@@ -25,9 +25,7 @@ import (
 // `mengdie reflect <sub> ...`. With no args (or when args[0] is a flag
 // belonging to `reflect` itself, e.g. `--since=7d` / `--max-sessions=5`)
 // it runs the bare Pipeline.Reflect (Stages 1-5); otherwise it routes
-// to one of the three review-only subcommands. The v0.2 `apply`
-// subcommand is deliberately not implemented here — see package doc
-// for the rationale.
+// to one of the four review / apply subcommands.
 func dispatchReflect(ctx context.Context, args []string, a *App, stdout, stderr io.Writer) int {
 	// If the first arg is a flag (starts with "-"), it belongs to
 	// `reflect`, not a subcommand — pass everything through to
@@ -43,6 +41,8 @@ func dispatchReflect(ctx context.Context, args []string, a *App, stdout, stderr 
 		return runReflectApprove(ctx, args[1:], a, stdout, stderr)
 	case "reject":
 		return runReflectReject(ctx, args[1:], a, stdout, stderr)
+	case "apply":
+		return runReflectApply(ctx, args[1:], a, stdout, stderr)
 	default:
 		if err := a.writeError("未知 reflect 子命令 %q\n", args[0]); err != nil {
 			return ExitRunError
@@ -238,6 +238,73 @@ func runReflectReject(ctx context.Context, args []string, a *App, stdout, stderr
 		return exitForStoreError(err)
 	}
 	if _, err := fmt.Fprintf(stdout, "rejected %s\n", id); err != nil {
+		return ExitRunError
+	}
+	return ExitOK
+}
+
+// runReflectApply implements `mengdie reflect apply <id>`. It opens the
+// full reflect pipeline so the proposal + memory layers are available,
+// builds a DefaultApplyExecutor (the production Task 4 surface), and
+// calls Store.Apply to dispatch by Kind. v0.2 ships with a nil policy
+// engine — the file-write paths consult the gate only when one is
+// wired, and the runtime resolver currently hands the executor an
+// empty projectRoot. The CLI's job here is plumbing: load the stores,
+// hand the executor to Store.Apply, and render the resulting
+// ApplyResult as a single line so a wrapper can grep
+// "result=<success|failed|denied_by_policy>" without parsing JSON.
+//
+// Exit mapping:
+//   - ExitOK          — Store.Apply returned ApplyResultSuccess.
+//   - ExitInvalidInput — Store.Apply returned ErrProposalNotApplicable
+//     (not-approved / unknown kind) or ErrProposalAlreadyApplied
+//     (reserved per proposal.go doc).
+//   - ExitNotFound    — Store.Apply returned ErrProposalNotFound
+//     (id absent in reflection_proposals).
+//   - ExitRunError    — ApplyResult.Result != success (executor
+//     reported a side-effect failure — write conflict, missing
+//     payload, etc.). The CLI still renders the row so the operator
+//     can see what went wrong in the proposal_applies audit trail.
+func runReflectApply(ctx context.Context, args []string, a *App, stdout, stderr io.Writer) int {
+	if len(args) != 1 {
+		if err := writeMemoryError(stderr, "用法：mengdie reflect apply <id>\n"); err != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+	id := args[0]
+
+	// openReflectPipeline returns the pipeline + mem store separately;
+	// we still need a *proposal.Store to hand to Store.Apply, and the
+	// pipeline's proposalStore field is unexported. Open a sibling
+	// proposal.Store on the same *sql.DB — both wrappers are stateless
+	// around the connection so the second Open is a zero-cost no-op.
+	_, sessionStore, memStore, code := a.openReflectPipeline(ctx, commonFlagsForPositional(a))
+	if code != ExitOK {
+		return code
+	}
+	defer func() { _ = sessionStore.Close() }()
+
+	propStore := proposal.Open(sessionStore.DB(), a.now)
+	executor := proposal.NewDefaultApplyExecutor(
+		memStore, propStore,
+		nil, a.projectRoot, a.now,
+	)
+	result, err := propStore.Apply(ctx, id, executor)
+	if err != nil {
+		return exitForStoreError(err)
+	}
+
+	if _, werr := fmt.Fprintf(stdout, "applied %s: kind=%s target=%s result=%s\n",
+		result.ProposalID, result.Kind, result.Target, result.Result); werr != nil {
+		return ExitRunError
+	}
+	if result.Error != "" {
+		if _, werr := fmt.Fprintf(stderr, "  error: %s\n", result.Error); werr != nil {
+			return ExitRunError
+		}
+	}
+	if result.Result != proposal.ApplyResultSuccess {
 		return ExitRunError
 	}
 	return ExitOK

@@ -64,10 +64,16 @@ type App struct {
 	userConfigDir string
 	userHomeDir   string
 	dataDir       string
-	now           func() time.Time
-	newRunID      func() (string, error)
-	factBus       *session.PublicFactBus
-	runTUI        func(tea.Model, io.Reader, io.Writer) (tea.Model, error)
+	// projectRoot is the join root for proposal apply side-effects that
+	// touch the filesystem (AGENTS.md rewrite, skill draft write). Empty
+	// in production today because the runtime resolver reads it per-call
+	// from loaded.ProjectRoot; the v0.2 apply driver keeps a static field
+	// here so the executor factory can be built without re-reading config.
+	projectRoot string
+	now         func() time.Time
+	newRunID    func() (string, error)
+	factBus     *session.PublicFactBus
+	runTUI      func(tea.Model, io.Reader, io.Writer) (tea.Model, error)
 }
 
 // New constructs the production application service.

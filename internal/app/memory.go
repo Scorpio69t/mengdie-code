@@ -204,6 +204,25 @@ func exitForStoreError(err error) int {
 		// ErrScopeMismatch / ErrNotProposed: the pair is found but not
 		// in a state the operation can act on, so map to ExitNotFound.
 		return ExitNotFound
+	case errors.Is(err, proposal.ErrProposalNotApplicable):
+		// ErrProposalNotApplicable is raised by Store.Apply when the
+		// proposal's Status is not StatusApproved, or when the Kind is
+		// unknown to the apply dispatcher. From the CLI's perspective
+		// this is a precondition failure — the caller asked us to apply
+		// a row that is not in a state the apply driver can act on —
+		// so map to ExitInvalidInput (= 2) per spec §5 row 2. Shared
+		// mapping with ErrProposalAlreadyApplied keeps the apply
+		// subcommand aligned with the review-only exit-code contract.
+		return ExitInvalidInput
+	case errors.Is(err, proposal.ErrProposalAlreadyApplied):
+		// ErrProposalAlreadyApplied is reserved for callers that want
+		// to differentiate "the apply driver re-returned the existing
+		// record" (the idempotent guard) from "a fresh apply ran end
+		// to end". Store.Apply currently returns the existing
+		// ApplyResult without wrapping this sentinel, so the mapping
+		// is wired for forward compatibility; same ExitInvalidInput
+		// rationale as ErrProposalNotApplicable above.
+		return ExitInvalidInput
 	default:
 		return ExitRunError
 	}
