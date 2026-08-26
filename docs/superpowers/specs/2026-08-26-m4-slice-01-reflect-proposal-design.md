@@ -324,10 +324,10 @@ Append to `evals/memory/trust-set-v1.json`：
 | ID | category | description | expected |
 |---|---|---|---|
 | `reflect-scan-since-default` | reflect | 默认 since=7d 跑一次扫描，生成 ≥1 proposal | proposals 行 status=proposed |
-| `reflect-scan-no-recent-sessions` | reflect | since=1h 且无近期 session → 0 proposals | proposals 行 0 行 |
 | `reflect-proposal-memory-upgrade` | reflect | seed 3 个 session 同 claim → 触发 `cross-session-pattern` → 生成 memory_upgrade proposal | proposals 行 1 行 kind=memory_upgrade |
 | `reflect-proposal-obsolete` | reflect | seed 1 个 stale memory → 触发 `obsolete-claim` | proposals 行 1 行 kind=obsolete |
 | `reflect-approve-promotes-status` | reflect | approve proposal 后 status=approved, reviewer=USER, reviewed_at 非空 | approved row |
+| `reflect-reject-promotes-status` | reflect | reject proposal 后 status=rejected, reviewer=USER, reviewed_at 非空 | rejected row |
 
 5 个新场景。distribution：现有 45 → 50。
 
