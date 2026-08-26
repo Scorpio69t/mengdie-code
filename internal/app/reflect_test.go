@@ -118,3 +118,46 @@ func TestReflectRejectChangesStatus(t *testing.T) {
 		t.Fatalf("reject output missing 'rejected': %q", state.stdout.String())
 	}
 }
+
+// TestReflectWithSinceFlag covers spec §4.1: `mengdie reflect --since=7d`
+// must route the flag to runReflect (not the subcommand dispatcher). The
+// dispatcher used to treat any leading arg as a subcommand, so this flag
+// fell into the unknown-subcommand branch. Now args[0] starting with "-"
+// passes through to runReflect, so a fresh state with no sessions still
+// exits 0 with the canonical "Generated 0 proposals" line.
+func TestReflectWithSinceFlag(t *testing.T) {
+	state := setupAppTestState(t)
+	code := runApp(state, []string{"reflect", "--since=7d"})
+	if code != ExitOK {
+		t.Fatalf("reflect --since=7d exit=%d stderr=%q", code, state.stderr.String())
+	}
+}
+
+// TestReflectWithInvalidSince covers the runReflect error path: a flag
+// that survives the dispatcher must still be validated by parseSince,
+// which returns "unsupported duration" for any non Nd/Nh/Nm value. The
+// CLI maps that to ExitInvalidInput (spec §5 exit 2) so a wrapper can
+// distinguish a bad window from a successful 0-proposal run.
+func TestReflectWithInvalidSince(t *testing.T) {
+	state := setupAppTestState(t)
+	code := runApp(state, []string{"reflect", "--since=garbage"})
+	if code != ExitInvalidInput {
+		t.Fatalf("reflect --since=garbage want exit %d, got %d stderr=%q",
+			ExitInvalidInput, code, state.stderr.String())
+	}
+}
+
+// TestReflectApproveBogusID covers spec §5 exit 3 (not-found): the
+// approve subcommand already routed correctly (positional id), so this
+// test guards against a future dispatcher refactor that breaks the
+// subcommand path while fixing the flag path. The dispatcher must
+// route "approve" to runReflectApprove, which calls UpdateStatus and
+// surfaces ErrProposalNotFound via exitForStoreError → ExitNotFound.
+func TestReflectApproveBogusID(t *testing.T) {
+	state := setupAppTestState(t)
+	code := runApp(state, []string{"reflect", "approve", "prop_does_not_exist"})
+	if code != ExitNotFound {
+		t.Fatalf("reflect approve bogus want exit %d, got %d stderr=%q",
+			ExitNotFound, code, state.stderr.String())
+	}
+}

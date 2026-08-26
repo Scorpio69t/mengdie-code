@@ -22,13 +22,19 @@ import (
 )
 
 // dispatchReflect is the top-level sub-router invoked from App.Run for
-// `mengdie reflect <sub> ...`. With no subcommand it runs the bare
-// Pipeline.Reflect (Stages 1-5); otherwise it routes to one of the three
-// review-only subcommands. The v0.2 `apply` subcommand is deliberately
-// not implemented here — see package doc for the rationale.
+// `mengdie reflect <sub> ...`. With no args (or when args[0] is a flag
+// belonging to `reflect` itself, e.g. `--since=7d` / `--max-sessions=5`)
+// it runs the bare Pipeline.Reflect (Stages 1-5); otherwise it routes
+// to one of the three review-only subcommands. The v0.2 `apply`
+// subcommand is deliberately not implemented here — see package doc
+// for the rationale.
 func dispatchReflect(ctx context.Context, args []string, a *App, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return runReflect(ctx, nil, a, stdout, stderr)
+	// If the first arg is a flag (starts with "-"), it belongs to
+	// `reflect`, not a subcommand — pass everything through to
+	// runReflect so spec §4.1 (`reflect --since=7d`) reaches the
+	// FlagSet instead of being misread as an unknown subcommand.
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return runReflect(ctx, args, a, stdout, stderr)
 	}
 	switch args[0] {
 	case "proposals":
