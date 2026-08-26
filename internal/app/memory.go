@@ -23,6 +23,7 @@ import (
 
 	"github.com/Scorpio69t/mengdie-code/internal/config"
 	"github.com/Scorpio69t/mengdie-code/internal/memory"
+	proposal "github.com/Scorpio69t/mengdie-code/internal/memory/proposal"
 	"github.com/Scorpio69t/mengdie-code/internal/session"
 )
 
@@ -167,6 +168,13 @@ func exitForStoreError(err error) int {
 		return ExitOK
 	case errors.Is(err, memory.ErrMemoryNotFound):
 		return ExitNotFound
+	case errors.Is(err, proposal.ErrProposalNotFound):
+		// ErrProposalNotFound is raised by proposal.Store.Get /
+		// UpdateStatus when the requested id has no row. Same family as
+		// ErrMemoryNotFound above — the id is simply absent — so map to
+		// ExitNotFound (= 3). Shared mapping keeps the reflect
+		// subcommands aligned with the memory exit-code contract.
+		return ExitNotFound
 	case errors.Is(err, memory.ErrAuthorityGuard):
 		return ExitAuthorityGuard
 	case errors.Is(err, memory.ErrScopeMismatch):
@@ -262,6 +270,37 @@ func (a *App) openMemoryStore(ctx context.Context, common *commonFlags) (*memory
 		return nil, nil, loaded, code
 	}
 	return memory.OpenMemory(sessionStore), sessionStore, loaded, ExitOK
+}
+
+// openProposalStore resolves the data dir + opens the session SQLite store +
+// wraps it in proposal.Store. Mirrors openMemoryStore exactly except the
+// wrapper layer is proposal.Open rather than memory.OpenMemory; both share
+// the same underlying *sql.DB so the session store lifecycle (open + close)
+// stays the caller's responsibility, identical to the memory path. Used by
+// the `reflect proposals` / `approve` / `reject` subcommands which only
+// need the proposal layer.
+func (a *App) openProposalStore(ctx context.Context, common *commonFlags) (*proposal.Store, *session.SQLiteStore, *memory.Store, int) {
+	memStore, sessionStore, _, code := a.openMemoryStore(ctx, common)
+	if code != ExitOK {
+		return nil, nil, nil, code
+	}
+	return proposal.Open(sessionStore.DB(), a.now), sessionStore, memStore, ExitOK
+}
+
+// openReflectPipeline returns a wired proposal.Pipeline (session +
+// memory + proposal stores) for the CLI dispatcher. All three layers
+// share the same underlying *sql.DB; closing the returned session store
+// (caller's defer) shuts the whole stack down cleanly. Used by the bare
+// `mengdie reflect` invocation, which needs the full pipeline (Stages
+// 1-5) to scan, extract, reflect and propose.
+func (a *App) openReflectPipeline(ctx context.Context, common *commonFlags) (*proposal.Pipeline, *session.SQLiteStore, *memory.Store, int) {
+	memStore, sessionStore, _, code := a.openMemoryStore(ctx, common)
+	if code != ExitOK {
+		return nil, nil, nil, code
+	}
+	propStore := proposal.Open(sessionStore.DB(), a.now)
+	pipeline := proposal.New(sessionStore, memStore, propStore, a.now)
+	return pipeline, sessionStore, memStore, ExitOK
 }
 
 // newMemoryFlagSet returns a fresh flag.FlagSet with the common --cwd
