@@ -49,11 +49,20 @@ func New(ss *session.SQLiteStore, ms *memory.Store, ps *Store, now func() time.T
 // FirstRunAt / LastRunAt bound the timeline the Stage 4 patterns
 // inspect; both come from eventTimeBounds so the values line up across
 // the same field set.
+//
+// Memories is the per-session memory slice extracted by Stage 2 (the
+// M3 Slice 02 hybrid extractor). v0.1 populates it during extract so
+// the Stage 4 patterns read pre-fetched rows without re-querying and
+// without taking a *memory.Store parameter — keeping the proposal
+// package's only dependency on internal/memory the value-type
+// reference on this field. Future slices may re-shape population (e.g.
+// Trust Set runner pre-filter) without changing this field's shape.
 type ScannedSession struct {
 	SessionID  string
 	Events     []session.EventRow
 	FirstRunAt time.Time
 	LastRunAt  time.Time
+	Memories   []memory.Memory
 }
 
 // ReflectOptions are the runtime knobs for one Reflect invocation.
@@ -203,9 +212,14 @@ LIMIT ?`, formatStamp(opts.Since.UTC()), opts.MaxSessions,
 // writer) so this costs nothing and keeps each Reflect invocation
 // independent of the reader's binding scope. NewHybrid(rules, nil)
 // runs the Rules-only path so no LLM Provider is required in v0.1.
+//
+// Each session's per-row extraction slice is also written back to
+// sessions[i].Memories so the Stage 4 patterns read the same rows
+// without re-running the extractor (and without taking a *memory.Store
+// parameter in their signatures).
 func (p *Pipeline) extract(ctx context.Context, sessions []ScannedSession) ([]memory.Memory, error) {
 	var candidates []memory.Memory
-	for _, s := range sessions {
+	for i, s := range sessions {
 		reader := extractor.NewSQLiteReader(p.sessionStore)
 		ext := extractor.NewHybrid(extractor.NewRules(reader), nil) // v0.1 rules-only
 		c, err := ext.Extract(ctx, s.SessionID)
@@ -213,6 +227,7 @@ func (p *Pipeline) extract(ctx context.Context, sessions []ScannedSession) ([]me
 			return nil, fmt.Errorf("extract %s: %w", s.SessionID, err)
 		}
 		candidates = append(candidates, c...)
+		sessions[i].Memories = c
 	}
 	return candidates, nil
 }
