@@ -552,6 +552,63 @@ func TestSupersedeMarksOldSuperseded(t *testing.T) {
 	}
 }
 
+// TestSupersedeRefusesChainOverwrite covers the slice 03 follow-up
+// (Supersede 静默覆盖链 守门): if oldID already has a non-empty
+// supersedes link from a previous Supersede call, the second call must
+// refuse rather than silently drop the intermediate audit entry. The
+// caller must rebuild the chain explicitly by superseding the
+// intermediate target first.
+func TestSupersedeRefusesChainOverwrite(t *testing.T) {
+	s := setupSeededStore(t)
+	scope := memory.Scope{Kind: "task", Value: "supersede-chain-test"}
+
+	oldMem, err := s.SaveUserMemory(context.Background(), memory.Memory{
+		Claim: "old claim v1", Scope: scope,
+		Source: memory.SourceRef{Type: memory.SourceTypeUserMessage, Ref: "session-1:1:user"},
+	})
+	if err != nil {
+		t.Fatalf("save old: %v", err)
+	}
+	midMem, err := s.SaveUserMemory(context.Background(), memory.Memory{
+		Claim: "replacement v2", Scope: scope,
+		Source: memory.SourceRef{Type: memory.SourceTypeUserMessage, Ref: "session-1:2:user"},
+	})
+	if err != nil {
+		t.Fatalf("save mid: %v", err)
+	}
+	freshMem, err := s.SaveUserMemory(context.Background(), memory.Memory{
+		Claim: "replacement v3", Scope: scope,
+		Source: memory.SourceRef{Type: memory.SourceTypeUserMessage, Ref: "session-1:3:user"},
+	})
+	if err != nil {
+		t.Fatalf("save fresh: %v", err)
+	}
+
+	// First supersede: old → mid (legitimate; chain empty)
+	if err := s.Supersede(context.Background(), oldMem.ID, midMem.ID); err != nil {
+		t.Fatalf("first Supersede: %v", err)
+	}
+
+	// Second supersede: old → fresh; the old row already has
+	// supersedes=mid, so this must be refused with ErrSupersedeChainExists.
+	err = s.Supersede(context.Background(), oldMem.ID, freshMem.ID)
+	if !errors.Is(err, memory.ErrSupersedeChainExists) {
+		t.Fatalf("second Supersede want ErrSupersedeChainExists, got %v", err)
+	}
+
+	// Verify the intermediate chain link is preserved (not overwritten).
+	got, err := s.Get(context.Background(), oldMem.ID)
+	if err != nil {
+		t.Fatalf("Get old: %v", err)
+	}
+	if got.Supersedes != midMem.ID {
+		t.Fatalf("supersedes field=%q, want %s (mid — chain preserved)", got.Supersedes, midMem.ID)
+	}
+	if got.Status != memory.StatusSuperseded {
+		t.Fatalf("status=%s, want superseded", got.Status)
+	}
+}
+
 // TestApproveOnlyProposed covers the happy path for
 // `mengdie memory approve <id>`: an inferred memory starts in StatusProposed
 // and Approve must promote it to StatusActive so the Tier 1 / 2 catalog
