@@ -35,29 +35,43 @@ import (
 // Task 5 adds 5 reflect-* scenarios (reflect-scan-since-default /
 // reflect-proposal-memory-upgrade / reflect-proposal-obsolete /
 // reflect-approve-promotes-status / reflect-reject-promotes-status),
-// bringing the total to 50. The slice-03 scenarios exercise the M3
-// Slice 03 fingerprint auto-Approve path via
-// expected.extracted_memories[].status = "auto-approved" (which
-// expectedMatches translates to "matches any status=active candidate");
-// auto-approved-llm-non-fingerprint is the negative test that asserts a
-// non-fingerprint claim stays at status=proposed. The slice-04 scenarios
-// exercise the M3 Slice 04 cross-authority guard in extractAction: the
-// first three cross-authority-* scenarios seed a higher-authority peer
-// and assert the inferred candidate lands at status=disputed instead of
-// being auto-Approved; auto-approve-skipped-cross-authority is the
-// explicit-vs-inferred pair; auto-approve-still-runs-no-conflict is the
-// regression test that proves the guard does not over-block a clean
-// fingerprint candidate. The slice-05 reflect-* scenarios exercise the
-// M4 Pipeline.Reflect + proposal.Store surface end-to-end; reflect-
-// proposal-obsolete uses insertStaleSeed to bypass the Save* status
-// override so status=stale persists (the only entry point that path),
-// while reflect-proposal-memory-upgrade triggers the pipeline's
-// DetectRepeatedToolPreference via seed_events.
+// bringing the total to 50. M4 Slice 02 Task 6 adds 4 reflect-apply-*
+// scenarios (reflect-apply-memory-upgrade-success /
+// reflect-apply-obsolete-success / reflect-apply-fails-not-approved /
+// reflect-apply-already-applied), bringing the total to 54. The
+// slice-03 scenarios exercise the M3 Slice 03 fingerprint auto-Approve
+// path via expected.extracted_memories[].status = "auto-approved"
+// (which expectedMatches translates to "matches any status=active
+// candidate"); auto-approved-llm-non-fingerprint is the negative test
+// that asserts a non-fingerprint claim stays at status=proposed. The
+// slice-04 scenarios exercise the M3 Slice 04 cross-authority guard in
+// extractAction: the first three cross-authority-* scenarios seed a
+// higher-authority peer and assert the inferred candidate lands at
+// status=disputed instead of being auto-Approved;
+// auto-approve-skipped-cross-authority is the explicit-vs-inferred pair;
+// auto-approve-still-runs-no-conflict is the regression test that proves
+// the guard does not over-block a clean fingerprint candidate. The
+// slice-05 reflect-* scenarios exercise the M4 Pipeline.Reflect +
+// proposal.Store surface end-to-end; reflect-proposal-obsolete uses
+// insertStaleSeed to bypass the Save* status override so status=stale
+// persists (the only entry point that path), while
+// reflect-proposal-memory-upgrade triggers the pipeline's
+// DetectRepeatedToolPreference via seed_events. The slice-06
+// reflect-apply-* scenarios drive proposal.Store.Apply end-to-end:
+// reflect-apply-memory-upgrade-success + reflect-apply-obsolete-success
+// exercise the success paths (memory_upgrade flips authority +
+// claim; obsolete soft-archives the seeded memory);
+// reflect-apply-fails-not-approved pins the not-approved branch's
+// audit-row recording (Store.Apply intentionally skips the insert so
+// reflectApplyAction fills the gap with result=failed);
+// reflect-apply-already-applied exercises the idempotent guard via
+// setup.seed_applies — the raw-SQL pre-seed makes the very first
+// Apply call short-circuit on Store.Apply's getApplyResult check.
 func TestRunnerProducesAllMetrics(t *testing.T) {
 	manifestPath := locateManifest(t)
 	scenarios := loadScenarios(t, manifestPath)
-	if len(scenarios) != 50 {
-		t.Fatalf("trust-set-v1.json must have 50 scenarios, got %d", len(scenarios))
+	if len(scenarios) != 54 {
+		t.Fatalf("trust-set-v1.json must have 54 scenarios, got %d", len(scenarios))
 	}
 	results := make([]ScenarioResult, 0, len(scenarios))
 	for _, scenario := range scenarios {

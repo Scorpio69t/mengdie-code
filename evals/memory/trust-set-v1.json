@@ -626,6 +626,80 @@
         {"type": "reflect_reject", "reviewer": "trustset-runner"}
       ],
       "expected": {"proposal_status": "rejected", "reviewer_set": true}
+    },
+    {
+      "id": "reflect-apply-memory-upgrade-success",
+      "category": "reflect",
+      "description": "approved memory_upgrade proposal → reflect_propose (Insert with body_payload) → reflect_approve UpdateStatus → reflect_apply 调用 ApplyMemoryUpgrade 升级 mem_seed_1 (inferred → explicit) → proposal_applies.result=success",
+      "setup": {
+        "seed_memories": [
+          {"id": "mem_seed_1", "claim": "old claim", "authority": "inferred"}
+        ],
+        "seed_proposals": [
+          {"kind": "memory_upgrade", "title": "upgrade-mem-seed-1", "status": "approved", "body_payload": {"memory_id": "mem_seed_1", "new_claim": "升级后 claim", "new_authority": "explicit"}}
+        ]
+      },
+      "actions": [
+        {"type": "reflect_propose"},
+        {"type": "reflect_approve"},
+        {"type": "reflect_apply"}
+      ],
+      "expected": {"proposal_apply_result": "success"}
+    },
+    {
+      "id": "reflect-apply-obsolete-success",
+      "category": "reflect",
+      "description": "approved obsolete proposal → reflect_propose (Insert with body_payload) → reflect_approve UpdateStatus → reflect_apply 调用 ApplyObsolete (Forget soft) 归档 mem_seed_2 → proposal_applies.result=success",
+      "setup": {
+        "seed_memories": [
+          {"id": "mem_seed_2", "claim": "obs claim", "authority": "explicit"}
+        ],
+        "seed_proposals": [
+          {"kind": "obsolete", "title": "obs-mem-seed-2", "status": "approved", "body_payload": {"memory_id": "mem_seed_2"}}
+        ]
+      },
+      "actions": [
+        {"type": "reflect_propose"},
+        {"type": "reflect_approve"},
+        {"type": "reflect_apply"}
+      ],
+      "expected": {"proposal_apply_result": "success"}
+    },
+    {
+      "id": "reflect-apply-fails-not-approved",
+      "category": "reflect",
+      "description": "proposed (NOT approved) memory_upgrade proposal → reflect_propose Insert status=proposed → reflect_apply 调 Apply 触发 ErrProposalNotApplicable（proposal.status != approved）→ runner 写入 result=failed 行（Apply 自身不写），assertExpected 检查 proposal_applies.result=failed + error 含 'not approved'",
+      "setup": {
+        "seed_proposals": [
+          {"kind": "memory_upgrade", "title": "not-approved-upgrade", "status": "proposed", "body_payload": {"memory_id": "mem_seed_3", "new_claim": "y", "new_authority": "explicit"}}
+        ]
+      },
+      "actions": [
+        {"type": "reflect_propose"},
+        {"type": "reflect_apply"}
+      ],
+      "expected": {"proposal_apply_result": "failed", "apply_error_contains": "not approved"}
+    },
+    {
+      "id": "reflect-apply-already-applied",
+      "category": "reflect",
+      "description": "approved memory_upgrade + seed_applies 已写入 success 行 → reflect_propose Insert status=approved → reflect_apply 先 raw SQL 写 seed_applies[0]，Store.Apply 看到 proposal_applies 已存在走 idempotent guard 短路返回 existing row → proposal_applies.result=success（不动 mem_seed_4）",
+      "setup": {
+        "seed_memories": [
+          {"id": "mem_seed_4", "claim": "z", "authority": "explicit"}
+        ],
+        "seed_proposals": [
+          {"kind": "memory_upgrade", "title": "already-applied-upgrade", "status": "approved", "body_payload": {"memory_id": "mem_seed_4", "new_claim": "z", "new_authority": "explicit"}}
+        ],
+        "seed_applies": [
+          {"result": "success"}
+        ]
+      },
+      "actions": [
+        {"type": "reflect_propose"},
+        {"type": "reflect_apply"}
+      ],
+      "expected": {"proposal_apply_result": "success"}
     }
   ]
 }
