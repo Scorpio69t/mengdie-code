@@ -1,0 +1,290 @@
+// Copyright 2026 MengDie Code Contributors
+// SPDX-License-Identifier: Apache-2.0
+
+// Package app 的 reflect 子命令实现 spec §1.4 的 4 个 CLI：reflect /
+// proposals / approve / reject。每个子命令共享同一份 `state.db`（同 session），
+// exit 码严格对应 spec §5 的 0..6 编号。`apply` 子命令按 spec §1.4 显式延期
+// 到 v0.2（arch §9.4 限制），所以本文件只搭好 4 个 review-only CLI。
+package app
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	proposal "github.com/Scorpio69t/mengdie-code/internal/memory/proposal"
+)
+
+// dispatchReflect is the top-level sub-router invoked from App.Run for
+// `mengdie reflect <sub> ...`. With no subcommand it runs the bare
+// Pipeline.Reflect (Stages 1-5); otherwise it routes to one of the three
+// review-only subcommands. The v0.2 `apply` subcommand is deliberately
+// not implemented here — see package doc for the rationale.
+func dispatchReflect(ctx context.Context, args []string, a *App, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		return runReflect(ctx, nil, a, stdout, stderr)
+	}
+	switch args[0] {
+	case "proposals":
+		return runReflectProposals(ctx, args[1:], a, stdout, stderr)
+	case "approve":
+		return runReflectApprove(ctx, args[1:], a, stdout, stderr)
+	case "reject":
+		return runReflectReject(ctx, args[1:], a, stdout, stderr)
+	default:
+		if err := a.writeError("未知 reflect 子命令 %q\n", args[0]); err != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+}
+
+// runReflect implements `mengdie reflect`. It parses --since /
+// --max-sessions flags, runs the 5-stage Pipeline.Reflect, and prints a
+// summary line so a scripted wrapper can grep "Generated N proposals"
+// without parsing every id back out of the per-row lines below.
+func runReflect(ctx context.Context, args []string, a *App, stdout, stderr io.Writer) int {
+	flags, common := a.newMemoryFlagSet("mengdie reflect", stderr)
+	since := flags.String("since", "7d", "时间窗口 (e.g. 7d, 24h, 1h)")
+	maxSessions := flags.Int("max-sessions", 5, "最大 session 数")
+	if err := flags.Parse(args); err != nil {
+		return flagExitCode(err)
+	}
+	if flags.NArg() != 0 {
+		if err := writeMemoryError(stderr, "reflect 不接受位置参数\n"); err != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+
+	sinceTime, err := parseSince(*since, a.now())
+	if err != nil {
+		if werr := writeMemoryError(stderr, "无效 since %q: %v\n", *since, err); werr != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+
+	pipeline, sessionStore, _, code := a.openReflectPipeline(ctx, common)
+	if code != ExitOK {
+		return code
+	}
+	defer func() { _ = sessionStore.Close() }()
+
+	proposals, err := pipeline.Reflect(ctx, proposal.ReflectOptions{
+		Since:       sinceTime,
+		MaxSessions: *maxSessions,
+	})
+	if err != nil {
+		return exitForStoreError(err)
+	}
+	if _, err := fmt.Fprintf(stdout, "Generated %d proposals (since %s, %d sessions scanned):\n",
+		len(proposals), *since, *maxSessions); err != nil {
+		return ExitRunError
+	}
+	for _, p := range proposals {
+		if _, err := fmt.Fprintf(stdout, "  %s  %s  %q (confidence %.2f)\n",
+			p.ID, p.Kind, p.Title, p.Confidence); err != nil {
+			return ExitRunError
+		}
+	}
+	return ExitOK
+}
+
+// runReflectProposals implements `mengdie reflect proposals`. It accepts
+// --status / --kind / --limit / --json flags, calls Store.List, and
+// renders either the spec §1.4 default ASCII table or one JSON object per
+// line so downstream `jq` / `grep` pipelines can stream the queue
+// without buffering. Exit code 3 on a missing id (spec §5) — not
+// reachable here because List never errors on absent rows, but the
+// shared exitForStoreError mapping keeps the family consistent.
+func runReflectProposals(ctx context.Context, args []string, a *App, stdout, stderr io.Writer) int {
+	flags, common := a.newMemoryFlagSet("mengdie reflect proposals", stderr)
+	status := flags.String("status", "", "按 status 过滤（proposed / approved / rejected）")
+	kind := flags.String("kind", "", "按 kind 过滤")
+	limit := flags.Int("limit", 0, "最大返回条数（默认 20，上限 200）")
+	jsonOutput := flags.Bool("json", false, "输出 JSON Lines")
+	if err := flags.Parse(args); err != nil {
+		return flagExitCode(err)
+	}
+	if flags.NArg() != 0 {
+		if err := writeMemoryError(stderr, "reflect proposals 不接受位置参数\n"); err != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+
+	store, sessionStore, _, code := a.openProposalStore(ctx, common)
+	if code != ExitOK {
+		return code
+	}
+	defer func() { _ = sessionStore.Close() }()
+
+	rows, err := store.List(ctx, proposal.ListQuery{
+		Status: proposal.ProposalStatus(*status),
+		Kind:   proposal.ProposalKind(*kind),
+		Limit:  *limit,
+	})
+	if err != nil {
+		if errors.Is(err, proposal.ErrInvalidQuery) {
+			if werr := writeMemoryError(stderr, "查询参数无效：%v\n", err); werr != nil {
+				return ExitRunError
+			}
+			return ExitInvalidInput
+		}
+		return exitForStoreError(err)
+	}
+	return writeReflectProposalsTable(stdout, rows, *jsonOutput)
+}
+
+// writeReflectProposalsTable renders the spec §1.4 default ASCII table.
+// Each row is a single line so long titles stay on one screenful; the
+// renderer truncates titles to 60 characters to match the Tier 1
+// catalogue cap (writeMemoryListTable) so audit and review stay visually
+// consistent. JSON mode emits one Proposal per line via encoding/json so
+// `jq` / `grep` can stream without buffering.
+func writeReflectProposalsTable(stdout io.Writer, rows []proposal.Proposal, jsonOutput bool) int {
+	if jsonOutput {
+		encoder := json.NewEncoder(stdout)
+		encoder.SetEscapeHTML(false)
+		for _, row := range rows {
+			if err := encoder.Encode(row); err != nil {
+				return ExitRunError
+			}
+		}
+		return ExitOK
+	}
+	const header = "id | kind | title | confidence | observed_at"
+	if _, err := fmt.Fprintln(stdout, header); err != nil {
+		return ExitRunError
+	}
+	for _, row := range rows {
+		title := row.Title
+		if len([]rune(title)) > 60 {
+			title = string([]rune(title)[:60]) + "..."
+		}
+		if _, err := fmt.Fprintf(stdout, "%s | %s | %s | %.2f | %s\n",
+			row.ID, row.Kind, title, row.Confidence,
+			row.ObservedAt.UTC().Format(time.RFC3339),
+		); err != nil {
+			return ExitRunError
+		}
+	}
+	return ExitOK
+}
+
+// runReflectApprove implements `mengdie reflect approve <id>`. The CLI
+// takes a positional id; everything else (status transition, reviewer
+// stamping) is the Store.UpdateStatus contract. The reviewer falls back
+// to "mengdie" when $USER is unset so a CI invocation that runs without
+// an interactive shell still records an audit trail.
+func runReflectApprove(ctx context.Context, args []string, a *App, stdout, stderr io.Writer) int {
+	if len(args) != 1 {
+		if err := writeMemoryError(stderr, "用法：mengdie reflect approve <id>\n"); err != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+	id := args[0]
+
+	store, sessionStore, _, code := a.openProposalStore(ctx, commonFlagsForPositional(a))
+	if code != ExitOK {
+		return code
+	}
+	defer func() { _ = sessionStore.Close() }()
+
+	reviewer := reflectReviewer()
+	if err := store.UpdateStatus(ctx, id, proposal.StatusApproved, reviewer); err != nil {
+		return exitForStoreError(err)
+	}
+	if _, err := fmt.Fprintf(stdout, "approved %s\n", id); err != nil {
+		return ExitRunError
+	}
+	return ExitOK
+}
+
+// runReflectReject implements `mengdie reflect reject <id>`. The mirror
+// of runReflectApprove with StatusRejected; reviewer stamping is
+// identical so the audit trail tracks who approved / rejected what.
+func runReflectReject(ctx context.Context, args []string, a *App, stdout, stderr io.Writer) int {
+	if len(args) != 1 {
+		if err := writeMemoryError(stderr, "用法：mengdie reflect reject <id>\n"); err != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+	id := args[0]
+
+	store, sessionStore, _, code := a.openProposalStore(ctx, commonFlagsForPositional(a))
+	if code != ExitOK {
+		return code
+	}
+	defer func() { _ = sessionStore.Close() }()
+
+	reviewer := reflectReviewer()
+	if err := store.UpdateStatus(ctx, id, proposal.StatusRejected, reviewer); err != nil {
+		return exitForStoreError(err)
+	}
+	if _, err := fmt.Fprintf(stdout, "rejected %s\n", id); err != nil {
+		return ExitRunError
+	}
+	return ExitOK
+}
+
+// parseSince accepts a trailing "d" / "h" / "m" suffix and returns
+// now - duration. Empty string is treated as "now" (i.e. no past
+// sessions) so a CLI default of "7d" supplied via the FlagSet never
+// reaches this branch; the unit test suite can still pass "" to verify
+// the no-op fallback without a hard-coded default.
+func parseSince(value string, now time.Time) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return now, nil
+	}
+	var (
+		n    int
+		unit time.Duration
+	)
+	switch {
+	case strings.HasSuffix(value, "d"):
+		n, _ = strconv.Atoi(strings.TrimSuffix(value, "d"))
+		unit = 24 * time.Hour
+	case strings.HasSuffix(value, "h"):
+		n, _ = strconv.Atoi(strings.TrimSuffix(value, "h"))
+		unit = time.Hour
+	case strings.HasSuffix(value, "m"):
+		n, _ = strconv.Atoi(strings.TrimSuffix(value, "m"))
+		unit = time.Minute
+	default:
+		return time.Time{}, fmt.Errorf("unsupported duration %q (use Nd / Nh / Nm)", value)
+	}
+	if n <= 0 {
+		return time.Time{}, fmt.Errorf("duration must be positive: %q", value)
+	}
+	return now.Add(-time.Duration(n) * unit), nil
+}
+
+// reflectReviewer returns the local OS user for the reviewer's audit
+// stamp. Falls back to "mengdie" when $USER is unset so a CI invocation
+// (which usually has no $USER) still records a non-empty reviewer.
+func reflectReviewer() string {
+	if user := strings.TrimSpace(os.Getenv("USER")); user != "" {
+		return user
+	}
+	return "mengdie"
+}
+
+// commonFlagsForPositional returns the empty commonFlags used by the
+// approve / reject subcommands. They take no flags so a hand-rolled
+// zero value is the right input — loadConfig reads from the App's
+// environment-driven defaults (userConfigDir, lookupEnv) so no
+// per-call configuration is needed.
+func commonFlagsForPositional(a *App) *commonFlags {
+	return &commonFlags{}
+}
