@@ -22,7 +22,7 @@ var storeTestTime = time.Date(2026, 8, 6, 10, 30, 0, 123, time.UTC)
 func TestOpenSQLiteAppliesSchemaAndConnectionSettings(t *testing.T) {
 	store := openTestStore(t, t.TempDir(), 250*time.Millisecond)
 	defer closeTestStore(t, store)
-	for _, table := range []string{"schema_migrations", "sessions", "runs", "events", "commands", "snapshots", "context_messages", "artifacts", "context_summaries", "patch_journals", "patch_entries"} {
+	for _, table := range []string{"schema_migrations", "sessions", "runs", "events", "commands", "snapshots", "context_messages", "artifacts", "context_summaries", "patch_journals", "patch_entries", "reflection_proposals"} {
 		var count int
 		if err := store.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil {
 			t.Fatal(err)
@@ -35,7 +35,7 @@ func TestOpenSQLiteAppliesSchemaAndConnectionSettings(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 9 {
+	if migrationCount != 10 {
 		t.Fatalf("migration count=%d", migrationCount)
 	}
 	if _, err := os.Stat(store.Path()); err != nil {
@@ -240,7 +240,7 @@ func TestArtifactMigrationUpgradesExistingContextLedger(t *testing.T) {
 	if err := store.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('context_messages') WHERE name='artifact_id'`).Scan(&artifactColumnCount); err != nil {
 		t.Fatal(err)
 	}
-	if migrationCount != 9 || artifactColumnCount != 1 {
+	if migrationCount != 10 || artifactColumnCount != 1 {
 		t.Fatalf("migration count=%d artifact columns=%d", migrationCount, artifactColumnCount)
 	}
 }
