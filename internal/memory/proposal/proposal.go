@@ -107,6 +107,18 @@ var (
 	// wrapping this sentinel; the CLI (Task 5) may use it for an
 	// explicit "already applied" exit code.
 	ErrProposalAlreadyApplied = errors.New("proposal already applied")
+	// ErrProposalNotApplied is returned by Store.Revert when no
+	// proposal_applies row exists for the proposal_id — the proposal
+	// never reached Store.Apply (or was rolled back upstream), so
+	// there is nothing to mark reverted. Callers branch with errors.Is
+	// so the CLI (Task 2) can map it to a distinct exit code.
+	ErrProposalNotApplied = errors.New("proposal has not been applied")
+	// ErrProposalAlreadyReverted is returned by Store.Revert when the
+	// apply audit row already carries a non-NULL reverted_at. The v0.2
+	// apply driver is single-shot: a second Revert must fail closed
+	// rather than re-stamp the marker, so the CLI (Task 2) can
+	// surface "already reverted" without re-running the side-effect.
+	ErrProposalAlreadyReverted = errors.New("proposal already reverted")
 )
 
 // Evidence is a single corroborating signal the Reflect Worker attached to
@@ -181,6 +193,17 @@ type ApplyResult struct {
 	Error      string       `json:"error,omitempty"`
 	AppliedAt  time.Time    `json:"applied_at"`
 	PatchID    string       `json:"patch_id,omitempty"`
+	// RevertedAt is set when the apply audit row has been marked
+	// reverted (via Store.Revert). v0.2 only sets the audit marker;
+	// the actual content rollback (memory row rewind, AGENTS.md
+	// rewrite, archive restore, ...) is a v0.3 follow-up. nil means
+	// the apply is still in force.
+	RevertedAt *time.Time `json:"reverted_at,omitempty"`
+	// Reviewer mirrors the inverted-by user from the revert marker
+	// (proposal_applies.reverted_by). Empty when the apply has not
+	// been reverted; populated to the same value as RevertedAt is
+	// set so callers can render the marker without re-querying.
+	Reviewer string `json:"reviewer,omitempty"`
 }
 
 // ApplyExecutor is the kind-routed dispatcher Store.Apply calls into.

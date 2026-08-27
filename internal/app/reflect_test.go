@@ -11,6 +11,7 @@ import (
 
 	"github.com/Scorpio69t/mengdie-code/internal/memory"
 	"github.com/Scorpio69t/mengdie-code/internal/memory/proposal"
+	"github.com/Scorpio69t/mengdie-code/internal/session"
 )
 
 // openTestProposalStore returns a proposal.Store backed by the test App's
@@ -32,6 +33,28 @@ func openTestProposalStore(t *testing.T, state *appTestState) *proposal.Store {
 	}
 	t.Cleanup(func() { _ = sessionStore.Close() })
 	return proposal.Open(sessionStore.DB(), state.app.now)
+}
+
+// openTestProposalStoreWithSession mirrors openTestProposalStore but also
+// hands back the underlying *session.SQLiteStore so the revert test can
+// seed a synthetic proposal_applies row via raw SQL. The Store layer
+// does not yet expose a public "insert audit row" surface (Task 1 kept
+// it private behind Store.Apply + an executor), so a direct INSERT via
+// sessionStore.DB() is the cheapest way to put the audit table in a
+// known state for the CLI dispatcher. The session store is closed via
+// t.Cleanup so the test owns its lifecycle cleanly.
+func openTestProposalStoreWithSession(t *testing.T, state *appTestState) (*proposal.Store, *session.SQLiteStore) {
+	t.Helper()
+	loaded, err := state.app.loadConfig(&commonFlags{})
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	sessionStore, _, code := state.app.openSessionServiceForLoaded(context.Background(), loaded)
+	if code != ExitOK {
+		t.Fatalf("openSessionServiceForLoaded code=%d", code)
+	}
+	t.Cleanup(func() { _ = sessionStore.Close() })
+	return proposal.Open(sessionStore.DB(), state.app.now), sessionStore
 }
 
 // openTestApplyStores returns a memory.Store + proposal.Store pair bound to
@@ -276,5 +299,78 @@ func TestReflectApplyRejectsNotApproved(t *testing.T) {
 	if code != ExitInvalidInput {
 		t.Fatalf("apply want exit %d, got %d stderr=%q stdout=%q",
 			ExitInvalidInput, code, state.stderr.String(), state.stdout.String())
+	}
+}
+
+// TestReflectRevertAppliedProposal covers the v0.2 revert happy path:
+// an approved memory_upgrade proposal has a matching proposal_applies
+// audit row seeded via raw SQL (Store.Apply is private behind an
+// executor; the test only needs the audit row's existence). The CLI
+// must exit 0 and render the literal "reverted <id>" token so a
+// scripted wrapper can grep for completion without parsing JSON.
+func TestReflectRevertAppliedProposal(t *testing.T) {
+	state := setupAppTestState(t)
+	propStore, sessionStore := openTestProposalStoreWithSession(t, state)
+
+	saved, err := propStore.Insert(context.Background(), proposal.Proposal{
+		Kind:       proposal.KindMemoryUpgrade,
+		Title:      "x",
+		Body:       proposal.ProposalBody{Kind: "memory_upgrade"},
+		Status:     proposal.StatusApproved,
+		ObservedAt: reflectApplyTestTime,
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if _, derr := sessionStore.DB().ExecContext(context.Background(),
+		`INSERT INTO proposal_applies (id, proposal_id, kind, target, result, applied_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		"apply_x", saved.ID, "memory_upgrade", "mem_x", "success",
+		reflectApplyTestTime.UTC().Format(time.RFC3339Nano),
+	); derr != nil {
+		t.Fatalf("seed apply row: %v", derr)
+	}
+
+	state.stdout.Reset()
+	state.stderr.Reset()
+	code := runApp(state, []string{"reflect", "revert", saved.ID})
+	if code != ExitOK {
+		t.Fatalf("revert exit=%d stderr=%q stdout=%q",
+			code, state.stderr.String(), state.stdout.String())
+	}
+	if !strings.Contains(state.stdout.String(), "reverted "+saved.ID) {
+		t.Fatalf("revert output missing: %q", state.stdout.String())
+	}
+}
+
+// TestReflectRevertFailsNotApplied covers spec §5 exit 3 (not-found):
+// an approved proposal with no matching proposal_applies audit row
+// must surface ErrProposalNotApplied via exitForStoreError → ExitNotFound.
+// The proposal_id is well-formed (the proposal row exists), but the
+// audit table is empty for it, so the CLI cannot mark anything reverted.
+// Distinct from ErrProposalNotFound which fires when the proposal id
+// itself is absent — here the id resolves but the apply-side precondition
+// is unmet.
+func TestReflectRevertFailsNotApplied(t *testing.T) {
+	state := setupAppTestState(t)
+	propStore, _ := openTestProposalStoreWithSession(t, state)
+
+	saved, err := propStore.Insert(context.Background(), proposal.Proposal{
+		Kind:       proposal.KindMemoryUpgrade,
+		Title:      "x",
+		Body:       proposal.ProposalBody{Kind: "memory_upgrade"},
+		Status:     proposal.StatusApproved,
+		ObservedAt: reflectApplyTestTime,
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	// no apply row inserted
+
+	state.stdout.Reset()
+	state.stderr.Reset()
+	code := runApp(state, []string{"reflect", "revert", saved.ID})
+	if code != ExitNotFound {
+		t.Fatalf("revert want exit %d, got %d stderr=%q stdout=%q",
+			ExitNotFound, code, state.stderr.String(), state.stdout.String())
 	}
 }
