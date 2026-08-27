@@ -824,3 +824,73 @@ func TestStoreCrossAuthorityDispute(t *testing.T) {
 		t.Fatal("IsCrossAuthorityConflict(isolated) want false")
 	}
 }
+
+// TestUpgradeMemoryPromotesAuthority covers the M4 Slice 02 apply driver
+// happy path: an inferred (proposed) memory is later promoted to an
+// explicit memory by changing both claim and authority. UpgradeMemory must
+// update claim + authority in place and return the updated row so the
+// fingerprint auto-Approve flow can hand a verified fact back to the
+// Store without a Save/Approve dance.
+func TestUpgradeMemoryPromotesAuthority(t *testing.T) {
+	s := setupSeededStore(t)
+	ctx := context.Background()
+	in := memory.Memory{
+		Claim: "old claim", Authority: memory.AuthorityInferred,
+		Scope:  memory.Scope{Kind: "task", Value: "upgrade-test-1"},
+		Source: memory.SourceRef{Type: memory.SourceTypeAgentMessage, Ref: "test:1"},
+	}
+	saved, _ := s.Save(ctx, in)
+
+	upgraded, err := s.UpgradeMemory(ctx, saved.ID, "new claim", memory.AuthorityExplicit)
+	if err != nil {
+		t.Fatalf("UpgradeMemory: %v", err)
+	}
+	if upgraded.Authority != memory.AuthorityExplicit {
+		t.Fatalf("want explicit, got %s", upgraded.Authority)
+	}
+	if upgraded.Claim != "new claim" {
+		t.Fatalf("want new claim, got %s", upgraded.Claim)
+	}
+}
+
+// TestUpgradeMemoryRejectsRegression covers the regression guard:
+// promoting an explicit (rank 1) memory DOWN to inferred (rank 4) must be
+// refused with ErrMemoryAuthorityRegression so the apply driver can never
+// silently de-authoritise an existing row. Use Archive (Forget) to retire
+// instead.
+func TestUpgradeMemoryRejectsRegression(t *testing.T) {
+	s := setupSeededStore(t)
+	ctx := context.Background()
+	in := memory.Memory{
+		Claim: "explicit claim", Authority: memory.AuthorityExplicit,
+		Scope:  memory.Scope{Kind: "task", Value: "upgrade-test-2"},
+		Source: memory.SourceRef{Type: memory.SourceTypeUserMessage, Ref: "test:2"},
+	}
+	saved, _ := s.Save(ctx, in)
+
+	_, err := s.UpgradeMemory(ctx, saved.ID, "downgrade", memory.AuthorityInferred)
+	if !errors.Is(err, memory.ErrMemoryAuthorityRegression) {
+		t.Fatalf("want ErrMemoryAuthorityRegression, got %v", err)
+	}
+}
+
+// TestUpgradeMemoryRejectsSameAuthority pins the contract that UpgradeMemory
+// must be strictly promotional: re-issuing the same authority (even with a
+// new claim) returns ErrMemoryAuthorityRegression. The same-authority +
+// same-scope + different-claim case belongs in Save (spec §4.2 row 2 —
+// dispute marking), not in UpgradeMemory.
+func TestUpgradeMemoryRejectsSameAuthority(t *testing.T) {
+	s := setupSeededStore(t)
+	ctx := context.Background()
+	in := memory.Memory{
+		Claim: "x", Authority: memory.AuthorityInferred,
+		Scope:  memory.Scope{Kind: "task", Value: "upgrade-test-3"},
+		Source: memory.SourceRef{Type: memory.SourceTypeAgentMessage, Ref: "test:3"},
+	}
+	saved, _ := s.Save(ctx, in)
+
+	_, err := s.UpgradeMemory(ctx, saved.ID, "x", memory.AuthorityInferred)
+	if !errors.Is(err, memory.ErrMemoryAuthorityRegression) {
+		t.Fatalf("want ErrMemoryAuthorityRegression for same authority, got %v", err)
+	}
+}

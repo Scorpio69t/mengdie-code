@@ -7,7 +7,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Scorpio69t/mengdie-code/internal/memory"
 	"github.com/Scorpio69t/mengdie-code/internal/memory/proposal"
 )
 
@@ -31,6 +33,34 @@ func openTestProposalStore(t *testing.T, state *appTestState) *proposal.Store {
 	t.Cleanup(func() { _ = sessionStore.Close() })
 	return proposal.Open(sessionStore.DB(), state.app.now)
 }
+
+// openTestApplyStores returns a memory.Store + proposal.Store pair bound to
+// the same session store so the apply CLI test can seed a memory row and
+// the proposal that targets it from the same connection. Mirrors
+// openTestProposalStore but adds memory.OpenMemory on top so the
+// DefaultApplyExecutor's memStore.UpgradeMemory path can resolve the
+// target id at apply time. t.Cleanup closes the underlying session store
+// exactly once even though two wrappers share it.
+func openTestApplyStores(t *testing.T, state *appTestState) (*memory.Store, *proposal.Store) {
+	t.Helper()
+	loaded, err := state.app.loadConfig(&commonFlags{})
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	sessionStore, _, code := state.app.openSessionServiceForLoaded(context.Background(), loaded)
+	if code != ExitOK {
+		t.Fatalf("openSessionServiceForLoaded code=%d", code)
+	}
+	t.Cleanup(func() { _ = sessionStore.Close() })
+	return memory.OpenMemory(sessionStore), proposal.Open(sessionStore.DB(), state.app.now)
+}
+
+// reflectApplyTestTime is a fixed clock shared by the apply tests so the
+// proposal_applies.applied_at stamp is deterministic. proposalTestTime
+// lives in the proposal package as an unexported symbol, so this test
+// package (package app) cannot import it — local copy keeps the
+// dependency footprint to zero.
+var reflectApplyTestTime = time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 
 // seedReflectProposal inserts one proposed-row directly via the store and
 // returns its durable id. Skips the Pipeline (Stages 1-5) entirely because
@@ -159,5 +189,92 @@ func TestReflectApproveBogusID(t *testing.T) {
 	if code != ExitNotFound {
 		t.Fatalf("reflect approve bogus want exit %d, got %d stderr=%q",
 			ExitNotFound, code, state.stderr.String())
+	}
+}
+
+// TestReflectApplyApprovedProposal covers the v0.2 apply happy path:
+// an approved memory_upgrade proposal targets a seeded inferred memory,
+// the executor promotes it to explicit, and the CLI prints the literal
+// "result=success" line + exits 0. The proposal payload includes the
+// memory id + new_claim + new_authority triple so ApplyMemoryUpgrade
+// can route through memStore.UpgradeMemory without falling into the
+// "missing payload" branch. The Output contains "applied <id>" so a
+// scripted wrapper can grep the id without parsing JSON.
+func TestReflectApplyApprovedProposal(t *testing.T) {
+	state := setupAppTestState(t)
+	memStore, propStore := openTestApplyStores(t, state)
+
+	saved, err := memStore.Save(context.Background(), memory.Memory{
+		Claim:     "原记忆：项目入口",
+		Authority: memory.AuthorityInferred,
+		Scope:     memory.Scope{Kind: "task", Value: "apply-happy-test"},
+		Source:    memory.SourceRef{Type: memory.SourceTypeAgentMessage, Ref: "test:1"},
+	})
+	if err != nil {
+		t.Fatalf("seed memory: %v", err)
+	}
+
+	inserted, err := propStore.Insert(context.Background(), proposal.Proposal{
+		Kind:  proposal.KindMemoryUpgrade,
+		Title: "升级记忆到 explicit",
+		Body: proposal.ProposalBody{
+			Kind: "memory_upgrade",
+			Payload: map[string]any{
+				"memory_id":     saved.ID,
+				"new_claim":     "升级后的记忆：项目入口",
+				"new_authority": "explicit",
+			},
+		},
+		Status:     proposal.StatusApproved,
+		ObservedAt: reflectApplyTestTime,
+	})
+	if err != nil {
+		t.Fatalf("Insert proposal: %v", err)
+	}
+
+	state.stdout.Reset()
+	state.stderr.Reset()
+	code := runApp(state, []string{"reflect", "apply", inserted.ID})
+	if code != ExitOK {
+		t.Fatalf("apply exit=%d stderr=%q stdout=%q", code, state.stderr.String(), state.stdout.String())
+	}
+	out := state.stdout.String()
+	if !strings.Contains(out, "applied "+inserted.ID) {
+		t.Fatalf("apply output missing applied id: %q", out)
+	}
+	if !strings.Contains(out, "result=success") {
+		t.Fatalf("apply output missing result=success: %q", out)
+	}
+}
+
+// TestReflectApplyRejectsNotApproved covers spec §5 exit 2 (invalid
+// input): Store.Apply rejects a not-approved row with
+// ErrProposalNotApplicable before invoking the executor. exitForStoreError
+// must map that sentinel to ExitInvalidInput so a wrapper can
+// distinguish "you forgot to approve this first" from a generic write
+// failure (ExitRunError). The proposal's payload is intentionally
+// empty — Apply's status guard fires before the executor ever sees it,
+// so the missing-payload branch is unreachable on this code path.
+func TestReflectApplyRejectsNotApproved(t *testing.T) {
+	state := setupAppTestState(t)
+	_, propStore := openTestApplyStores(t, state)
+
+	inserted, err := propStore.Insert(context.Background(), proposal.Proposal{
+		Kind:       proposal.KindMemoryUpgrade,
+		Title:      "未审批的提案",
+		Body:       proposal.ProposalBody{Kind: "memory_upgrade"},
+		Status:     proposal.StatusProposed,
+		ObservedAt: reflectApplyTestTime,
+	})
+	if err != nil {
+		t.Fatalf("Insert proposal: %v", err)
+	}
+
+	state.stdout.Reset()
+	state.stderr.Reset()
+	code := runApp(state, []string{"reflect", "apply", inserted.ID})
+	if code != ExitInvalidInput {
+		t.Fatalf("apply want exit %d, got %d stderr=%q stdout=%q",
+			ExitInvalidInput, code, state.stderr.String(), state.stdout.String())
 	}
 }

@@ -19,6 +19,7 @@
 package proposal
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -63,6 +64,27 @@ const (
 	StatusRejected ProposalStatus = "rejected"
 )
 
+// ApplyResult values written to proposal_applies.result. The Apply
+// executor returns one of these per call so the audit row + CLI
+// surface the same vocabulary; ApplyResultFailed and
+// ApplyResultDeniedByPolicy cover the two failure modes the Pipeline
+// surfaces distinctly (a failed side-effect vs a policy veto).
+const (
+	// ApplyResultSuccess marks a successful side-effect (memory row
+	// patched, AGENTS.md rewritten, etc.).
+	ApplyResultSuccess = "success"
+	// ApplyResultFailed marks an executor error returned to Apply
+	// (network blip, write conflict, etc.). The audit row stores the
+	// executor's error message in proposal_applies.error.
+	ApplyResultFailed = "failed"
+	// ApplyResultDeniedByPolicy marks a deliberate refusal — the
+	// executor returned ApplyResultDeniedByPolicy because a guard rule
+	// (Trust Set, AGENTS.md section protection, ...) vetoed the side
+	// effect. Distinct from ApplyResultFailed so the CLI can render
+	// "denied" without parsing the error text.
+	ApplyResultDeniedByPolicy = "denied_by_policy"
+)
+
 // Sentinel errors returned by Store. Callers use errors.Is to branch on
 // validation vs routing failures.
 var (
@@ -74,6 +96,17 @@ var (
 	// or JSON marshalling fails. Validation up front so the row never lands
 	// half-populated.
 	ErrInvalidProposal = errors.New("invalid proposal")
+	// ErrProposalNotApplicable is returned by Apply when the proposal's
+	// Status is not StatusApproved, or when the Kind is unknown to the
+	// apply dispatcher. The executor is never invoked on this branch.
+	ErrProposalNotApplicable = errors.New("proposal is not applicable")
+	// ErrProposalAlreadyApplied is reserved for callers that want to
+	// differentiate "the apply driver re-returned the existing record"
+	// (the idempotent guard) from "a fresh apply ran end to end".
+	// Store.Apply currently returns the existing ApplyResult without
+	// wrapping this sentinel; the CLI (Task 5) may use it for an
+	// explicit "already applied" exit code.
+	ErrProposalAlreadyApplied = errors.New("proposal already applied")
 )
 
 // Evidence is a single corroborating signal the Reflect Worker attached to
@@ -132,4 +165,34 @@ type ListQuery struct {
 	Since     time.Time
 	Limit     int
 	OrderBy   string
+}
+
+// ApplyResult is the durable shape of a proposal_applies row. The Store
+// stamps ProposalID / Kind / AppliedAt when the executor leaves them
+// empty so every audit row carries the provenance even if the
+// executor only filled in Result / Target / PatchID / Error. JSON
+// tags match the migration's column shape so future CLI / API
+// surfaces can stream the row directly.
+type ApplyResult struct {
+	ProposalID string       `json:"proposal_id"`
+	Kind       ProposalKind `json:"kind"`
+	Target     string       `json:"target"`
+	Result     string       `json:"result"`
+	Error      string       `json:"error,omitempty"`
+	AppliedAt  time.Time    `json:"applied_at"`
+	PatchID    string       `json:"patch_id,omitempty"`
+}
+
+// ApplyExecutor is the kind-routed dispatcher Store.Apply calls into.
+// One method per ProposalKind so the apply driver can route without
+// inspecting Payload — concrete executors (slice 03) live behind the
+// interface and own their own side effects (memory.Save,
+// AGENTS.md rewrite, Skill draft write, Forget). Unknown Kind values
+// cause Store.Apply to return ErrProposalNotApplicable before any
+// method is called.
+type ApplyExecutor interface {
+	ApplyMemoryUpgrade(ctx context.Context, p Proposal) (ApplyResult, error)
+	ApplyAgentsMdRevision(ctx context.Context, p Proposal) (ApplyResult, error)
+	ApplySkillDraft(ctx context.Context, p Proposal) (ApplyResult, error)
+	ApplyObsolete(ctx context.Context, p Proposal) (ApplyResult, error)
 }

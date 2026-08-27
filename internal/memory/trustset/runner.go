@@ -39,12 +39,27 @@
 //   - reflect_approve / reflect_reject: call proposal.Store.UpdateStatus
 //     on the runnerState.lastProposalID with StatusApproved / StatusRejected
 //     and the action.Reviewer (defaulting to "trustset").
+//
+// M4 Slice 02 Task 6 adds one more reflect-flavoured action verb:
+//
+//   - reflect_apply: drive Store.Apply for the proposal tracked in
+//     runnerState.lastProposalID (or action.ID when supplied). Before
+//     invoking Apply, the handler materialises setup.seed_applies[] via
+//     raw SQL (mirroring insertStaleSeed) so the idempotent guard short-
+//     circuits on the already-applied scenario; afterwards, if Apply
+//     returned an error (typically ErrProposalNotApplicable for not-
+//     approved proposals) and no audit row exists yet, the handler writes
+//     a proposal_applies row with result=failed so the assertion can
+//     verify the failure mode. The Expected struct gains ApplyResult +
+//     ApplyErrorContains to express those assertions against the audit
+//     row.
 package trustset
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -163,6 +178,19 @@ type Expected struct {
 	ProposalKind      string `json:"proposal_kind,omitempty"`
 	ProposalStatus    string `json:"proposal_status,omitempty"`
 	ReviewerSet       *bool  `json:"reviewer_set,omitempty"`
+
+	// M4 Slice 02 Task 6 apply-shape assertions. ApplyResult pins the
+	// proposal_applies.result value the scenario must observe; the
+	// runner reads the audit row inserted by Store.Apply (success path)
+	// or by the runner's reflect_apply failure-recording branch
+	// (not-approved path, where Store.Apply intentionally skips the
+	// insert and the runner fills the gap so the assertion has a row
+	// to compare against). ApplyErrorContains is a substring match on
+	// proposal_applies.error so tests can pin specific failure modes
+	// ("not approved", "policy denied", "missing memory_id", ...) without
+	// matching on the entire error string.
+	ApplyResult        string `json:"proposal_apply_result,omitempty"`
+	ApplyErrorContains string `json:"apply_error_contains,omitempty"`
 }
 
 // Report is the 5-metric baseline + per-scenario pass/fail.
@@ -337,7 +365,7 @@ func runOne(ctx context.Context, memStore *memory.Store, sessionStore *session.S
 			}
 		}
 	}
-	pass, reason := assertExpected(ctx, memStore, sessionStore, s, primary, found)
+	pass, reason := assertExpected(ctx, memStore, sessionStore, s, primary, found, state)
 	res.Passed = pass
 	res.Reason = reason
 	return res
@@ -768,7 +796,16 @@ func reflectAction(ctx context.Context, sessionStore *session.SQLiteStore, memSt
 // reflectProposeAction reads setup.seed_proposals[] and INSERTs every
 // entry via proposal.Store.Insert, remembering the last inserted id in
 // the per-scenario runnerState so the following reflect_approve /
-// reflect_reject actions can target the right row.
+// reflect_reject / reflect_apply actions can target the right row.
+//
+// seed_proposals may carry an optional body_payload map; when set the
+// runner forwards it into Proposal.Body.Payload so ApplyMemoryUpgrade /
+// ApplyObsolete can find the (memory_id, new_claim, new_authority) or
+// (memory_id) fields. Without body_payload the proposal lands with an
+// empty Payload and the Apply executor returns
+// ApplyResultFailed("missing memory_id ...") — the slice-01 reflect-
+// approve / reflect-reject scenarios rely on that, since they never
+// call reflect_apply.
 //
 // Per the brief: v0.1 simplest — seed_proposals is the source data, the
 // action verb materialises it. Future slices can replace this with a
@@ -792,10 +829,14 @@ func reflectProposeAction(ctx context.Context, sessionStore *session.SQLiteStore
 			propStatus = proposal.StatusProposed
 		}
 		confidence, _ := raw["confidence"].(float64)
+		var payload map[string]any
+		if rawPayload, ok := raw["body_payload"].(map[string]any); ok {
+			payload = rawPayload
+		}
 		saved, err := propStore.Insert(ctx, proposal.Proposal{
 			Kind:       proposal.ProposalKind(kind),
 			Title:      title,
-			Body:       proposal.ProposalBody{Kind: kind},
+			Body:       proposal.ProposalBody{Kind: kind, Payload: payload},
 			Status:     propStatus,
 			Confidence: confidence,
 			ObservedAt: time.Now().UTC(),
@@ -837,6 +878,153 @@ func reflectRejectAction(ctx context.Context, sessionStore *session.SQLiteStore,
 	return propStore.UpdateStatus(ctx, state.lastProposalID, proposal.StatusRejected, reviewer)
 }
 
+// seedAppliesFromSetup returns the setup.seed_applies[] list the
+// reflect_apply action verb materialises via raw SQL before invoking
+// Store.Apply. Each entry is a map carrying at minimum a `result` field
+// (one of proposal.ApplyResultSuccess / ApplyResultFailed /
+// ApplyResultDeniedByPolicy); optional `error` and `target` fields
+// stamp the audit row's matching columns verbatim. The proposal_id is
+// resolved at action time from runnerState.lastProposalID (set by the
+// prior reflect_propose), so seed_applies does not need to cross-
+// reference seed_proposals by index.
+func seedAppliesFromSetup(setup map[string]any) []map[string]any {
+	raw, ok := setup["seed_applies"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		if m, ok := item.(map[string]any); ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// insertApplySeed writes one row to proposal_applies directly via raw
+// SQL. Mirrors insertStaleSeed's "bypass Store for test-only writes"
+// pattern — the runner owns the audit row shape so the subsequent
+// Store.Apply call sees an existing row and short-circuits on its
+// idempotent guard. id is generated with a stable
+// "apply-trustset-<proposalID>" shape (proposal_applies.proposal_id is
+// UNIQUE so one apply row per proposal is the only legal state today;
+// the schema allows multiple historical rows per proposal in theory,
+// but v0.2 scenarios only ever seed one).
+func insertApplySeed(ctx context.Context, db *sql.DB, proposalID, kind, target, result, errMsg string) error {
+	if strings.TrimSpace(proposalID) == "" {
+		return fmt.Errorf("insertApplySeed: proposalID is required")
+	}
+	if strings.TrimSpace(kind) == "" {
+		return fmt.Errorf("insertApplySeed: kind is required")
+	}
+	if result == "" {
+		result = proposal.ApplyResultSuccess
+	}
+	applyID := "apply-trustset-" + proposalID
+	now := time.Now().UTC()
+	stamp := now.Format(time.RFC3339Nano)
+	var errArg any
+	if errMsg != "" {
+		errArg = errMsg
+	}
+	_, err := db.ExecContext(ctx, `
+INSERT INTO proposal_applies(
+    id, proposal_id, kind, target, result, error, applied_at, patch_id
+) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
+		applyID, proposalID, kind, target, result, errArg, stamp,
+	)
+	if err != nil {
+		return fmt.Errorf("insert apply seed: %w", err)
+	}
+	return nil
+}
+
+// insertApplyFailureRow writes a proposal_applies row with
+// result=ApplyResultFailed and error=errMsg when Store.Apply returns
+// an error and no audit row exists yet. This fills the gap left by
+// Store.Apply's design (the not-approved branch intentionally skips
+// the insert so proposal_applies.proposal_id UNIQUE never holds half-
+// applied state — see store.go Apply docblock) so the assertion layer
+// has a row to compare against. The runner treats Store.Apply errors
+// as expected (the reflect-apply-fails-not-approved scenario exists to
+// pin this contract) and records the failure rather than propagating
+// it, so a single failed apply attempt never fails the whole scenario.
+func insertApplyFailureRow(ctx context.Context, db *sql.DB, proposalID string, kind proposal.ProposalKind, errMsg string) error {
+	return insertApplySeed(ctx, db, proposalID, string(kind), "", proposal.ApplyResultFailed, errMsg)
+}
+
+// reflectApplyAction drives Store.Apply for the proposal tracked in
+// runnerState.lastProposalID (or action.ID when supplied). The flow is:
+//
+//  1. Resolve proposal_id; reject early if neither is set so the
+//     failure surfaces in the action error path rather than the
+//     assertion path.
+//  2. Look up the proposal's Kind so audit rows the runner writes
+//     later carry the matching kind column (Store.ApplyResult.Kind
+//     also stamps it but the runner doesn't reuse ApplyResult across
+//     branches).
+//  3. Materialise setup.seed_applies[] via insertApplySeed so the
+//     already-applied scenario's idempotent guard fires on the very
+//     first Apply call without needing a second action.
+//  4. Invoke Store.Apply with the production DefaultApplyExecutor
+//     (no policy engine — Trust Set's apply path doesn't gate on
+//     policy today, matches Task 4's `mengdie reflect apply` CLI
+//     default).
+//  5. If Apply returned an error and no audit row exists yet
+//     (typically the not-approved branch), record a result=failed
+//     row so the assertion layer has something to compare against.
+//     The runner swallows Apply's error so the scenario continues to
+//     the assertion phase; a not-approved apply is a normal Trust
+//     Set case, not a scenario-level failure.
+func reflectApplyAction(ctx context.Context, sessionStore *session.SQLiteStore, memStore *memory.Store, a Action, s Scenario, state *runnerState) error {
+	proposalID := a.ID
+	if proposalID == "" {
+		proposalID = state.lastProposalID
+	}
+	if proposalID == "" {
+		return fmt.Errorf("reflect_apply requires a.ID or prior reflect_propose to set lastProposalID")
+	}
+	propStore := proposal.Open(sessionStore.DB(), time.Now)
+	prop, err := propStore.Get(ctx, proposalID)
+	if err != nil {
+		return fmt.Errorf("reflect_apply get proposal: %w", err)
+	}
+
+	// Seed apply rows from setup.seed_applies before invoking Store.Apply
+	// so the idempotent guard short-circuits the already-applied scenario
+	// on the first call (v0.2 simplification — see seedAppliesFromSetup
+	// docblock; the helper exists because the alternative of double
+	// reflect_apply would force every other apply-scenario author to
+	// remember the idempotent-guard contract).
+	for _, raw := range seedAppliesFromSetup(s.Setup) {
+		result, _ := raw["result"].(string)
+		errMsg, _ := raw["error"].(string)
+		target, _ := raw["target"].(string)
+		if err := insertApplySeed(ctx, sessionStore.DB(), proposalID, string(prop.Kind), target, result, errMsg); err != nil {
+			return fmt.Errorf("reflect_apply seed: %w", err)
+		}
+	}
+
+	executor := proposal.NewDefaultApplyExecutor(memStore, propStore, nil, "", time.Now)
+	_, applyErr := propStore.Apply(ctx, proposalID, executor)
+	if applyErr != nil {
+		// Record the failure as an audit row only if no row exists yet —
+		// a seed_applies row would have prevented Apply from reaching the
+		// executor and we'd be duplicating the row. The COUNT(*) probe is
+		// a single indexed lookup (proposal_id UNIQUE), so the cost is
+		// negligible compared to the apply side-effect itself.
+		var count int
+		if qerr := sessionStore.DB().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM proposal_applies WHERE proposal_id = ?`, proposalID,
+		).Scan(&count); qerr == nil && count == 0 {
+			if ierr := insertApplyFailureRow(ctx, sessionStore.DB(), proposalID, prop.Kind, applyErr.Error()); ierr != nil {
+				return fmt.Errorf("reflect_apply record failure: %w", ierr)
+			}
+		}
+	}
+	return nil
+}
+
 // truncateSeedClaim keeps obsolete-proposal titles under a stable
 // length so the JSON evidence diff between runs stays clean. Mirrors
 // proposal.truncateRunes' rune-aware truncation (introduced by the same
@@ -855,6 +1043,7 @@ func insertSeed(ctx context.Context, store *memory.Store, db *sql.DB, category s
 	authority, _ := raw["authority"].(string)
 	status, _ := raw["status"].(string)
 	scope, _ := raw["scope"].(string)
+	explicitID, _ := raw["id"].(string)
 	if scope == "" {
 		scope = "project/mengdie"
 	}
@@ -867,6 +1056,18 @@ func insertSeed(ctx context.Context, store *memory.Store, db *sql.DB, category s
 		ObservedAt: time.Now().UTC(),
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
+	}
+	// M4 Slice 02 Task 6 explicit-id bypass: when seed_memories carries
+	// an `id` field the proposal scenarios need to target a stable row
+	// (memory_upgrade with body_payload.memory_id pointing at "mem_seed_N",
+	// obsolete with body_payload.memory_id, etc.). GenerateID would hash the
+	// claim/scope/authority/sessionID tuple and the resulting id is
+	// impossible for the scenario author to predict. The raw SQL path
+	// mirrors insertStaleSeed's "bypass Save* for test-only writes" pattern
+	// and keeps the memory.Store contract intact — production callers
+	// never hit this branch.
+	if explicitID != "" {
+		return insertSeedWithID(ctx, db, mem, explicitID)
 	}
 	// M4 Slice 01 Task 5 obsolete-path bypass: the Save* entry points
 	// always overwrite Status to the routed value (StatusActive for
@@ -899,6 +1100,64 @@ func insertSeed(ctx context.Context, store *memory.Store, db *sql.DB, category s
 		// Default to ProposeMemory for unknown / unspecified authorities.
 		return store.ProposeMemory(ctx, mem)
 	}
+}
+
+// insertSeedWithID writes one row to memories with an explicit id
+// (supplied by the scenario author). Used by M4 Slice 02 Task 6 apply
+// scenarios so memory_upgrade / obsolete payloads can reference
+// "mem_seed_N" by name. Status defaults to the authority-matching
+// value when not provided (StatusActive for explicit / repository /
+// verified, StatusProposed for inferred) so the row reflects the same
+// state Store.Save* would have produced — the only differences from
+// the Save* path are (a) the id is caller-controlled and (b) the
+// dispute-marking / fingerprint auto-Approve hooks are skipped (those
+// hooks don't make sense for fixture data and would otherwise flip the
+// row to StatusDisputed when a higher-authority peer exists).
+func insertSeedWithID(ctx context.Context, db *sql.DB, mem memory.Memory, explicitID string) (memory.Memory, error) {
+	if err := mem.Scope.Valid(); err != nil {
+		return memory.Memory{}, fmt.Errorf("%w: %v", memory.ErrInvalidMemory, err)
+	}
+	if err := mem.Source.Valid(); err != nil {
+		return memory.Memory{}, fmt.Errorf("%w: %v", memory.ErrInvalidMemory, err)
+	}
+	if strings.TrimSpace(mem.Claim) == "" {
+		return memory.Memory{}, fmt.Errorf("%w: claim is required", memory.ErrInvalidMemory)
+	}
+	if strings.TrimSpace(explicitID) == "" {
+		return memory.Memory{}, fmt.Errorf("insertSeedWithID: explicitID is required")
+	}
+	status := mem.Status
+	if status == "" {
+		switch mem.Authority {
+		case memory.AuthorityInferred:
+			status = memory.StatusProposed
+		default:
+			status = memory.StatusActive
+		}
+	}
+	mem.Kind = "fact"
+	mem.ID = explicitID
+	now := time.Now().UTC()
+	mem.CreatedAt = now
+	mem.UpdatedAt = now
+	if mem.ObservedAt.IsZero() {
+		mem.ObservedAt = now
+	}
+	stamp := now.Format(time.RFC3339Nano)
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO memories(
+    id, claim, kind, scope_kind, scope_value, authority, source_type, source_ref,
+    observed_at, valid_from, valid_until, status, confidence, evidence_score,
+    supersedes, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, NULL, ?, ?)`,
+		mem.ID, mem.Claim, mem.Kind, mem.Scope.Kind, mem.Scope.Value,
+		string(mem.Authority), string(mem.Source.Type), mem.Source.Ref,
+		stamp, string(status), mem.Confidence, mem.EvidenceScore, stamp, stamp,
+	); err != nil {
+		return memory.Memory{}, fmt.Errorf("insert seed with id: %w", err)
+	}
+	mem.Status = status
+	return mem, nil
 }
 
 // insertStaleSeed writes one row to memories with status='stale' by
@@ -1051,6 +1310,8 @@ func dispatch(ctx context.Context, memStore *memory.Store, sessionStore *session
 		return reflectApproveAction(ctx, sessionStore, a, state)
 	case "reflect_reject":
 		return reflectRejectAction(ctx, sessionStore, a, state)
+	case "reflect_apply":
+		return reflectApplyAction(ctx, sessionStore, memStore, a, s, state)
 	}
 	return fmt.Errorf("unknown action type %q", a.Type)
 }
@@ -1125,7 +1386,7 @@ func findPrimary(ctx context.Context, store *memory.Store, s Scenario) (memory.M
 	return mem, true
 }
 
-func assertExpected(ctx context.Context, memStore *memory.Store, sessionStore *session.SQLiteStore, s Scenario, primary memory.Memory, found bool) (bool, string) {
+func assertExpected(ctx context.Context, memStore *memory.Store, sessionStore *session.SQLiteStore, s Scenario, primary memory.Memory, found bool, state *runnerState) (bool, string) {
 	exp := s.Expected
 	if exp.MemoryPresent != nil {
 		want := *exp.MemoryPresent
@@ -1219,6 +1480,49 @@ func assertExpected(ctx context.Context, memStore *memory.Store, sessionStore *s
 				return false, fmt.Sprintf("expected no proposals to have a reviewer, observed: %s", formatObservedProposalReviewers(proposals))
 			}
 		}
+
+		// M4 Slice 02 Task 6 apply-shape assertions. The proposal_id
+		// comes from runnerState.lastProposalID (set by reflect_propose,
+		// the only path that materialises a proposal row today). The
+		// audit row is either inserted by Store.Apply (success path) or
+		// by reflectApplyAction's insertApplyFailureRow (not-approved
+		// path, since Store.Apply intentionally skips the insert so
+		// proposal_applies.proposal_id UNIQUE never holds half-applied
+		// state). ApplyErrorContains matches a substring of
+		// proposal_applies.error so tests can pin failure modes ("not
+		// approved", "policy denied", ...) without coupling to the full
+		// error string.
+		if exp.ApplyResult != "" || exp.ApplyErrorContains != "" {
+			if state == nil || state.lastProposalID == "" {
+				return false, "expected proposal_apply_result / apply_error_contains but no proposal was materialised"
+			}
+			var (
+				applyResult string
+				applyErr    sql.NullString
+			)
+			qerr := sessionStore.DB().QueryRowContext(ctx,
+				`SELECT result, error FROM proposal_applies WHERE proposal_id = ?`,
+				state.lastProposalID,
+			).Scan(&applyResult, &applyErr)
+			if errors.Is(qerr, sql.ErrNoRows) {
+				return false, fmt.Sprintf("expected proposal_applies row for proposal %s but found none", state.lastProposalID)
+			}
+			if qerr != nil {
+				return false, fmt.Sprintf("read proposal_applies: %v", qerr)
+			}
+			if exp.ApplyResult != "" && applyResult != exp.ApplyResult {
+				return false, fmt.Sprintf("expected proposal_apply_result=%q, got %q", exp.ApplyResult, applyResult)
+			}
+			if exp.ApplyErrorContains != "" {
+				if !applyErr.Valid || !strings.Contains(applyErr.String, exp.ApplyErrorContains) {
+					gotErr := ""
+					if applyErr.Valid {
+						gotErr = applyErr.String
+					}
+					return false, fmt.Sprintf("expected proposal_applies.error to contain %q, got %q", exp.ApplyErrorContains, gotErr)
+				}
+			}
+		}
 	}
 
 	if len(exp.ExtractedMemories) == 0 {
@@ -1267,11 +1571,17 @@ func assertExpected(ctx context.Context, memStore *memory.Store, sessionStore *s
 // proposals_count_gte of 0 fall through to the "no memory, no
 // extracted memory" short-circuit, which is the correct behaviour
 // for reflect-scan-since-default (the only such scenario).
+//
+// ApplyResult / ApplyErrorContains (M4 Slice 02 Task 6) route the
+// reflect-apply-* scenarios into the same proposal-assertion branch so
+// their audit-row reads happen in one place.
 func hasProposalAssertion(exp Expected) bool {
 	return exp.ProposalsCount > 0 ||
 		exp.ProposalKind != "" ||
 		exp.ProposalStatus != "" ||
-		exp.ReviewerSet != nil
+		exp.ReviewerSet != nil ||
+		exp.ApplyResult != "" ||
+		exp.ApplyErrorContains != ""
 }
 
 // formatObservedProposalKinds / formatObservedProposalStatuses /
