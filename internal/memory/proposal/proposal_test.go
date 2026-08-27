@@ -5,6 +5,7 @@ package proposal_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -322,6 +323,189 @@ func TestStoreApplyRejectsNotApproved(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("proposal_applies count want 0, got %d", count)
+	}
+}
+
+// seedProposalApply writes a synthetic proposal_applies row directly via
+// raw SQL so the Store.Revert tests don't need a real ApplyExecutor. The
+// row mirrors what Store.Apply would have written: proposal_id, kind,
+// target, result, applied_at, patch_id. applied_at uses the deterministic
+// proposalTestTime stamp so the post-Revert refetch is comparable. The
+// optional withAlreadyReverted hook sets reverted_at / reverted_by for
+// the double-revert test; without the hook both columns store SQL NULL.
+func seedProposalApply(t *testing.T, sessionStore *session.SQLiteStore, proposalID string, opts ...func(*applySeed)) {
+	t.Helper()
+	seed := &applySeed{}
+	for _, opt := range opts {
+		opt(seed)
+	}
+	stamp := proposalTestTime.UTC().Format(time.RFC3339Nano)
+	var revertedAtArg, revertedByArg any
+	if seed.revertedAt != "" {
+		revertedAtArg = seed.revertedAt
+	}
+	if seed.revertedBy != "" {
+		revertedByArg = seed.revertedBy
+	}
+	_, err := sessionStore.DB().ExecContext(context.Background(),
+		`INSERT INTO proposal_applies
+		 (id, proposal_id, kind, target, result, error, applied_at, patch_id, reverted_at, reverted_by)
+		 VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`,
+		"apply_test_"+proposalID, proposalID, string(proposal.KindMemoryUpgrade),
+		"mem_xxx", proposal.ApplyResultSuccess, stamp,
+		"patch_test", revertedAtArg, revertedByArg,
+	)
+	if err != nil {
+		t.Fatalf("seed proposal_applies: %v", err)
+	}
+}
+
+type applySeed struct {
+	revertedAt string
+	revertedBy string
+}
+
+func withAlreadyReverted(revertedAt, revertedBy string) func(*applySeed) {
+	return func(s *applySeed) {
+		s.revertedAt = revertedAt
+		s.revertedBy = revertedBy
+	}
+}
+
+// TestStoreRevertAppliedProposal covers the happy path: an applied
+// proposal (proposal_applies row exists, reverted_at is NULL) is marked
+// reverted, the audit row carries the reviewer in reverted_by, and the
+// returned ApplyResult surfaces RevertedAt as a non-nil time and
+// Reviewer as the supplied reviewer string.
+func TestStoreRevertAppliedProposal(t *testing.T) {
+	ctx := context.Background()
+	store, sessionStore := openProposalStore(t)
+	defer func() { _ = sessionStore.Close() }()
+
+	// Seed a minimal reflection_proposals row so the proposal_id FK is
+	// satisfied (proposal_applies.proposal_id REFERENCES reflection_proposals(id)
+	// ON DELETE CASCADE). The status field is irrelevant for Revert — we
+	// only need the FK target to exist.
+	if _, err := sessionStore.DB().ExecContext(ctx,
+		`INSERT INTO reflection_proposals (id, kind, title, body, status, based_on, session_id, confidence, evidence, observed_at, created_at, updated_at)
+		 VALUES (?, ?, ?, '{}', 'approved', '[]', NULL, 0.0, '[]', ?, ?, ?)`,
+		"prop_revert_happy", string(proposal.KindMemoryUpgrade), "revert happy",
+		proposalTestTime.UTC().Format(time.RFC3339Nano),
+		proposalTestTime.UTC().Format(time.RFC3339Nano),
+		proposalTestTime.UTC().Format(time.RFC3339Nano),
+	); err != nil {
+		t.Fatalf("seed reflection_proposals: %v", err)
+	}
+	seedProposalApply(t, sessionStore, "prop_revert_happy")
+
+	got, err := store.Revert(ctx, "prop_revert_happy", "reviewer_revert")
+	if err != nil {
+		t.Fatalf("Revert: %v", err)
+	}
+	if got.RevertedAt == nil {
+		t.Fatal("RevertedAt nil after Revert")
+	}
+	if got.Reviewer != "reviewer_revert" {
+		t.Fatalf("Reviewer want %q, got %q", "reviewer_revert", got.Reviewer)
+	}
+	if got.ProposalID != "prop_revert_happy" {
+		t.Fatalf("ProposalID want %q, got %q", "prop_revert_happy", got.ProposalID)
+	}
+	if got.Kind != proposal.KindMemoryUpgrade {
+		t.Fatalf("Kind want %s, got %s", proposal.KindMemoryUpgrade, got.Kind)
+	}
+	if got.Result != proposal.ApplyResultSuccess {
+		t.Fatalf("Result want %s, got %q", proposal.ApplyResultSuccess, got.Result)
+	}
+	if got.AppliedAt.IsZero() {
+		t.Fatal("AppliedAt empty after Revert")
+	}
+
+	// Verify the row actually carries the marker columns.
+	var revertedAt, revertedBy sql.NullString
+	if err := sessionStore.DB().QueryRowContext(ctx,
+		`SELECT reverted_at, reverted_by FROM proposal_applies WHERE proposal_id = ?`,
+		"prop_revert_happy",
+	).Scan(&revertedAt, &revertedBy); err != nil {
+		t.Fatalf("query proposal_applies: %v", err)
+	}
+	if !revertedAt.Valid || revertedAt.String == "" {
+		t.Fatalf("reverted_at want non-empty, got %v", revertedAt)
+	}
+	if !revertedBy.Valid || revertedBy.String != "reviewer_revert" {
+		t.Fatalf("reverted_by want %q, got %v", "reviewer_revert", revertedBy)
+	}
+}
+
+// TestStoreRevertFailsNotApplied covers the no-audit-row branch:
+// Revert on a proposal_id that never reached Store.Apply must return
+// ErrProposalNotApplied so the CLI can map it to a distinct exit code
+// via errors.Is. The apply driver is never invoked.
+func TestStoreRevertFailsNotApplied(t *testing.T) {
+	ctx := context.Background()
+	store, sessionStore := openProposalStore(t)
+	defer func() { _ = sessionStore.Close() }()
+
+	// Seed only the proposal row — no proposal_applies row.
+	if _, err := sessionStore.DB().ExecContext(ctx,
+		`INSERT INTO reflection_proposals (id, kind, title, body, status, based_on, session_id, confidence, evidence, observed_at, created_at, updated_at)
+		 VALUES (?, ?, ?, '{}', 'approved', '[]', NULL, 0.0, '[]', ?, ?, ?)`,
+		"prop_revert_notapplied", string(proposal.KindMemoryUpgrade), "revert notapplied",
+		proposalTestTime.UTC().Format(time.RFC3339Nano),
+		proposalTestTime.UTC().Format(time.RFC3339Nano),
+		proposalTestTime.UTC().Format(time.RFC3339Nano),
+	); err != nil {
+		t.Fatalf("seed reflection_proposals: %v", err)
+	}
+
+	_, err := store.Revert(ctx, "prop_revert_notapplied", "reviewer_revert")
+	if !errors.Is(err, proposal.ErrProposalNotApplied) {
+		t.Fatalf("want ErrProposalNotApplied, got %v", err)
+	}
+}
+
+// TestStoreRevertFailsAlreadyReverted covers the double-revert guard:
+// once an apply row carries a non-NULL reverted_at, a second Revert must
+// return ErrProposalAlreadyReverted so the CLI can render "already
+// reverted" without re-running the side-effect.
+func TestStoreRevertFailsAlreadyReverted(t *testing.T) {
+	ctx := context.Background()
+	store, sessionStore := openProposalStore(t)
+	defer func() { _ = sessionStore.Close() }()
+
+	if _, err := sessionStore.DB().ExecContext(ctx,
+		`INSERT INTO reflection_proposals (id, kind, title, body, status, based_on, session_id, confidence, evidence, observed_at, created_at, updated_at)
+		 VALUES (?, ?, ?, '{}', 'approved', '[]', NULL, 0.0, '[]', ?, ?, ?)`,
+		"prop_revert_double", string(proposal.KindMemoryUpgrade), "revert double",
+		proposalTestTime.UTC().Format(time.RFC3339Nano),
+		proposalTestTime.UTC().Format(time.RFC3339Nano),
+		proposalTestTime.UTC().Format(time.RFC3339Nano),
+	); err != nil {
+		t.Fatalf("seed reflection_proposals: %v", err)
+	}
+	priorStamp := proposalTestTime.Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+	seedProposalApply(t, sessionStore, "prop_revert_double",
+		withAlreadyReverted(priorStamp, "reviewer_first"))
+
+	_, err := store.Revert(ctx, "prop_revert_double", "reviewer_second")
+	if !errors.Is(err, proposal.ErrProposalAlreadyReverted) {
+		t.Fatalf("want ErrProposalAlreadyReverted, got %v", err)
+	}
+
+	// The first marker's reviewer must be preserved — Revert did not
+	// overwrite reverted_at / reverted_by on the no-op branch.
+	var revertedAt, revertedBy sql.NullString
+	if qerr := sessionStore.DB().QueryRowContext(ctx,
+		`SELECT reverted_at, reverted_by FROM proposal_applies WHERE proposal_id = ?`,
+		"prop_revert_double",
+	).Scan(&revertedAt, &revertedBy); qerr != nil {
+		t.Fatalf("query proposal_applies: %v", qerr)
+	}
+	if !revertedAt.Valid || revertedAt.String != priorStamp {
+		t.Fatalf("reverted_at want %q, got %v", priorStamp, revertedAt)
+	}
+	if !revertedBy.Valid || revertedBy.String != "reviewer_first" {
+		t.Fatalf("reverted_by want %q, got %v", "reviewer_first", revertedBy)
 	}
 }
 
