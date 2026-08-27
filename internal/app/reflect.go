@@ -43,6 +43,8 @@ func dispatchReflect(ctx context.Context, args []string, a *App, stdout, stderr 
 		return runReflectReject(ctx, args[1:], a, stdout, stderr)
 	case "apply":
 		return runReflectApply(ctx, args[1:], a, stdout, stderr)
+	case "revert":
+		return runReflectRevert(ctx, args[1:], a, stdout, stderr)
 	default:
 		if err := a.writeError("未知 reflect 子命令 %q\n", args[0]); err != nil {
 			return ExitRunError
@@ -305,6 +307,55 @@ func runReflectApply(ctx context.Context, args []string, a *App, stdout, stderr 
 		}
 	}
 	if result.Result != proposal.ApplyResultSuccess {
+		return ExitRunError
+	}
+	return ExitOK
+}
+
+// runReflectRevert implements `mengdie reflect revert <id>`. v0.2
+// audit-only — it stamps the proposal_applies.reverted_at marker via
+// Store.Revert without rolling back the actual side effect (memory row
+// patched, AGENTS.md rewritten, archive committed, file written). The
+// rollback is a v0.3 follow-up; today the CLI's job is to record the
+// audit trail so reviewers can grep `reverted <id>` and the apply row
+// carries a non-NULL reverted_at + reverted_by pair.
+//
+// Exit mapping (via exitForStoreError):
+//   - ExitOK            — Store.Revert stamped the marker and returned
+//     the refreshed ApplyResult.
+//   - ExitNotFound      — ErrProposalNotApplied (no audit row exists
+//     for the id — never reached Store.Apply).
+//   - ExitInvalidInput  — ErrProposalAlreadyReverted (the marker was
+//     already set; a second revert is a no-op and the caller learns
+//     the prior reviewer via the Store's wrapper message).
+//   - ExitRunError      — any DB write failure (catch-all).
+func runReflectRevert(ctx context.Context, args []string, a *App, stdout, stderr io.Writer) int {
+	if len(args) != 1 {
+		if err := writeMemoryError(stderr, "用法：mengdie reflect revert <id>\n"); err != nil {
+			return ExitRunError
+		}
+		return ExitInvalidInput
+	}
+	id := args[0]
+
+	store, sessionStore, _, code := a.openProposalStore(ctx, commonFlagsForPositional(a))
+	if code != ExitOK {
+		return code
+	}
+	defer func() { _ = sessionStore.Close() }()
+
+	reviewer := reflectReviewer()
+	result, err := store.Revert(ctx, id, reviewer)
+	if err != nil {
+		return exitForStoreError(err)
+	}
+
+	revertedAtStr := "unknown"
+	if result.RevertedAt != nil {
+		revertedAtStr = result.RevertedAt.UTC().Format(time.RFC3339)
+	}
+	if _, werr := fmt.Fprintf(stdout, "reverted %s: kind=%s target=%s reverted_at=%s reviewer=%s\n",
+		result.ProposalID, result.Kind, result.Target, revertedAtStr, result.Reviewer); werr != nil {
 		return ExitRunError
 	}
 	return ExitOK
