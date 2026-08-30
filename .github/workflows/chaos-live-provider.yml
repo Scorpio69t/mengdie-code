@@ -46,7 +46,7 @@ jobs:
 
       - name: 上传真实 Provider chaos 证据
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chaos-live-${{ matrix.os }}-${{ github.run_id }}
           path: evidence/chaos-live-*.json
