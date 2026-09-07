@@ -410,6 +410,61 @@ func (s *Store) Apply(ctx context.Context, proposalID string, executor ApplyExec
 	return result, nil
 }
 
+// Revert marks the apply audit row as reverted. v0.2 audit-only —
+// does NOT undo the actual side effect (memory row patched,
+// AGENTS.md rewritten, archive committed, file written). The actual
+// rollback is a v0.3 follow-up. Callers branch on RevertedAt to
+// decide whether the audit row has been marked reverted; the CLI
+// (Task 2) uses ErrProposalNotApplied / ErrProposalAlreadyReverted
+// to map missing / double-revert to distinct exit codes via errors.Is.
+//
+// Flow:
+//
+//  1. Check the proposal_applies row exists; ErrProposalNotApplied
+//     when missing — the proposal never reached Store.Apply so
+//     there is nothing to mark reverted.
+//  2. Check reverted_at is NULL; ErrProposalAlreadyReverted when
+//     the marker is already set — a second Revert is a no-op so
+//     the caller learns the prior reviewer via getApplyResult
+//     rather than silently overwriting the stamp.
+//  3. UPDATE … WHERE reverted_at IS NULL atomically so a concurrent
+//     Revert on the same id cannot double-stamp the marker. The
+//     RowsAffected == 0 branch surfaces as ErrProposalAlreadyReverted
+//     to keep the public contract identical to step 2 even under
+//     racing callers.
+//  4. Re-fetch via getApplyResult so the returned ApplyResult
+//     carries RevertedAt + Reviewer populated from the same row.
+func (s *Store) Revert(ctx context.Context, proposalID, reviewer string) (ApplyResult, error) {
+	var revertedAt sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT reverted_at FROM proposal_applies WHERE proposal_id = ?`, proposalID,
+	).Scan(&revertedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ApplyResult{}, fmt.Errorf("%w: %s", ErrProposalNotApplied, proposalID)
+	}
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	if revertedAt.Valid && revertedAt.String != "" {
+		return ApplyResult{}, fmt.Errorf("%w: %s", ErrProposalAlreadyReverted, proposalID)
+	}
+
+	stamp := formatStamp(s.now().UTC())
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE proposal_applies SET reverted_at = ?, reverted_by = ? WHERE proposal_id = ? AND reverted_at IS NULL`,
+		stamp, reviewer, proposalID,
+	)
+	if err != nil {
+		return ApplyResult{}, fmt.Errorf("revert proposal apply: %w", err)
+	}
+	if rows, rerr := res.RowsAffected(); rerr != nil {
+		return ApplyResult{}, fmt.Errorf("revert rows affected: %w", rerr)
+	} else if rows == 0 {
+		return ApplyResult{}, fmt.Errorf("%w: %s", ErrProposalAlreadyReverted, proposalID)
+	}
+	return s.getApplyResult(ctx, proposalID)
+}
+
 // getApplyResult returns the proposal_applies row for proposalID, or
 // ErrProposalNotFound when no row exists. The apply row's own id
 // column is discarded (the ApplyResult value type does not surface
@@ -417,18 +472,26 @@ func (s *Store) Apply(ctx context.Context, proposalID string, executor ApplyExec
 // from the parser mirror scanProposalFields: parse failures on
 // applied_at silently leave the timestamp zero so the caller can
 // distinguish "stored row" (AppliedAt != zero) from "no row".
+//
+// Migration 012 added reverted_at / reverted_by; both surface as
+// ApplyResult.RevertedAt (nil when un-reverted) and
+// ApplyResult.Reviewer (mirrors reverted_by). Parse failures on
+// reverted_at silently leave the marker zero so a malformed marker
+// does not cascade into a failed read.
 func (s *Store) getApplyResult(ctx context.Context, proposalID string) (ApplyResult, error) {
 	var (
-		r         ApplyResult
-		rowID     string
-		errMsg    sql.NullString
-		patchID   sql.NullString
-		appliedAt string
+		r          ApplyResult
+		rowID      string
+		errMsg     sql.NullString
+		patchID    sql.NullString
+		revertedAt sql.NullString
+		revertedBy sql.NullString
+		appliedAt  string
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, proposal_id, kind, target, result, error, applied_at, patch_id
+		`SELECT id, proposal_id, kind, target, result, error, applied_at, patch_id, reverted_at, reverted_by
 		 FROM proposal_applies WHERE proposal_id = ?`, proposalID,
-	).Scan(&rowID, &r.ProposalID, &r.Kind, &r.Target, &r.Result, &errMsg, &appliedAt, &patchID)
+	).Scan(&rowID, &r.ProposalID, &r.Kind, &r.Target, &r.Result, &errMsg, &appliedAt, &patchID, &revertedAt, &revertedBy)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ApplyResult{}, ErrProposalNotFound
 	}
@@ -440,6 +503,12 @@ func (s *Store) getApplyResult(ctx context.Context, proposalID string) (ApplyRes
 	if t, perr := time.Parse(time.RFC3339Nano, appliedAt); perr == nil {
 		r.AppliedAt = t
 	}
+	if revertedAt.Valid && revertedAt.String != "" {
+		if t, perr := time.Parse(time.RFC3339Nano, revertedAt.String); perr == nil {
+			r.RevertedAt = &t
+		}
+	}
+	r.Reviewer = revertedBy.String
 	return r, nil
 }
 

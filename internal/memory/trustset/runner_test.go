@@ -67,11 +67,24 @@ import (
 // reflect-apply-already-applied exercises the idempotent guard via
 // setup.seed_applies — the raw-SQL pre-seed makes the very first
 // Apply call short-circuit on Store.Apply's getApplyResult check.
+// M4 Slice 03 Task 3 adds 3 reflect-revert-* scenarios
+// (reflect-revert-success / reflect-revert-fails-already-reverted /
+// reflect-revert-fails-not-applied) that drive proposal.Store.Revert
+// end-to-end; reflect-revert-success exercises the audit-only revert
+// path (Store.Revert stamps reverted_at + reverted_by on an existing
+// apply row); reflect-revert-fails-already-reverted pre-seeds
+// reverted=true on the apply row so Store.Revert short-circuits on
+// ErrProposalAlreadyReverted and the runner records the failure via
+// UPDATE on the existing row's error column; reflect-revert-fails-not-applied
+// omits seed_applies entirely so Store.Revert short-circuits on
+// ErrProposalNotApplied and the runner fills the gap with a
+// result=failed row (mirroring reflect-apply-fails-not-approved's
+// insertApplyFailureRow pattern).
 func TestRunnerProducesAllMetrics(t *testing.T) {
 	manifestPath := locateManifest(t)
 	scenarios := loadScenarios(t, manifestPath)
-	if len(scenarios) != 54 {
-		t.Fatalf("trust-set-v1.json must have 54 scenarios, got %d", len(scenarios))
+	if len(scenarios) != 57 {
+		t.Fatalf("trust-set-v1.json must have 57 scenarios, got %d", len(scenarios))
 	}
 	results := make([]ScenarioResult, 0, len(scenarios))
 	for _, scenario := range scenarios {

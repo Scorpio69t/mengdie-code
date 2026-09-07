@@ -700,6 +700,57 @@
         {"type": "reflect_apply"}
       ],
       "expected": {"proposal_apply_result": "success"}
+    },
+    {
+      "id": "reflect-revert-success",
+      "category": "reflect",
+      "description": "approved memory_upgrade + seed_applies 已写入 success 行 → reflect_propose Insert status=approved → reflect_revert 先 raw SQL 写 seed_applies[0]，Store.Revert 看到 proposal_applies 已存在且 reverted_at IS NULL → UPDATE 写 reverted_at + reverted_by → proposal_applies.reverted_at 非空",
+      "setup": {
+        "seed_proposals": [
+          {"kind": "memory_upgrade", "title": "revert-test", "status": "approved"}
+        ],
+        "seed_applies": [
+          {"result": "success"}
+        ]
+      },
+      "actions": [
+        {"type": "reflect_propose"},
+        {"type": "reflect_revert"}
+      ],
+      "expected": {"proposal_revert_result": "success", "proposal_reverted_set": true}
+    },
+    {
+      "id": "reflect-revert-fails-already-reverted",
+      "category": "reflect",
+      "description": "approved memory_upgrade + seed_applies 已写入 success 行且 reverted=true（reverted_at 已 set）→ reflect_propose Insert status=approved → reflect_revert 先 raw SQL 写 seed_applies[0]（reverted=true），Store.Revert 看到 reverted_at 已 set 走 ErrProposalAlreadyReverted 短路 → runner 写 error 列含 'already reverted'",
+      "setup": {
+        "seed_proposals": [
+          {"kind": "memory_upgrade", "title": "already-reverted", "status": "approved"}
+        ],
+        "seed_applies": [
+          {"result": "success", "reverted": true}
+        ]
+      },
+      "actions": [
+        {"type": "reflect_propose"},
+        {"type": "reflect_revert"}
+      ],
+      "expected": {"proposal_revert_result": "failed", "revert_error_contains": "already reverted"}
+    },
+    {
+      "id": "reflect-revert-fails-not-applied",
+      "category": "reflect",
+      "description": "approved memory_upgrade + 无 seed_applies → reflect_propose Insert status=approved → reflect_revert 无 seed_applies 可写，Store.Revert 看到 proposal_applies 无行走 ErrProposalNotApplied 短路 → runner 写 result=failed 行 + error 列含 'not applied'",
+      "setup": {
+        "seed_proposals": [
+          {"kind": "memory_upgrade", "title": "not-applied-revert", "status": "approved"}
+        ]
+      },
+      "actions": [
+        {"type": "reflect_propose"},
+        {"type": "reflect_revert"}
+      ],
+      "expected": {"proposal_revert_result": "failed", "revert_error_contains": "has not been applied"}
     }
   ]
 }
