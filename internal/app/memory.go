@@ -223,6 +223,25 @@ func exitForStoreError(err error) int {
 		// is wired for forward compatibility; same ExitInvalidInput
 		// rationale as ErrProposalNotApplicable above.
 		return ExitInvalidInput
+	case errors.Is(err, proposal.ErrProposalNotApplied):
+		// ErrProposalNotApplied is raised by Store.Revert when no
+		// proposal_applies audit row exists for the id (the proposal
+		// never reached Store.Apply, so there is nothing to mark
+		// reverted). From the CLI's perspective the id is absent in
+		// the audit table — same family as ErrMemoryNotFound /
+		// ErrProposalNotFound — so map to ExitNotFound (= 3).
+		return ExitNotFound
+	case errors.Is(err, proposal.ErrProposalAlreadyReverted):
+		// ErrProposalAlreadyReverted is raised by Store.Revert when
+		// the proposal_applies row's reverted_at marker is already
+		// set (either by a prior Revert or by a racing concurrent
+		// Revert whose UPDATE returned RowsAffected == 0). A second
+		// revert is a no-op so the caller surfaces the existing
+		// reviewer via the wrapper message; from the CLI's
+		// perspective this is a precondition failure — same family
+		// as ErrProposalNotApplicable — so map to ExitInvalidInput
+		// (= 2).
+		return ExitInvalidInput
 	default:
 		return ExitRunError
 	}

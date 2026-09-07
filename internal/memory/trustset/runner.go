@@ -191,6 +191,22 @@ type Expected struct {
 	// matching on the entire error string.
 	ApplyResult        string `json:"proposal_apply_result,omitempty"`
 	ApplyErrorContains string `json:"apply_error_contains,omitempty"`
+
+	// M4 Slice 03 Task 3 revert-shape assertions. ProposalRevertResult
+	// pins the outcome of the reflect_revert action verb against the
+	// proposal_applies.reverted_at column ("success" means reverted_at
+	// is set; "failed" means the revert attempt short-circuited on
+	// ErrProposalNotApplied / ErrProposalAlreadyReverted so reverted_at
+	// stays NULL). RevertErrorContains is a substring match on
+	// proposal_applies.error — the runner writes the Store.Revert
+	// error message there on failure (INSERT when no row exists, UPDATE
+	// when the row is already-reverted and UNIQUE blocks the INSERT).
+	// ProposalRevertedSet is an explicit boolean alternative to
+	// ProposalRevertResult so scenarios can pin the marker state
+	// without coupling to the result label.
+	ProposalRevertResult string `json:"proposal_revert_result,omitempty"`
+	RevertErrorContains  string `json:"revert_error_contains,omitempty"`
+	ProposalRevertedSet  *bool  `json:"proposal_reverted_set,omitempty"`
 }
 
 // Report is the 5-metric baseline + per-scenario pass/fail.
@@ -910,7 +926,15 @@ func seedAppliesFromSetup(setup map[string]any) []map[string]any {
 // UNIQUE so one apply row per proposal is the only legal state today;
 // the schema allows multiple historical rows per proposal in theory,
 // but v0.2 scenarios only ever seed one).
-func insertApplySeed(ctx context.Context, db *sql.DB, proposalID, kind, target, result, errMsg string) error {
+//
+// M4 Slice 03 Task 3 adds a reverted bool: when true the runner also
+// stamps reverted_at + reverted_by so the reflect-revert-fails-already-reverted
+// scenario can short-circuit Store.Revert on the prior marker. The
+// stamp is a fixed UTC timestamp ("2026-08-27T00:00:00Z") so the
+// assertion layer only needs to check reverted_at is non-NULL — a
+// separate RFC3339Nano value would leak clock detail into scenario
+// evidence without any test value.
+func insertApplySeed(ctx context.Context, db *sql.DB, proposalID, kind, target, result, errMsg string, reverted bool) error {
 	if strings.TrimSpace(proposalID) == "" {
 		return fmt.Errorf("insertApplySeed: proposalID is required")
 	}
@@ -923,15 +947,23 @@ func insertApplySeed(ctx context.Context, db *sql.DB, proposalID, kind, target, 
 	applyID := "apply-trustset-" + proposalID
 	now := time.Now().UTC()
 	stamp := now.Format(time.RFC3339Nano)
-	var errArg any
+	var (
+		errArg     any
+		revertedAt any
+		revertedBy any
+	)
 	if errMsg != "" {
 		errArg = errMsg
 	}
+	if reverted {
+		revertedAt = "2026-08-27T00:00:00Z"
+		revertedBy = "old_reviewer"
+	}
 	_, err := db.ExecContext(ctx, `
 INSERT INTO proposal_applies(
-    id, proposal_id, kind, target, result, error, applied_at, patch_id
-) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
-		applyID, proposalID, kind, target, result, errArg, stamp,
+    id, proposal_id, kind, target, result, error, applied_at, patch_id, reverted_at, reverted_by
+) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+		applyID, proposalID, kind, target, result, errArg, stamp, revertedAt, revertedBy,
 	)
 	if err != nil {
 		return fmt.Errorf("insert apply seed: %w", err)
@@ -950,7 +982,7 @@ INSERT INTO proposal_applies(
 // pin this contract) and records the failure rather than propagating
 // it, so a single failed apply attempt never fails the whole scenario.
 func insertApplyFailureRow(ctx context.Context, db *sql.DB, proposalID string, kind proposal.ProposalKind, errMsg string) error {
-	return insertApplySeed(ctx, db, proposalID, string(kind), "", proposal.ApplyResultFailed, errMsg)
+	return insertApplySeed(ctx, db, proposalID, string(kind), "", proposal.ApplyResultFailed, errMsg, false)
 }
 
 // reflectApplyAction drives Store.Apply for the proposal tracked in
@@ -1000,7 +1032,7 @@ func reflectApplyAction(ctx context.Context, sessionStore *session.SQLiteStore, 
 		result, _ := raw["result"].(string)
 		errMsg, _ := raw["error"].(string)
 		target, _ := raw["target"].(string)
-		if err := insertApplySeed(ctx, sessionStore.DB(), proposalID, string(prop.Kind), target, result, errMsg); err != nil {
+		if err := insertApplySeed(ctx, sessionStore.DB(), proposalID, string(prop.Kind), target, result, errMsg, false); err != nil {
 			return fmt.Errorf("reflect_apply seed: %w", err)
 		}
 	}
@@ -1019,6 +1051,97 @@ func reflectApplyAction(ctx context.Context, sessionStore *session.SQLiteStore, 
 		).Scan(&count); qerr == nil && count == 0 {
 			if ierr := insertApplyFailureRow(ctx, sessionStore.DB(), proposalID, prop.Kind, applyErr.Error()); ierr != nil {
 				return fmt.Errorf("reflect_apply record failure: %w", ierr)
+			}
+		}
+	}
+	return nil
+}
+
+// reflectRevertAction drives Store.Revert for the proposal tracked in
+// runnerState.lastProposalID (or action.ID when supplied). The flow is:
+//
+//  1. Resolve proposal_id; reject early if neither is set so the
+//     failure surfaces in the action error path rather than the
+//     assertion path.
+//  2. Look up the proposal's Kind so audit rows the runner writes
+//     later carry the matching kind column (mirroring reflectApplyAction).
+//  3. Materialise setup.seed_applies[] via insertApplySeed so the
+//     success-path scenario has an apply row to revert and the
+//     already-reverted scenario has the revert marker pre-seeded.
+//     The reverted bool on each seed_applies entry is honored so
+//     the "already reverted" scenario can short-circuit Store.Revert
+//     on the prior marker without a preceding reflect_apply.
+//  4. Invoke Store.Revert with the action's Reviewer (defaulting to
+//     "trustset") — v0.2 is audit-only, no rollback side-effect.
+//  5. If Revert returned an error and no audit row exists yet
+//     (the not-applied branch), record a result=failed row so the
+//     assertion layer has something to compare against (mirror of
+//     reflectApplyAction's insertApplyFailureRow). If an audit row
+//     already exists (the already-reverted branch, where UNIQUE
+//     blocks a second INSERT), UPDATE its error column with the
+//     revert error so the RevertErrorContains assertion still sees
+//     the message. The runner swallows Revert's error so the
+//     scenario continues to the assertion phase; a failed revert
+//     attempt is a normal Trust Set case, not a scenario-level
+//     failure.
+func reflectRevertAction(ctx context.Context, sessionStore *session.SQLiteStore, a Action, s Scenario, state *runnerState) error {
+	proposalID := a.ID
+	if proposalID == "" {
+		proposalID = state.lastProposalID
+	}
+	if proposalID == "" {
+		return fmt.Errorf("reflect_revert requires a.ID or prior reflect_propose to set lastProposalID")
+	}
+	propStore := proposal.Open(sessionStore.DB(), time.Now)
+	prop, err := propStore.Get(ctx, proposalID)
+	if err != nil {
+		return fmt.Errorf("reflect_revert get proposal: %w", err)
+	}
+
+	// Seed apply rows from setup.seed_applies before invoking Store.Revert
+	// so the success-path scenario has an apply row to mark reverted and
+	// the already-reverted scenario has the prior revert marker stamped.
+	// Mirrors reflectApplyAction's pre-seed pattern (same
+	// seedAppliesFromSetup helper, different handler).
+	for _, raw := range seedAppliesFromSetup(s.Setup) {
+		result, _ := raw["result"].(string)
+		errMsg, _ := raw["error"].(string)
+		target, _ := raw["target"].(string)
+		reverted, _ := raw["reverted"].(bool)
+		if err := insertApplySeed(ctx, sessionStore.DB(), proposalID, string(prop.Kind), target, result, errMsg, reverted); err != nil {
+			return fmt.Errorf("reflect_revert seed: %w", err)
+		}
+	}
+
+	reviewer := a.Reviewer
+	if reviewer == "" {
+		reviewer = "trustset"
+	}
+	if _, revertErr := propStore.Revert(ctx, proposalID, reviewer); revertErr != nil {
+		// Record the failure as an audit row only if no row exists yet —
+		// a seed_applies row would have prevented Revert from reaching
+		// the marker-check, and we'd be duplicating the row on INSERT
+		// (proposal_applies.proposal_id UNIQUE). The COUNT(*) probe is
+		// a single indexed lookup so the cost is negligible compared to
+		// the revert side-effect itself.
+		var count int
+		if qerr := sessionStore.DB().QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM proposal_applies WHERE proposal_id = ?`, proposalID,
+		).Scan(&count); qerr == nil && count == 0 {
+			if ierr := insertApplyFailureRow(ctx, sessionStore.DB(), proposalID, prop.Kind, revertErr.Error()); ierr != nil {
+				return fmt.Errorf("reflect_revert record failure: %w", ierr)
+			}
+		} else if count > 0 {
+			// Row already exists (already-reverted branch): UPDATE its
+			// error column so the RevertErrorContains assertion still
+			// sees the revert error. The row's result column stays at
+			// its seeded value (success / failed) — the error column
+			// is the only one a second revert attempt can stamp.
+			if _, uerr := sessionStore.DB().ExecContext(ctx,
+				`UPDATE proposal_applies SET error = ? WHERE proposal_id = ?`,
+				revertErr.Error(), proposalID,
+			); uerr != nil {
+				return fmt.Errorf("reflect_revert record existing-row error: %w", uerr)
 			}
 		}
 	}
@@ -1312,6 +1435,8 @@ func dispatch(ctx context.Context, memStore *memory.Store, sessionStore *session
 		return reflectRejectAction(ctx, sessionStore, a, state)
 	case "reflect_apply":
 		return reflectApplyAction(ctx, sessionStore, memStore, a, s, state)
+	case "reflect_revert":
+		return reflectRevertAction(ctx, sessionStore, a, s, state)
 	}
 	return fmt.Errorf("unknown action type %q", a.Type)
 }
@@ -1523,6 +1648,79 @@ func assertExpected(ctx context.Context, memStore *memory.Store, sessionStore *s
 				}
 			}
 		}
+
+		// M4 Slice 03 Task 3 revert-shape assertions. All three fields
+		// share the same proposal_id lookup (runnerState.lastProposalID,
+		// set by reflect_propose) and read from proposal_applies. The
+		// runner writes the Store.Revert error to proposal_applies.error
+		// on failure (INSERT when no row exists, UPDATE when one does)
+		// so the RevertErrorContains substring match has a row to read
+		// against in both the not-applied and already-reverted branches.
+		// ProposalRevertResult == "success" requires reverted_at to be
+		// set; "failed" only labels the outcome (the actual check is
+		// RevertErrorContains). ProposalRevertedSet is an explicit
+		// boolean alternative that pins the marker state independently
+		// of the result label.
+		if exp.ProposalRevertResult != "" || exp.RevertErrorContains != "" || exp.ProposalRevertedSet != nil {
+			if state == nil || state.lastProposalID == "" {
+				return false, "expected proposal_revert_* / revert_error_contains / proposal_reverted_set but no proposal was materialised"
+			}
+			proposalID := state.lastProposalID
+			if exp.ProposalRevertResult != "" {
+				var revertedAt sql.NullString
+				qerr := sessionStore.DB().QueryRowContext(ctx,
+					`SELECT reverted_at FROM proposal_applies WHERE proposal_id = ?`,
+					proposalID,
+				).Scan(&revertedAt)
+				if errors.Is(qerr, sql.ErrNoRows) {
+					return false, fmt.Sprintf("expected proposal_applies row for proposal %s but found none", proposalID)
+				}
+				if qerr != nil {
+					return false, fmt.Sprintf("read proposal_applies.reverted_at: %v", qerr)
+				}
+				isReverted := revertedAt.Valid && revertedAt.String != ""
+				if exp.ProposalRevertResult == "success" && !isReverted {
+					return false, fmt.Sprintf("expected proposal_revert_result=success but reverted_at is NULL")
+				}
+			}
+			if exp.RevertErrorContains != "" {
+				var revertErr sql.NullString
+				qerr := sessionStore.DB().QueryRowContext(ctx,
+					`SELECT error FROM proposal_applies WHERE proposal_id = ?`,
+					proposalID,
+				).Scan(&revertErr)
+				if errors.Is(qerr, sql.ErrNoRows) {
+					return false, fmt.Sprintf("expected proposal_applies row for proposal %s but found none", proposalID)
+				}
+				if qerr != nil {
+					return false, fmt.Sprintf("read proposal_applies.error: %v", qerr)
+				}
+				got := ""
+				if revertErr.Valid {
+					got = revertErr.String
+				}
+				if !strings.Contains(got, exp.RevertErrorContains) {
+					return false, fmt.Sprintf("revert error want contains %q, got %q", exp.RevertErrorContains, got)
+				}
+			}
+			if exp.ProposalRevertedSet != nil {
+				var revertedAt sql.NullString
+				qerr := sessionStore.DB().QueryRowContext(ctx,
+					`SELECT reverted_at FROM proposal_applies WHERE proposal_id = ?`,
+					proposalID,
+				).Scan(&revertedAt)
+				if errors.Is(qerr, sql.ErrNoRows) {
+					return false, fmt.Sprintf("expected proposal_applies row for proposal %s but found none", proposalID)
+				}
+				if qerr != nil {
+					return false, fmt.Sprintf("read proposal_applies.reverted_at: %v", qerr)
+				}
+				isSet := revertedAt.Valid && revertedAt.String != ""
+				if *exp.ProposalRevertedSet != isSet {
+					return false, fmt.Sprintf("proposal_reverted_set want %v, got %v", *exp.ProposalRevertedSet, isSet)
+				}
+			}
+		}
 	}
 
 	if len(exp.ExtractedMemories) == 0 {
@@ -1574,14 +1772,20 @@ func assertExpected(ctx context.Context, memStore *memory.Store, sessionStore *s
 //
 // ApplyResult / ApplyErrorContains (M4 Slice 02 Task 6) route the
 // reflect-apply-* scenarios into the same proposal-assertion branch so
-// their audit-row reads happen in one place.
+// their audit-row reads happen in one place. ProposalRevertResult /
+// RevertErrorContains / ProposalRevertedSet (M4 Slice 03 Task 3) do
+// the same for the reflect-revert-* scenarios so the assertExpected
+// branch is the single entry point for every audit-row assertion.
 func hasProposalAssertion(exp Expected) bool {
 	return exp.ProposalsCount > 0 ||
 		exp.ProposalKind != "" ||
 		exp.ProposalStatus != "" ||
 		exp.ReviewerSet != nil ||
 		exp.ApplyResult != "" ||
-		exp.ApplyErrorContains != ""
+		exp.ApplyErrorContains != "" ||
+		exp.ProposalRevertResult != "" ||
+		exp.RevertErrorContains != "" ||
+		exp.ProposalRevertedSet != nil
 }
 
 // formatObservedProposalKinds / formatObservedProposalStatuses /
