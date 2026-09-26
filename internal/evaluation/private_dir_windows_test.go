@@ -38,9 +38,9 @@ func TestSecureRealRepositoryRootRestrictsDACLToCurrentUser(t *testing.T) {
 		t.Fatal("directory has no security descriptor")
 	}
 	got := descriptor.String()
-	wantACE := "(A;OICI;GA;;;" + user.User.Sid.String() + ")"
+	wantACE := "(A;OICI;FA;;;" + user.User.Sid.String() + ")"
 	if strings.HasSuffix(user.User.Sid.String(), "-500") {
-		wantACE = "(A;OICI;GA;;;LA)"
+		wantACE = "(A;OICI;FA;;;LA)"
 	}
 	if !strings.HasPrefix(got, "D:P") || strings.Count(got, "(") != 1 || !strings.Contains(got, wantACE) {
 		t.Fatalf("directory DACL = %q, want protected current-user ACE %q", got, wantACE)
