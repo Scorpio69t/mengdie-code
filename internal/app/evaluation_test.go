@@ -208,7 +208,11 @@ func TestEvaluationCompletesReadEditTestFixLoop(t *testing.T) {
 	}
 	if len(fake.requests) != 6 || !evaluationRequestContains(fake.requests[3], `"exit_code":"1"`) ||
 		!evaluationRequestContains(fake.requests[5], `"exit_code":"0"`) {
-		t.Fatalf("the two test calls did not fail then pass; requests=%d", len(fake.requests))
+		if len(fake.requests) != 6 {
+			t.Fatalf("the two test calls did not fail then pass; requests=%d", len(fake.requests))
+		}
+		t.Fatalf("the two test calls did not fail then pass; first=%s second=%s",
+			evaluationShellResult(fake.requests[3]), evaluationShellResult(fake.requests[5]))
 	}
 	content, err := os.ReadFile(filepath.Join(workspace, "value.go"))
 	if err != nil || !strings.Contains(string(content), "return 3") {
@@ -223,4 +227,17 @@ func evaluationRequestContains(request provider.ChatRequest, fragment string) bo
 		}
 	}
 	return false
+}
+
+func evaluationShellResult(request provider.ChatRequest) string {
+	for index := len(request.Messages) - 1; index >= 0; index-- {
+		message := request.Messages[index]
+		if message.Role == provider.RoleTool && message.Name == "shell" {
+			if len(message.Content) > 1200 {
+				return message.Content[:1200]
+			}
+			return message.Content
+		}
+	}
+	return "missing shell result"
 }
