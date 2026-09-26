@@ -125,3 +125,28 @@ func TestRealDiagnosticForcedProcessCleanupIsIndeterminate(t *testing.T) {
 		t.Fatalf("result=%+v err=%v roots=%v", result, err, *roots)
 	}
 }
+
+func TestRealDiagnosticClosesMismatchedPreparedCopy(t *testing.T) {
+	manifest, options, deps, roots := realDiagnosticFixture(t)
+	prepare := deps.prepare
+	deps.prepare = func(ctx context.Context, m RealRepositoryManifest, id string) (*PreparedRealRepository, error) {
+		workspace, err := prepare(ctx, m, id)
+		if workspace != nil {
+			workspace.SourceCommit = strings.Repeat("0", 40)
+		}
+		return workspace, err
+	}
+	options.Agent = func(context.Context, RealAgentRunOptions) (RealAgentRunEvidence, error) {
+		t.Fatal("Agent started on mismatched source")
+		return RealAgentRunEvidence{}, nil
+	}
+	result, err := runRealRepositoryDiagnostic(context.Background(), manifest, manifest.Tasks[0].ID, options, deps)
+	if err != nil || result.Status != "source_prepare_failed" || len(*roots) != 2 {
+		t.Fatalf("result=%+v err=%v roots=%v", result, err, *roots)
+	}
+	for _, root := range *roots {
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			t.Fatalf("mismatched checkout was not cleaned: %s: %v", root, err)
+		}
+	}
+}

@@ -174,11 +174,13 @@ func runRealRepositoryDiagnostic(ctx context.Context, manifest RealRepositoryMan
 	}
 
 	working, prepareErr := deps.prepare(deadline, manifest, taskID)
+	if working != nil {
+		workspaces = append(workspaces, working)
+	}
 	if prepareErr != nil || working == nil || working.Path == "" || working.SourceCommit != task.SourceCommit {
 		result.Status = realDiagnosticContextStatus(deadline, "source_prepare_failed")
 		return result, nil
 	}
-	workspaces = append(workspaces, working)
 	before, snapshotErr := captureRealSnapshot(working.Path)
 	if snapshotErr != nil {
 		result.Status = "unsupported"
@@ -238,11 +240,13 @@ func runRealRepositoryDiagnostic(ctx context.Context, manifest RealRepositoryMan
 	}
 	result.ChangedFiles = changes
 	finalWorkspace, prepareErr := deps.prepare(deadline, manifest, taskID)
+	if finalWorkspace != nil {
+		workspaces = append(workspaces, finalWorkspace)
+	}
 	if prepareErr != nil || finalWorkspace == nil || finalWorkspace.Path == "" || finalWorkspace.SourceCommit != task.SourceCommit {
 		result.Status = realDiagnosticContextStatus(deadline, "source_prepare_failed")
 		return result, nil
 	}
-	workspaces = append(workspaces, finalWorkspace)
 	if err := rebuildRealChanges(working.Path, finalWorkspace.Path, before, after, changes); err != nil {
 		result.Status = "indeterminate"
 		return result, nil
