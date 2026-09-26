@@ -127,6 +127,57 @@ func TestHeadlessAskBecomesDenyWithoutBroker(t *testing.T) {
 	}
 }
 
+func TestPolicyDenialIncludesSafeRuleAndReason(t *testing.T) {
+	root := testRoot(t)
+	for _, test := range []struct {
+		name    string
+		call    *tools.PreparedCall
+		want    string
+		options func(*Options)
+	}{
+		{
+			name: "headless default",
+			call: testCall(t, root, []tools.Effect{tools.EffectWrite}, "private-path.txt", false),
+			want: "[default.headless]: 无交互模式默认拒绝",
+		},
+		{
+			name: "hard network deny",
+			call: testCall(t, root, []tools.Effect{tools.EffectNetwork}, "", false),
+			want: "[hard.network]: M1 禁止网络工具",
+			options: func(options *Options) {
+				options.CLI = []Rule{{Name: "allow-everything", Decision: DecisionAllow}}
+			},
+		},
+		{
+			name: "configured rule name is redacted",
+			call: testCall(t, root, []tools.Effect{tools.EffectWrite}, "private-path.txt", false),
+			want: "[cli.configured]: 命中授权规则",
+			options: func(options *Options) {
+				options.CLI = []Rule{{Name: "TOP_SECRET_RULE_NAME", Effects: []tools.Effect{tools.EffectWrite}, Decision: DecisionDeny}}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			authorizer, err := NewAuthorizer(AuthorizerOptions{Engine: testEngine(t, root, ModeHeadless, test.options)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = authorizer.Authorize(context.Background(), "run-1", root, test.call)
+			if !errors.Is(err, ErrDenied) {
+				t.Fatalf("Authorize() error = %v, want ErrDenied", err)
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Authorize() error = %q, want substring %q", err, test.want)
+			}
+			for _, private := range []string{"private-path.txt", "TOP_SECRET_RULE_NAME"} {
+				if strings.Contains(err.Error(), private) {
+					t.Fatalf("denial error leaked %q: %v", private, err)
+				}
+			}
+		})
+	}
+}
+
 func TestObserverFailurePreventsCapabilityIssuance(t *testing.T) {
 	root := testRoot(t)
 	observerErr := errors.New("sink failed")

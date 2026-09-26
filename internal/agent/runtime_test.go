@@ -250,8 +250,13 @@ func TestAgentReturnsPolicyDenialToModelWithoutSideEffect(t *testing.T) {
 	if strings.Contains(string(content), "return 2") {
 		t.Fatalf("denied edit changed file: %s", content)
 	}
-	if len(fake.requests) != 2 || !lastToolResultContains(fake.requests[1], `"category":"denied"`) {
+	if len(fake.requests) != 2 ||
+		!lastToolResultContains(fake.requests[1], `"category":"denied"`) ||
+		!lastToolResultContains(fake.requests[1], "[default.headless]: 无交互模式默认拒绝") {
 		t.Fatalf("denial was not returned to model: %+v", fake.requests)
+	}
+	if lastToolResultContains(fake.requests[1], "value.go") {
+		t.Fatal("policy denial leaked the prepared path to the model")
 	}
 }
 
