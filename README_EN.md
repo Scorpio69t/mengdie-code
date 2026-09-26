@@ -91,7 +91,7 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for the product architecture, the [Phas
 
 ## Local preview
 
-The current source preview includes the CLI/app skeleton, layered configuration, a structured Doctor, five reproducible coding baselines, the Provider protocol, the safety toolchain, a minimal Agent Runtime, SQLite event persistence, and a default full-screen TUI. Multi-platform previews, 20 consecutive successful main CI runs, and a 10/10 protected DeepSeek Coding preflight across macOS and Windows now have recorded evidence. M1 remains incomplete until external real-repository tasks and the security exit record are complete.
+The current source preview includes the CLI/app skeleton, layered configuration, a structured Doctor, five reproducible coding baselines, the Provider protocol, the safety toolchain, a minimal Agent Runtime, SQLite event persistence, and a default full-screen TUI. `mengdie-eval repo baseline` can run one public verifier as a local, unsandboxed baseline diagnostic ([instructions](./evals/README.md)); it does not run the Agent or count toward M1 acceptance. Multi-platform previews, 20 consecutive successful main CI runs, and a 10/10 protected DeepSeek Coding preflight across macOS and Windows now have recorded evidence. M1 remains incomplete until external real-repository tasks and the security exit record are complete.
 
 ```bash
 git clone https://github.com/Scorpio69t/mengdie-code.git

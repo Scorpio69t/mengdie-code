@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 
@@ -18,7 +19,10 @@ import (
 )
 
 func main() {
-	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -39,15 +43,27 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func runRepo(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "validate" {
-		_, _ = fmt.Fprintln(stderr, "用法：mengdie-eval repo validate --manifest <path> [--pretty]")
+	if len(args) == 0 {
+		_, _ = fmt.Fprintln(stderr, "用法：mengdie-eval repo validate|baseline ...")
 		return 2
 	}
+	switch args[0] {
+	case "validate":
+		return runRepoValidate(ctx, args[1:], stdout, stderr)
+	case "baseline":
+		return runRepoBaseline(ctx, args[1:], stdout, stderr)
+	default:
+		_, _ = fmt.Fprintln(stderr, "用法：mengdie-eval repo validate|baseline ...")
+		return 2
+	}
+}
+
+func runRepoValidate(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("mengdie-eval repo validate", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	manifestPath := flags.String("manifest", "", "真实仓库评测 manifest 路径")
 	pretty := flags.Bool("pretty", false, "格式化 JSON 输出")
-	if err := flags.Parse(args[1:]); err != nil {
+	if err := flags.Parse(args); err != nil {
 		return 2
 	}
 	if flags.NArg() != 0 {
@@ -71,6 +87,49 @@ func runRepo(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	if err := evaluation.EncodeRealRepositorySummary(stdout, manifest, *pretty); err != nil {
 		_, _ = fmt.Fprintf(stderr, "评测摘要输出失败：%v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runRepoBaseline(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("mengdie-eval repo baseline", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	manifestPath := flags.String("manifest", "", "已审核的真实仓库 manifest 路径")
+	taskID := flags.String("task", "", "单个任务 ID")
+	verifierBin := flags.String("verifier-bin", "", "操作者选择的 verifier 可执行文件绝对路径")
+	allowUnisolated := flags.Bool("allow-unisolated", false, "确认在当前账户下执行不可信仓库代码；本地诊断无 OS 沙箱")
+	pretty := flags.Bool("pretty", false, "格式化 JSON 输出")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 || strings.TrimSpace(*manifestPath) == "" || strings.TrimSpace(*taskID) == "" || strings.TrimSpace(*verifierBin) == "" || !*allowUnisolated {
+		_, _ = fmt.Fprintln(stderr, "用法：mengdie-eval repo baseline --manifest <path> --task <id> --verifier-bin <absolute-path> --allow-unisolated [--pretty]")
+		return 2
+	}
+	if err := ctx.Err(); err != nil {
+		_, _ = fmt.Fprintf(stderr, "真实仓库基线诊断已取消：%v\n", err)
+		return 1
+	}
+	manifest, err := evaluation.LoadRealRepositoryManifest(*manifestPath)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "真实仓库任务定义无效：%v\n", err)
+		return 2
+	}
+	result, err := evaluation.RunRealRepositoryBaseline(ctx, manifest, *taskID, evaluation.RealRepositoryBaselineOptions{VerifierExecutable: *verifierBin})
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "真实仓库基线预检失败：%v\n", err)
+		return 2
+	}
+	encoder := json.NewEncoder(stdout)
+	if *pretty {
+		encoder.SetIndent("", "  ")
+	}
+	if err := encoder.Encode(result); err != nil {
+		_, _ = fmt.Fprintf(stderr, "真实仓库基线证据输出失败：%v\n", err)
+		return 1
+	}
+	if result.Status != "baseline_matched" {
 		return 1
 	}
 	return 0

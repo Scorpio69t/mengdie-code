@@ -1,13 +1,13 @@
 # 真实仓库单任务执行边界
 
-> 状态：`mengdie-z61.2` 设计决策；尚无真实仓库 Agent runner。本文约束后续实现，不表示 M0/M1 真实任务已经通过。
+> 状态：`mengdie-z61.2` 设计决策；单任务本地基线诊断已实现，真实仓库 Agent runner 尚未完成。本文约束后续实现，不表示 M0/M1 真实任务已经通过。
 > 范围：从已校验 manifest 与 `PrepareRealRepositoryTask` 的固定源码副本开始，到一次 Agent 执行、独立验证、证据封存和清理结束。
 
 ## 决策与验收目标
 
 - **用户痛点：** 现有 fixture 的成功记录不能证明 Agent 能在外部公开仓库完成任务，也不能证明真实仓库的命令、凭据和副作用得到控制。
 - **所属层次：** Harness 的评测执行协议；不新增通用 Agent Framework 或公开 SDK。
-- **当前基线：** manifest 只校验任务契约，源码准备只固定 GitHub commit 并创建干净临时副本；`mengdie exec` 有 Policy、受控 Shell 和进程树取消，但没有真实仓库 runner、OS 网络隔离或执行配额。现有 Provider smoke 只覆盖仓库内 fixture。
+- **当前基线：** manifest 校验任务契约，源码准备固定 GitHub commit 并创建干净临时副本，`repo baseline` 可显式运行单任务本地诊断；`mengdie exec` 有 Policy、受控 Shell 和进程树取消，但没有真实仓库 Agent runner、OS 网络隔离或执行配额。现有 Provider smoke 只覆盖仓库内 fixture。
 - **选择方案：** 先实现一个任务、一个 Agent、一个公开 verifier 的顺序运行协议。正式成绩只在满足本页隔离与证据门禁的专用一次性执行环境中产生；普通开发机可做诊断运行，但结果标记 `local_unisolated`，不计入“越权副作用为零”的 M1 出口。
 - **可测指标：** macOS/Windows 各至少 5 个外部真实仓库任务，至少 3 个完整读改测修正循环；逐项记录基线/终态、越界 diff、拒绝与审批、取消后进程状态。任务数、失败和未运行项都保留分母。
 - **明确不做：** 隐藏测试、任意 Git URL、私有仓库、后台并行、daemon、向量记忆、未经验证的强沙箱声明。任务定义、源码和 verifier 均须先经维护者审核。
@@ -69,8 +69,8 @@
 
 状态不能合并：`passed`、`agent_failed`、`verifier_failed`、`baseline_mismatch`、`policy_violation`、`cancelled`、`timeout`、`indeterminate`、`unsupported` 各有独立计数。未知仓库外写入、网络访问或遗留进程不是零；应用层看不到的副作用只能标为未知，不能宣称“未授权副作用为 0”。崩溃后不自动从中间副作用阶段重跑同一工作区；使用新的 run ID、干净副本重新开始，旧运行保留 `indeterminate` 和证据。
 
-## 下一可测试实现切片
+## 已实现的诊断切片与后续工作
 
-先做**单任务预检与基线 verifier**，不接 Agent：从已验证 manifest 选一个任务，准备固定源码，在独立副本用受限 argv、最小环境、超时、输出上限和进程树清理运行公开 verifier，输出结构化基线证据，清理全部临时目录。只提供显式本地诊断入口，结果标 `local_unisolated`。这能验证真实仓库/工具链/基线是否可复现，也不会提前把当前系统宣传成正式 runner。
+已实现**单任务预检与基线 verifier**，尚未接 Agent：从已验证 manifest 选一个任务，准备固定源码，在独立副本用直接 argv、最小环境、超时、输出上限和进程树清理运行公开 verifier，输出结构化基线证据，清理临时目录。显式本地诊断入口标记 `local_unisolated`，不能作为正式评测成绩。当前只核对预期退出码；它不保存原始输出，也不能证明非零退出的原因正确。依赖未预装且没有 vendor 的任务可能因离线模块缓存为空而失败，需要进一步审核基线可复现性。
 
-该切片的测试应覆盖正确/错误基线退出码、命令解析到工作树、环境凭据剔除、超时及子进程、输出截断、取消、清理失败和 macOS/Windows 差异；无需新增依赖。后续再分开实现 Agent 预算映射、双副本 diff 重建、正式执行环境探测与端到端任务集。每个阶段未达到相应安全和恢复门禁前保持 `unsupported` 或 `local_unisolated`，M0/M1 出口状态不变。
+该切片的测试覆盖正确/错误基线退出码、命令解析到工作树、环境凭据剔除、超时及子进程、输出截断、取消与清理失败；macOS/Windows CI 结果仍需随 PR 核对。后续再分开实现 Agent 预算映射、双副本 diff 重建、正式执行环境探测与端到端任务集。每个阶段未达到相应安全和恢复门禁前保持 `unsupported` 或 `local_unisolated`，M0/M1 出口状态不变。

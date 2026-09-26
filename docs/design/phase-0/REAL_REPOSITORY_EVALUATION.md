@@ -1,13 +1,13 @@
 # M0/M1 真实仓库评测方案
 
-> 状态：评测协议草案；候选 manifest 校验和受限 GitHub 源码准备 API 已实现，真实仓库 Agent runner 与任务集尚未完成。
+> 状态：评测协议草案；候选 manifest 校验、受限 GitHub 源码准备 API 与单任务本地基线诊断已实现，真实仓库 Agent runner 与任务集尚未完成。
 > 适用范围：Coding Daily Set、Long-run Set，以及 M1 双平台真实任务出口。
 
 ## 目标
 
 把 Agent 的真实仓库表现变成可复跑、可比较的证据。现有 `evals/coding/smoke.json` 和 M1 `m1-coding` 工作流运行的是仓库内 Go fixture；它们验证协议和受限读改测闭环，不属于外部真实仓库任务。M2 Chaos Set 验证中断和恢复边界，也不替代包含真实 Coding 目标的长任务评测。
 
-本方案固定数据与记录协议。现有 `PrepareRealRepositoryTask` 只为一个已校验任务准备固定 commit 的临时源码目录；它不是 Agent runner，不运行项目代码、verifier 或结果收集，也没有接入现有 fixture CLI。完整 runner 仍应作为单独切片评审，避免把任意 Git URL、工作目录或命令直接接入 fixture runner。
+本方案固定数据与记录协议。`PrepareRealRepositoryTask` 只为一个已校验任务准备固定 commit 的临时源码目录；`mengdie-eval repo baseline` 可显式运行一个公开 verifier 的本地未隔离基线诊断。两者都不是 Agent runner，也不产生正式真实仓库成绩。完整 runner 仍应作为单独切片评审，避免把任意 Git URL、工作目录或命令直接接入 fixture runner。
 
 Agent、独立 verifier、执行环境与证据的具体边界见[真实仓库单任务执行边界](./REAL_REPOSITORY_EXECUTION_BOUNDARY.md)。该设计尚未实现；目前没有可计入 M1 出口的真实仓库运行成绩。
 
