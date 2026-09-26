@@ -60,6 +60,9 @@ type Options struct {
 	CLI          []Rule
 	Profile      []Rule
 	ToolDefaults []Rule
+	// RestrictedWritePaths, when non-nil, bounds file-tool writes to exact
+	// workspace-relative paths even if another rule would allow the effect.
+	RestrictedWritePaths []string
 }
 
 // Result is safe to log: it contains no arguments, source text or diffs.
@@ -71,11 +74,12 @@ type Result struct {
 
 // Engine applies hard invariants, then CLI, profile and tool-default rules.
 type Engine struct {
-	root         string
-	mode         Mode
-	cli          []Rule
-	profile      []Rule
-	toolDefaults []Rule
+	root                 string
+	mode                 Mode
+	cli                  []Rule
+	profile              []Rule
+	toolDefaults         []Rule
+	restrictedWritePaths map[string]bool
 }
 
 func NewEngine(options Options) (*Engine, error) {
@@ -93,12 +97,23 @@ func NewEngine(options Options) (*Engine, error) {
 			}
 		}
 	}
+	var restricted map[string]bool
+	if options.RestrictedWritePaths != nil {
+		restricted = make(map[string]bool, len(options.RestrictedWritePaths))
+		for _, path := range options.RestrictedWritePaths {
+			if !filepath.IsLocal(path) || filepath.Clean(path) == "." {
+				return nil, fmt.Errorf("policy: invalid restricted write path")
+			}
+			restricted[filepath.Clean(filepath.FromSlash(path))] = true
+		}
+	}
 	return &Engine{
-		root:         root,
-		mode:         options.Mode,
-		cli:          cloneRules(options.CLI),
-		profile:      cloneRules(options.Profile),
-		toolDefaults: cloneRules(options.ToolDefaults),
+		root:                 root,
+		mode:                 options.Mode,
+		cli:                  cloneRules(options.CLI),
+		profile:              cloneRules(options.Profile),
+		toolDefaults:         cloneRules(options.ToolDefaults),
+		restrictedWritePaths: restricted,
 	}, nil
 }
 
@@ -224,6 +239,12 @@ func (e *Engine) hardDeny(call *tools.PreparedCall) (Result, bool) {
 		}
 		if resource.Sensitive && hasEffect(call.Effects, tools.EffectWrite) {
 			return Result{Decision: DecisionDeny, Reason: "禁止写入受保护路径", Rule: "hard.protected_write"}, true
+		}
+		if e.restrictedWritePaths != nil && hasEffect(call.Effects, tools.EffectWrite) {
+			relative, err := filepath.Rel(e.root, resource.Path)
+			if err != nil || !e.restrictedWritePaths[filepath.Clean(relative)] {
+				return Result{Decision: DecisionDeny, Reason: "路径不在任务写入白名单", Rule: "hard.eval_write_path"}, true
+			}
 		}
 		if e.mode == ModeHeadless && resource.Sensitive {
 			return Result{Decision: DecisionDeny, Reason: "无交互模式禁止读取敏感路径", Rule: "hard.headless_sensitive"}, true
