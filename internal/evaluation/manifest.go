@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -162,18 +163,21 @@ func validateWorkspaceRelativePath(path string) error {
 	if strings.Contains(path, "\\") {
 		return fmt.Errorf("path %q must use forward slashes", path)
 	}
-	converted := filepath.FromSlash(path)
-	cleaned := filepath.Clean(converted)
-	if filepath.IsAbs(cleaned) || filepath.VolumeName(cleaned) != "" {
+	if strings.HasPrefix(path, "/") || hasWindowsVolumePrefix(path) {
 		return fmt.Errorf("path %q must be workspace-relative", path)
 	}
-	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+	cleaned := pathpkg.Clean(path)
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
 		return fmt.Errorf("path %q escapes the workspace", path)
 	}
-	if filepath.ToSlash(cleaned) != path {
+	if cleaned != path {
 		return fmt.Errorf("path %q is not canonical", path)
 	}
 	return nil
+}
+
+func hasWindowsVolumePrefix(value string) bool {
+	return len(value) >= 2 && ((value[0] >= 'a' && value[0] <= 'z') || (value[0] >= 'A' && value[0] <= 'Z')) && value[1] == ':'
 }
 
 func (v VerifySpec) duration() (time.Duration, error) {

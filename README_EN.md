@@ -17,7 +17,7 @@ A local coding agent for Chinese developers, built around verifiable memory, evi
 </div>
 
 > [!IMPORTANT]
-> MengDie Code is at the architecture and infrastructure stage. It is **not yet a production-ready or daily-usable coding agent**. The repository is public early so that real requirements, design reviews, and community feedback can shape it.
+> MengDie Code is in early development. The repository now contains a runnable Agent, TUI, safety toolchain, session recovery, trusted memory, and reflection proposals, but overall M0, M1, and M2 exit criteria remain incomplete. It is **not yet a coding agent users should rely on daily**. The repository is public early so that real requirements, design reviews, and community feedback can shape it.
 
 ## What is MengDie Code?
 
@@ -79,10 +79,15 @@ This English README is the entry point for international readers. The detailed [
 - [ ] M0: real-world coding, long-run, and memory-trust eval sets
 - [ ] M1: minimum Agent Runtime capable of completing real tasks ([Phase 1 detailed design, Chinese](./docs/design/phase-1/DETAILED_DESIGN.md))
 - [ ] M2: persistent events, resume, context compaction, and Patch Journal ([Phase 2 detailed design, Chinese](./docs/design/phase-2/DETAILED_DESIGN.md))
-- [ ] M3: auditable, trustworthy memory
-- [ ] M4: proposal-first reflection
+- [x] M3 Slice 01: trusted memory schema, FTS5, explicit CLI, and Agent integration ([design, Chinese](./docs/superpowers/specs/2026-08-24-m3-slice-01-trusted-memory-design.md); [report, Chinese](./docs/development/phase-3-slice-01/IMPLEMENTATION_REPORT.md))
+- [x] M3 Slice 02: automatic candidate extraction and `memory_recall` tool ([design, Chinese](./docs/superpowers/specs/2026-08-24-m3-slice-02-extractor-design.md); [report, Chinese](./docs/development/phase-3-slice-02/IMPLEMENTATION_REPORT.md))
+- [x] M3 Slice 03: memory rule schema fixes and fingerprint auto-approval ([design, Chinese](./docs/superpowers/specs/2026-08-24-m3-slice-03-auto-approve-design.md))
+- [x] M3 Slice 04: cross-authority dispute tracking and auto-approval guard ([design, Chinese](./docs/superpowers/specs/2026-08-24-m3-slice-04-cross-authority-dispute-design.md); [report, Chinese](./docs/development/phase-3-slice-04/IMPLEMENTATION_REPORT.md))
+- [x] M4 Slice 01: manual Reflect/Consolidate proposals ([design, Chinese](./docs/superpowers/specs/2026-08-26-m4-slice-01-reflect-proposal-design.md); [report, Chinese](./docs/development/phase-4-slice-01/IMPLEMENTATION_REPORT.md))
+- [x] M4 Slice 02: proposal Apply driver ([design, Chinese](./docs/superpowers/specs/2026-08-26-m4-slice-02-apply-driver-design.md); [report, Chinese](./docs/development/phase-4-slice-02/IMPLEMENTATION_REPORT.md))
+- [x] M4 Slice 03: audit-only Apply Revert ([design, Chinese](./docs/superpowers/specs/2026-08-27-m4-slice-03-revert-design.md); [report, Chinese](./docs/development/phase-4-slice-03/IMPLEMENTATION_REPORT.md))
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for the product architecture and the [Phase 1 detailed design](./docs/design/phase-1/DETAILED_DESIGN.md) for the implementation-ready M1 proposal. Both are currently maintained in Chinese. Dependency governance is documented in the Chinese-first [modern engineering guidelines](./docs/DEPENDENCIES.md), and the shared CLI/Web identity is covered by the [brand guide](./docs/BRAND.md).
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for the product architecture, the [Phase 1 detailed design](./docs/design/phase-1/DETAILED_DESIGN.md) for M1 exit criteria, and the [real-repository evaluation plan](./docs/design/phase-0/REAL_REPOSITORY_EVALUATION.md) for the proposed task and evidence format. These documents are currently maintained in Chinese. Dependency governance is documented in the Chinese-first [modern engineering guidelines](./docs/DEPENDENCIES.md), and the shared CLI/Web identity is covered by the [brand guide](./docs/BRAND.md).
 
 ## Local preview
 
