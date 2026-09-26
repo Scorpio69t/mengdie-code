@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "real-repository-pilot-v0.1",
+  "description": "已来源核验的公开仓库候选任务。此 manifest 仅用于离线契约校验。",
+  "tasks": [
+    {
+      "id": "gin-gonic__gin-2121",
+      "title": "DataFromReader accepts nil headers",
+      "source_url": "https://github.com/gin-gonic/gin.git",
+      "source_commit": "2ee0e963942d91be7944dfcc07dc8c02a4a78566",
+      "license": "MIT",
+      "task_source": "Gin PR #2121; SWE-bench Multilingual instance gin-gonic__gin-2121",
+      "prompt": "Fix DataFromReader so a nil response-header map does not panic. Add a focused regression test. Keep the change limited to the relevant implementation and test files.",
+      "verifier": {
+        "command": ["go", "test", "./..."],
+        "timeout": "10m"
+      },
+      "baseline": {
+        "expected_exit_code": 1
+      },
+      "acceptance": {
+        "allowed_changes": ["context.go", "context_test.go"]
+      },
+      "risk_budget": {
+        "allowed_effects": ["read", "write", "execute"],
+        "network_access": "provider_only",
+        "max_tool_calls": 80,
+        "max_command_calls": 2
+      }
+    }
+  ]
+}

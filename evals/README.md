@@ -12,6 +12,14 @@ go run ./cmd/mengdie-eval --manifest evals/coding/smoke.json --pretty
 
 此 harness 目前只支持仓库内 fixture，不负责克隆或执行外部真实仓库。外部任务的来源固定、隔离运行、结果记录与 M1 证据要求见[真实仓库评测方案](../docs/design/phase-0/REAL_REPOSITORY_EVALUATION.md)；在独立支持落地前，不要把 fixture 结果写成真实仓库任务成绩。
 
+真实仓库候选的机器可校验任务定义示例位于 `coding/real-repository-v0.1.json`。可运行：
+
+```bash
+go run ./cmd/mengdie-eval repo validate --manifest evals/coding/real-repository-v0.1.json --pretty
+```
+
+`repo validate` 只检查 HTTPS 来源、固定完整 commit、许可证、argv verifier、精确允许修改路径和风险预算，并输出省略任务 prompt 与 verifier 参数的 JSON 摘要。它不会访问网络、克隆仓库或执行清单中的命令；通过校验不代表候选任务已审核或评测通过。真实仓库克隆与隔离执行仍需单独实现和审查。
+
 已整理一组待审核的 [真实仓库任务候选](coding/real-repository-candidates-v0.1.md)。候选不属于正式评测集，也没有运行成绩；通过来源、许可、基线、verifier 和平台审核后才可计入评测。
 
 ## Manifest 约束
