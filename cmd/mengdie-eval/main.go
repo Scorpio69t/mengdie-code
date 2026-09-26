@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Scorpio69t/mengdie-code/internal/evaluation"
 	"github.com/Scorpio69t/mengdie-code/internal/evaluation/chaos"
@@ -29,10 +30,50 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return runBaseline(ctx, args[1:], stdout, stderr)
 	case "chaos":
 		return runChaos(ctx, args[1:], stdout, stderr)
+	case "repo":
+		return runRepo(ctx, args[1:], stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "mengdie-eval: unknown subcommand %q\n", args[0])
 		return 2
 	}
+}
+
+func runRepo(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "validate" {
+		_, _ = fmt.Fprintln(stderr, "用法：mengdie-eval repo validate --manifest <path> [--pretty]")
+		return 2
+	}
+	flags := flag.NewFlagSet("mengdie-eval repo validate", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	manifestPath := flags.String("manifest", "", "真实仓库评测 manifest 路径")
+	pretty := flags.Bool("pretty", false, "格式化 JSON 输出")
+	if err := flags.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if flags.NArg() != 0 {
+		_, _ = fmt.Fprintln(stderr, "mengdie-eval repo validate 不接受位置参数")
+		return 2
+	}
+	if strings.TrimSpace(*manifestPath) == "" {
+		_, _ = fmt.Fprintln(stderr, "缺少 --manifest 参数")
+		return 2
+	}
+	select {
+	case <-ctx.Done():
+		_, _ = fmt.Fprintf(stderr, "评测 manifest 校验已取消：%v\n", ctx.Err())
+		return 1
+	default:
+	}
+	manifest, err := evaluation.LoadRealRepositoryManifest(*manifestPath)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "真实仓库任务定义无效：%v\n", err)
+		return 2
+	}
+	if err := evaluation.EncodeRealRepositorySummary(stdout, manifest, *pretty); err != nil {
+		_, _ = fmt.Fprintf(stderr, "评测摘要输出失败：%v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func runBaseline(ctx context.Context, args []string, stdout, stderr io.Writer) int {

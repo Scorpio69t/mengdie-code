@@ -121,7 +121,7 @@ func (a *Authorizer) Authorize(ctx context.Context, runID, workDir string, call 
 	}
 	switch result.Decision {
 	case DecisionDeny:
-		return tools.Capability{}, fmt.Errorf("%w: %s", ErrDenied, result.Reason)
+		return tools.Capability{}, policyDenial(result)
 	case DecisionAllow:
 		return a.authority.issue(runID, workDir, call, a.now())
 	case DecisionAsk:
@@ -160,6 +160,33 @@ func (a *Authorizer) Authorize(ctx context.Context, runID, workDir string, call 
 	}
 }
 
+// policyDenial gives the caller enough policy context to adjust a rejected
+// proposal without copying tool arguments or user-configured rule names into
+// the model-visible error. Built-in rule identifiers are stable; custom rule
+// names are deliberately reduced to their layer.
+func policyDenial(result Result) error {
+	rule := safeDenialRule(result.Rule)
+	reason := strings.TrimSpace(result.Reason)
+	if reason == "" {
+		reason = "授权策略拒绝了此调用"
+	}
+	return fmt.Errorf("%w [%s]: %s", ErrDenied, rule, reason)
+}
+
+func safeDenialRule(rule string) string {
+	switch rule {
+	case "hard.network", "hard.root", "hard.protected_write", "hard.headless_sensitive",
+		"hard.invalid", "default.headless":
+		return rule
+	}
+	for _, layer := range []string{"cli", "profile", "tool"} {
+		if strings.HasPrefix(rule, layer+".") {
+			return layer + ".configured"
+		}
+	}
+	return "policy.configured"
+}
+
 // Reauthorize requires a fresh human decision even when the current policy
 // would otherwise allow the call. Recovery uses it after Prepare has observed
 // the current filesystem and environment, so an old approval or capability is
@@ -171,7 +198,7 @@ func (a *Authorizer) Reauthorize(ctx context.Context, runID, workDir string, cal
 	call = clonePreparedCall(call)
 	result := a.engine.Evaluate(call)
 	if result.Decision == DecisionDeny {
-		return tools.Capability{}, fmt.Errorf("%w: %s", ErrDenied, result.Reason)
+		return tools.Capability{}, policyDenial(result)
 	}
 	canonicalWorkDir, err := canonicalDirectory(workDir)
 	if err != nil {
