@@ -18,7 +18,7 @@
 </div>
 
 > [!IMPORTANT]
-> MengDie Code 目前处于架构与基础设施阶段，**还不是可日常使用的 Coding Agent**。仓库公开是为了尽早接受真实需求、设计审查和社区反馈，而不是提前承诺尚未完成的能力。
+> MengDie Code 目前处于早期开发阶段：仓库已包含可运行的 Agent、TUI、安全工具链、会话恢复、可信记忆与复盘提案实现，但 M0、M1、M2 总体验收仍未完成，**还不是可日常依赖的 Coding Agent**。仓库公开是为了尽早接受真实需求、设计审查和社区反馈，而不是提前承诺尚未完成的能力。
 
 ## 为什么做梦蝶 Code
 
@@ -116,6 +116,8 @@ mengdie memory forget <id>
 - [x] M4 Slice 03：Apply Revert v0.2 audit-only（[设计稿](./docs/superpowers/specs/2026-08-27-m4-slice-03-revert-design.md)、[实施报告](./docs/development/phase-4-slice-03/IMPLEMENTATION_REPORT.md)）
 
 完整产品架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；M1 实施基线见 [第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)。`mengdie` 与 `mengdie exec` 已接入同一套最小 Agent Runtime 和安全工具链；多平台开发预览、连续 20 次 main CI 以及 DeepSeek 在 macOS/Windows 的双平台 10/10 Coding 预验收均已形成证据。外部真实仓库任务与安全出口记录未齐前，M1 仍不标记完成。
+
+外部真实仓库与长任务评测的范围、记录模板和证据要求见[真实仓库评测方案](./docs/design/phase-0/REAL_REPOSITORY_EVALUATION.md)。当前 `evals/coding/smoke.json` 仍是本地 fixture baseline，真实 Provider fixture 预验收也不代表外部仓库任务已通过。
 
 工程依赖的选择、升级和供应链标准见 [依赖与现代化工程准则](./docs/DEPENDENCIES.md)，Logo 与 CLI 启动体验见 [品牌规范](./docs/BRAND.md)。
 
