@@ -1,13 +1,19 @@
 # M0/M1 真实仓库评测方案
 
-> 状态：评测协议草案；真实仓库任务集与自动运行器尚未完成。
+> 状态：评测协议草案；候选 manifest 校验和受限 GitHub 源码准备 API 已实现，真实仓库 Agent runner 与任务集尚未完成。
 > 适用范围：Coding Daily Set、Long-run Set，以及 M1 双平台真实任务出口。
 
 ## 目标
 
 把 Agent 的真实仓库表现变成可复跑、可比较的证据。现有 `evals/coding/smoke.json` 和 M1 `m1-coding` 工作流运行的是仓库内 Go fixture；它们验证协议和受限读改测闭环，不属于外部真实仓库任务。M2 Chaos Set 验证中断和恢复边界，也不替代包含真实 Coding 目标的长任务评测。
 
-本方案先固定数据与记录协议，不声称自动评测器已经支持外部仓库。实现克隆、隔离和结果收集的 runner 应作为单独切片评审，避免把任意 Git URL、工作目录或命令直接接入现有 fixture runner。
+本方案固定数据与记录协议。现有 `PrepareRealRepositoryTask` 只为一个已校验任务准备固定 commit 的临时源码目录；它不是 Agent runner，不运行项目代码、verifier 或结果收集，也没有接入现有 fixture CLI。完整 runner 仍应作为单独切片评审，避免把任意 Git URL、工作目录或命令直接接入 fixture runner。
+
+### 当前源码准备切片
+
+- 只接受 `github.com` HTTPS 来源和清单中的完整 commit SHA；Git fetch 禁止凭据 helper、重定向、子模块、外部协议、模板钩子和 LFS smudge，并通过独立 Git 配置与环境变量运行。
+- checkout 后核对 `HEAD` 与固定 SHA，并要求工作树干净；超时、取消或任一步失败都会清理临时目录。macOS/Unix 使用仅当前用户权限的目录模式，Windows 对目录设置仅当前用户 SID 的受保护 DACL。
+- 该目录尚未提供 OS 级执行沙箱或网络隔离。取得源码不等于任务已运行；后续 Agent 执行、独立 verifier、权限边界和证据记录必须单独实现与评审。
 
 ## 评测集边界
 
