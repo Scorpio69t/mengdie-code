@@ -9,6 +9,8 @@
 
 本方案固定数据与记录协议。现有 `PrepareRealRepositoryTask` 只为一个已校验任务准备固定 commit 的临时源码目录；它不是 Agent runner，不运行项目代码、verifier 或结果收集，也没有接入现有 fixture CLI。完整 runner 仍应作为单独切片评审，避免把任意 Git URL、工作目录或命令直接接入 fixture runner。
 
+Agent、独立 verifier、执行环境与证据的具体边界见[真实仓库单任务执行边界](./REAL_REPOSITORY_EXECUTION_BOUNDARY.md)。该设计尚未实现；目前没有可计入 M1 出口的真实仓库运行成绩。
+
 ### 当前源码准备切片
 
 - 只接受 `github.com` HTTPS 来源和清单中的完整 commit SHA；Git fetch 禁止凭据 helper、重定向、子模块、外部协议、模板钩子和 LFS smudge，并通过独立 Git 配置与环境变量运行。
