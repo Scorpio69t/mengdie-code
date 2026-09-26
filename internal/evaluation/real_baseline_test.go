@@ -133,6 +133,21 @@ func TestRealRepositoryBaselineMatchedAndMismatched(t *testing.T) {
 	}
 }
 
+func TestRealAgentEnvironmentKeepsWindowsCommandResolutionWithoutCredentials(t *testing.T) {
+	stateRoot := t.TempDir()
+	environment, err := RealAgentEnvironment(filepath.Join(stateRoot, "go.exe"), stateRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(environment, "\n")
+	if strings.Contains(joined, "SECRET_KEY") || strings.Contains(joined, "HTTPS_PROXY") {
+		t.Fatalf("agent environment inherited credentials or proxy names: %s", joined)
+	}
+	if runtime.GOOS == "windows" && !strings.Contains(joined, "PATHEXT=.COM;.EXE;.BAT;.CMD") {
+		t.Fatal("Windows PowerShell cannot resolve bare go command without PATHEXT")
+	}
+}
+
 func TestRealRepositoryBaselineOutputLimit(t *testing.T) {
 	manifest, executable := baselineHelperManifest(t, "5s", 0)
 	prepare, _ := baselineFakePrepare(t, "large-output")

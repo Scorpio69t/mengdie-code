@@ -304,6 +304,11 @@ func RealAgentEnvironment(verifierExecutable, stateRoot string) ([]string, error
 			break
 		}
 	}
+	if runtime.GOOS == "windows" {
+		// PowerShell resolves bare command names through PATHEXT. Keep this
+		// fixed instead of inheriting the host's executable extension list.
+		environment = append(environment, "PATHEXT=.COM;.EXE;.BAT;.CMD")
+	}
 	return environment, nil
 }
 
