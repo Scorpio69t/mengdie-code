@@ -14,14 +14,11 @@ import (
 )
 
 func TestSecureRealRepositoryRootRestrictsDACLToCurrentUser(t *testing.T) {
-	root, err := os.MkdirTemp("", "mengdie-private-dir-test-*")
+	root, err := createPrivateRealRepositoryRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(root)
-	if err := secureRealRepositoryRoot(root); err != nil {
-		t.Fatalf("secureRealRepositoryRoot() error = %v", err)
-	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 
 	token, err := windows.OpenCurrentProcessToken()
 	if err != nil {
@@ -42,7 +39,10 @@ func TestSecureRealRepositoryRootRestrictsDACLToCurrentUser(t *testing.T) {
 	}
 	got := descriptor.String()
 	wantACE := "(A;OICI;GA;;;" + user.User.Sid.String() + ")"
-	if !strings.Contains(got, "D:P") || !strings.Contains(got, wantACE) {
+	if strings.HasSuffix(user.User.Sid.String(), "-500") {
+		wantACE = "(A;OICI;GA;;;LA)"
+	}
+	if !strings.HasPrefix(got, "D:P") || strings.Count(got, "(") != 1 || !strings.Contains(got, wantACE) {
 		t.Fatalf("directory DACL = %q, want protected current-user ACE %q", got, wantACE)
 	}
 }

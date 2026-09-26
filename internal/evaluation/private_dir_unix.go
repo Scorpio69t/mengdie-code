@@ -7,6 +7,14 @@ package evaluation
 
 import "os"
 
-func secureRealRepositoryRoot(path string) error {
-	return os.Chmod(path, 0o700)
+func createPrivateRealRepositoryRoot() (string, error) {
+	root, err := os.MkdirTemp("", "mengdie-real-repo-*")
+	if err != nil {
+		return "", err
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		_ = os.RemoveAll(root)
+		return "", err
+	}
+	return root, nil
 }

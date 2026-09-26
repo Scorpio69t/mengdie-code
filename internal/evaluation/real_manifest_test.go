@@ -57,6 +57,9 @@ func TestRealRepositoryManifestRejectsUnsafeOrIncompleteFields(t *testing.T) {
 			task.Verifier.Command = []string{`C:\Windows\System32\cmd.exe`, "/c", "go test ./..."}
 		}, want: "not a shell"},
 		{name: "absolute allow path", mutate: func(task *RealRepositoryTask) { task.Acceptance.AllowedChanges = []string{"/etc/passwd"} }, want: "workspace-relative"},
+		{name: "windows absolute allow path", mutate: func(task *RealRepositoryTask) {
+			task.Acceptance.AllowedChanges = []string{"C:/Windows/System32/drivers/etc/hosts"}
+		}, want: "workspace-relative"},
 		{name: "wildcard allow path", mutate: func(task *RealRepositoryTask) { task.Acceptance.AllowedChanges = []string{"**"} }, want: "exact, non-wildcard"},
 		{name: "broad root allow path", mutate: func(task *RealRepositoryTask) { task.Acceptance.AllowedChanges = []string{"."} }, want: "exact, non-wildcard"},
 		{name: "missing risk budget", mutate: func(task *RealRepositoryTask) { task.RiskBudget = RealRepositoryRiskBudget{} }, want: "allowed_effects is required"},

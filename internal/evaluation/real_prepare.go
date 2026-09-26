@@ -103,7 +103,7 @@ func prepareRealRepositoryTask(ctx context.Context, manifest RealRepositoryManif
 		return nil, fmt.Errorf("task %q source is not allowed: %w", task.ID, err)
 	}
 
-	root, err := os.MkdirTemp("", "mengdie-real-repo-*")
+	root, err := createPrivateRealRepositoryRoot()
 	if err != nil {
 		return nil, fmt.Errorf("create private real repository workspace: %w", err)
 	}
@@ -115,10 +115,6 @@ func prepareRealRepositoryTask(ctx context.Context, manifest RealRepositoryManif
 			}
 		}
 	}()
-	if err := secureRealRepositoryRoot(root); err != nil {
-		return nil, fmt.Errorf("secure real repository workspace: %w", err)
-	}
-
 	workspace := filepath.Join(root, "workspace")
 	hooksDir := filepath.Join(root, "empty-hooks")
 	templateDir := filepath.Join(root, "empty-template")
