@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -248,7 +247,11 @@ func validatePublicGitURL(raw string) error {
 }
 
 func isShellExecutable(value string) bool {
-	base := strings.ToLower(filepath.Base(value))
+	base := value
+	if separator := strings.LastIndexAny(base, `/\`); separator >= 0 {
+		base = base[separator+1:]
+	}
+	base = strings.ToLower(base)
 	switch base {
 	case "sh", "sh.exe", "bash", "bash.exe", "zsh", "zsh.exe", "cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe":
 		return true

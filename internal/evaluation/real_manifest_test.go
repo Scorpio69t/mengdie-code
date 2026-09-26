@@ -53,6 +53,9 @@ func TestRealRepositoryManifestRejectsUnsafeOrIncompleteFields(t *testing.T) {
 		{name: "credentials in source url", mutate: func(task *RealRepositoryTask) { task.SourceURL = "https://token:secret@github.com/org/repo" }, want: "credentials"},
 		{name: "local source url", mutate: func(task *RealRepositoryTask) { task.SourceURL = "https://127.0.0.1/repo" }, want: "private or local"},
 		{name: "shell verifier", mutate: func(task *RealRepositoryTask) { task.Verifier.Command = []string{"sh", "-c", "go test ./..."} }, want: "not a shell"},
+		{name: "windows shell verifier", mutate: func(task *RealRepositoryTask) {
+			task.Verifier.Command = []string{`C:\Windows\System32\cmd.exe`, "/c", "go test ./..."}
+		}, want: "not a shell"},
 		{name: "absolute allow path", mutate: func(task *RealRepositoryTask) { task.Acceptance.AllowedChanges = []string{"/etc/passwd"} }, want: "workspace-relative"},
 		{name: "wildcard allow path", mutate: func(task *RealRepositoryTask) { task.Acceptance.AllowedChanges = []string{"**"} }, want: "exact, non-wildcard"},
 		{name: "broad root allow path", mutate: func(task *RealRepositoryTask) { task.Acceptance.AllowedChanges = []string{"."} }, want: "exact, non-wildcard"},
