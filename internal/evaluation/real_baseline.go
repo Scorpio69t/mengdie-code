@@ -144,7 +144,7 @@ func runRealRepositoryBaseline(ctx context.Context, manifest RealRepositoryManif
 			}
 		}()
 	}
-	if prepared == nil || prepared.Path == "" {
+	if prepared == nil || prepared.Path == "" || prepared.SourceCommit != task.SourceCommit {
 		result.Status = "source_prepare_failed"
 		return result, nil
 	}
@@ -279,6 +279,32 @@ func realBaselineEnvironment(executable, stateRoot string) []string {
 		}
 	}
 	return environment
+}
+
+// RealAgentEnvironment gives Shell a private home/cache and no inherited
+// credential or proxy variables. It does not block direct network access.
+func RealAgentEnvironment(verifierExecutable, stateRoot string) ([]string, error) {
+	for _, name := range []string{"home", "tmp", "cache", "gopath"} {
+		if err := os.MkdirAll(filepath.Join(stateRoot, name), 0o700); err != nil {
+			return nil, errors.New("cannot prepare agent environment")
+		}
+	}
+	environment := realBaselineEnvironment(verifierExecutable, stateRoot)
+	for index, entry := range environment {
+		if strings.HasPrefix(entry, "PATH=") {
+			path := filepath.Dir(verifierExecutable)
+			if runtime.GOOS == "windows" {
+				if systemRoot := os.Getenv("SYSTEMROOT"); systemRoot != "" {
+					path += string(os.PathListSeparator) + filepath.Join(systemRoot, "System32", "WindowsPowerShell", "v1.0")
+				}
+			} else {
+				path += string(os.PathListSeparator) + "/usr/bin" + string(os.PathListSeparator) + "/bin"
+			}
+			environment[index] = "PATH=" + path
+			break
+		}
+	}
+	return environment, nil
 }
 
 type realBaselineOutput struct {

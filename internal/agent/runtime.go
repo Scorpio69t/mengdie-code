@@ -173,12 +173,23 @@ type RunRequest struct {
 	Model          string
 	DisplayModel   string
 	MaxTurns       int
+	ToolBudget     *ToolBudget
 	Security       string
 	History        []provider.Message
 	ContextSummary string
 	Todos          []tools.Todo
 	Recovery       *RecoveryAction
 }
+
+// ToolBudget limits attempts before Prepare or Policy can observe a call.
+// A denied or failed call still consumes its reservation.
+type ToolBudget struct {
+	MaxToolCalls    int
+	MaxCommandCalls int
+}
+
+var ErrToolBudgetExceeded = errors.New("agent: tool call budget exhausted")
+var ErrCommandBudgetExceeded = errors.New("agent: command call budget exhausted")
 
 const (
 	RecoveryReapprove   = "reapprove"
@@ -207,6 +218,10 @@ type RunResult struct {
 	UnknownCostRequests   int64
 	Todos                 []tools.Todo
 	DeniedTools           int
+	ToolCalls             int
+	CommandCalls          int
+	ForcedCleanupCount    int
+	UncertainExecuteCount int
 	// AutoApprovedCount is the number of extractor candidates that
 	// applyMemoryExtraction auto-promoted from StatusProposed to
 	// StatusActive via fingerprint match (see
@@ -295,6 +310,11 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 		return state.result(""), a.finishError(ctx, emitter, err)
 	}
 	if request.Recovery != nil {
+		if request.ToolBudget != nil {
+			if err := state.reserveToolCall(request.Recovery.Call.Name, request.ToolBudget); err != nil {
+				return state.result(""), a.finishError(ctx, emitter, err)
+			}
+		}
 		outcome := a.executeRecovered(ctx, state, emitter, authorizer, *request.Recovery)
 		if outcome.fatal != nil {
 			return state.result(""), outcome.fatal
@@ -429,6 +449,9 @@ func (a *Agent) Run(ctx context.Context, request RunRequest, emitter *events.Emi
 		}
 
 		for _, call := range response.Message.ToolCalls {
+			if err := state.reserveToolCall(call.Name, request.ToolBudget); err != nil {
+				return state.result(""), a.finishError(ctx, emitter, err)
+			}
 			callKey, err := canonicalCallKey(call)
 			if err != nil {
 				return state.result(""), a.finishError(ctx, emitter, err)
@@ -544,6 +567,8 @@ func validateRunRequest(request RunRequest) error {
 		return errors.New("agent: model is required")
 	case request.MaxTurns < 1 || request.MaxTurns > 256:
 		return errors.New("agent: max turns must be between 1 and 256")
+	case request.ToolBudget != nil && (request.ToolBudget.MaxToolCalls < 1 || request.ToolBudget.MaxCommandCalls < 0 || request.ToolBudget.MaxCommandCalls > request.ToolBudget.MaxToolCalls):
+		return errors.New("agent: invalid tool budget")
 	default:
 		messages := append(cloneMessages(request.History), provider.Message{Role: provider.RoleUser, Content: request.Task})
 		if err := (provider.ChatRequest{Model: request.Model, Messages: messages}).Validate(); err != nil {
@@ -857,8 +882,14 @@ func (a *Agent) executeRecovered(ctx context.Context, state *RunState, emitter *
 		Now: a.now, Environment: environment, TodoWriter: todoWriter{state: state, emitter: emitter},
 		MutationJournal: a.mutationJournal,
 	})
+	if result != nil && result.Metadata["forced_cleanup"] == "true" {
+		state.recordForcedCleanup()
+	}
 	duration := a.now().Sub(started)
 	if runErr != nil {
+		if call.Name == "shell" {
+			state.recordUncertainExecute()
+		}
 		if _, err := emitter.Emit(context.WithoutCancel(ctx), events.KindToolCompleted, events.ToolCompleted{
 			CallID: call.ID, Tool: call.Name, Success: false, Summary: "恢复执行失败", DurationMS: duration.Milliseconds(),
 			SourceCommand: joinShellArgs(call, prepared),
@@ -932,8 +963,14 @@ func (a *Agent) executeOne(ctx context.Context, state *RunState, emitter *events
 		TodoWriter:      todoWriter{state: state, emitter: emitter},
 		MutationJournal: a.mutationJournal,
 	})
+	if result != nil && result.Metadata["forced_cleanup"] == "true" {
+		state.recordForcedCleanup()
+	}
 	duration := a.now().Sub(started)
 	if runErr != nil {
+		if call.Name == "shell" {
+			state.recordUncertainExecute()
+		}
 		if _, err := emitter.Emit(context.WithoutCancel(ctx), events.KindToolCompleted, events.ToolCompleted{
 			CallID: call.ID, Tool: call.Name, Success: false, Summary: "执行失败", DurationMS: duration.Milliseconds(),
 			SourceCommand: joinShellArgs(call, prepared),
@@ -1213,6 +1250,8 @@ func errorCategory(err error) (string, bool) {
 		return "tool_calling_unsupported", false
 	case errors.Is(err, ErrMaxTurns):
 		return "max_turns", false
+	case errors.Is(err, ErrToolBudgetExceeded), errors.Is(err, ErrCommandBudgetExceeded):
+		return "tool_budget", false
 	case errors.Is(err, ErrRepeatedCall):
 		return "repeated_tool_call", false
 	case errors.Is(err, ErrRepeatedFailure):

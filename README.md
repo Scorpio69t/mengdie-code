@@ -117,7 +117,7 @@ mengdie memory forget <id>
 
 完整产品架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；M1 实施基线见 [第一阶段详细设计](./docs/design/phase-1/DETAILED_DESIGN.md)。`mengdie` 与 `mengdie exec` 已接入同一套最小 Agent Runtime 和安全工具链；多平台开发预览、连续 20 次 main CI 以及 DeepSeek 在 macOS/Windows 的双平台 10/10 Coding 预验收均已形成证据。外部真实仓库任务与安全出口记录未齐前，M1 仍不标记完成。
 
-外部真实仓库与长任务评测的范围、记录模板和证据要求见[真实仓库评测方案](./docs/design/phase-0/REAL_REPOSITORY_EVALUATION.md)。`mengdie-eval repo baseline` 已提供单任务本地未隔离的 verifier 基线诊断（[使用说明](./evals/README.md)）；它不运行 Agent，也不计入 M1 正式成绩。当前 `evals/coding/smoke.json` 仍是本地 fixture baseline，真实 Provider fixture 预验收也不代表外部仓库任务已通过。
+外部真实仓库与长任务评测的范围、记录模板和证据要求见[真实仓库评测方案](./docs/design/phase-0/REAL_REPOSITORY_EVALUATION.md)。`mengdie-eval repo baseline` 和 `repo run` 已分别提供单任务基线及 Agent 终态的本地未隔离诊断（[使用说明](./evals/README.md)）；它们不计入 M1 正式成绩。当前 `evals/coding/smoke.json` 仍是本地 fixture baseline，真实 Provider fixture 预验收也不代表外部仓库任务已通过。
 
 工程依赖的选择、升级和供应链标准见 [依赖与现代化工程准则](./docs/DEPENDENCIES.md)，Logo 与 CLI 启动体验见 [品牌规范](./docs/BRAND.md)。
 
