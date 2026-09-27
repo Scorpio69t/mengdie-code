@@ -32,6 +32,10 @@ type RunState struct {
 	EstimatedCostRequests int64
 	UnknownCostRequests   int64
 	DeniedTools           int
+	ToolCalls             int
+	CommandCalls          int
+	ForcedCleanupCount    int
+	UncertainExecuteCount int
 	StartedAt             time.Time
 }
 
@@ -145,7 +149,40 @@ func (s *RunState) result(summary string) RunResult {
 		EstimatedCostPicoUSD: s.EstimatedCostPicoUSD, EstimatedCostRequests: s.EstimatedCostRequests,
 		UnknownCostRequests: s.UnknownCostRequests,
 		Todos:               append([]tools.Todo(nil), s.Todos...), DeniedTools: s.DeniedTools,
+		ToolCalls: s.ToolCalls, CommandCalls: s.CommandCalls,
+		ForcedCleanupCount:    s.ForcedCleanupCount,
+		UncertainExecuteCount: s.UncertainExecuteCount,
 	}
+}
+
+func (s *RunState) recordForcedCleanup() {
+	s.mu.Lock()
+	s.ForcedCleanupCount++
+	s.mu.Unlock()
+}
+
+func (s *RunState) recordUncertainExecute() {
+	s.mu.Lock()
+	s.UncertainExecuteCount++
+	s.mu.Unlock()
+}
+
+func (s *RunState) reserveToolCall(name string, budget *ToolBudget) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if budget != nil {
+		if s.ToolCalls >= budget.MaxToolCalls {
+			return ErrToolBudgetExceeded
+		}
+		if name == "shell" && s.CommandCalls >= budget.MaxCommandCalls {
+			return ErrCommandBudgetExceeded
+		}
+	}
+	s.ToolCalls++
+	if name == "shell" {
+		s.CommandCalls++
+	}
+	return nil
 }
 
 func (s *RunState) recordDenial() {

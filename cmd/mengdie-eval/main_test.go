@@ -94,6 +94,14 @@ func TestRunRepoBaselineRequiresExplicitLocalExecutionOptIn(t *testing.T) {
 	}
 }
 
+func TestRunRepoDiagnosticRequiresExplicitLocalExecutionOptIn(t *testing.T) {
+	stderr := &bytes.Buffer{}
+	code := run(context.Background(), []string{"repo", "run", "--manifest", "candidate.json", "--task", "task-1", "--verifier-bin", "/usr/bin/go"}, io.Discard, stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "--allow-unisolated") {
+		t.Fatalf("run() = (%d, %q), want explicit local execution opt-in", code, stderr.String())
+	}
+}
+
 func TestRunRepoBaselineRejectsMissingTaskAndPositionalArguments(t *testing.T) {
 	for _, args := range [][]string{
 		{"repo", "baseline", "--manifest", "candidate.json", "--verifier-bin", "/usr/bin/go", "--allow-unisolated"},
