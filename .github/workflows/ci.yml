@@ -51,7 +51,7 @@ jobs:
 
       - name: 上传模拟故障证据
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chaos-simulated-${{ github.run_id }}
           path: evidence/chaos-simulated.json
@@ -64,7 +64,7 @@ jobs:
 
       - name: 上传 Memory 证据
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: memory-trust-v1-${{ github.run_id }}
           path: evidence/memory-trust-v1.json
