@@ -45,6 +45,8 @@ type runtimeOptions struct {
 	ExpectedSessionSeq     uint64
 	ExpectedContextOrdinal uint64
 	Recovery               *agent.RecoveryAction
+	Evaluation             *EvaluationPolicy
+	ResultSink             func(agent.RunResult, error)
 }
 
 func defaultProviderFactory(profile config.Profile, apiKey string) (provider.Provider, error) {
@@ -161,6 +163,9 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("加载 Skills 失败：%v", err))
 	}
+	if options.Evaluation != nil {
+		skillCatalog.Skills = nil
+	}
 	memoryStore := memory.OpenMemory(store)
 	retriever := memory.NewRetriever(memoryStore)
 	hybridExtractor := extractor.NewHybrid(extractor.NewRules(extractor.NewSQLiteReader(store)), nil) // v0.1: LLM 端 nil
@@ -168,6 +173,12 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	agentRetrieverAdapter := agent.NewRetrieverAdapter(retriever)
 	toolsRetrieverAdapter := memoryRecallRetrieverAdapter{retriever: retriever}
 	projectIdentity := loaded.ProjectIdentityValue()
+	if options.Evaluation != nil {
+		extractorAdapter = nil
+		agentRetrieverAdapter = nil
+		memoryStore = nil
+		projectIdentity = ""
+	}
 
 	registeredTools := append(
 		tools.DefaultTools(
@@ -176,6 +187,9 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 		),
 		contextSourceTool,
 	)
+	if options.Evaluation != nil {
+		registeredTools = []tools.Tool{tools.NewReadFile(), tools.NewListFiles(), tools.NewSearchText(), tools.NewEditFile(), tools.NewWriteFile(), tools.NewShell(), tools.NewWriteTodos()}
+	}
 	if len(skillCatalog.Skills) > 0 {
 		readSkillTool, err := skills.NewReadTool(skillCatalog)
 		if err != nil {
@@ -187,9 +201,18 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化工具失败：%v", err))
 	}
+	profileRules := commandRules("profile-command", loaded.Config.Approval.AllowCommands)
+	if options.Evaluation != nil {
+		profileRules = nil
+	}
+	var restrictedWritePaths []string
+	if options.Evaluation != nil {
+		restrictedWritePaths = append([]string{}, options.Evaluation.AllowedChanges...)
+	}
 	engine, err := policy.NewEngine(policy.Options{
 		Root: loaded.ProjectRoot, Mode: options.Mode,
-		CLI: runtimeCLIRules(options), Profile: commandRules("profile-command", loaded.Config.Approval.AllowCommands),
+		CLI: runtimeCLIRules(options), Profile: profileRules,
+		RestrictedWritePaths: restrictedWritePaths,
 	})
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化策略失败：%v", err))
@@ -200,6 +223,9 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	})
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("加载 AGENTS.md 失败：%v", err))
+	}
+	if options.Evaluation != nil {
+		instructions = nil
 	}
 	contextInstructions := make([]agentcontext.Instruction, len(instructions))
 	for index, instruction := range instructions {
@@ -250,13 +276,21 @@ func (a *App) runAgent(ctx context.Context, loaded config.Loaded, runID, task st
 	if err != nil {
 		return rejectSetup(fmt.Sprintf("初始化事件流失败：%v", err))
 	}
+	var toolBudget *agent.ToolBudget
+	if options.Evaluation != nil {
+		toolBudget = &agent.ToolBudget{MaxToolCalls: options.Evaluation.MaxToolCalls, MaxCommandCalls: options.Evaluation.MaxCommandCalls}
+	}
 	result, err := runtime.Run(ctx, agent.RunRequest{
 		RunID: runID, Task: task, Model: profile.Model, DisplayModel: modelLabel(profile),
 		MaxTurns: loaded.Config.Context.MaxTurns, Security: options.Security,
-		History: options.History, Todos: options.Todos,
+		ToolBudget: toolBudget,
+		History:    options.History, Todos: options.Todos,
 		ContextSummary: options.ContextSummary,
 		Recovery:       options.Recovery,
 	}, emitter)
+	if options.ResultSink != nil {
+		options.ResultSink(result, err)
+	}
 	service, serviceErr := session.NewService(store)
 	if serviceErr == nil {
 		if snapshotErr := service.RefreshSnapshot(context.WithoutCancel(ctx), sessionID); snapshotErr != nil {
@@ -418,6 +452,9 @@ func replayedFailureExit(terminal events.Event) int {
 }
 
 func runtimeCLIRules(options runtimeOptions) []policy.Rule {
+	if options.Evaluation != nil {
+		return evaluationCLIRules(*options.Evaluation)
+	}
 	var rules []policy.Rule
 	if options.AllowEdit {
 		for _, name := range []string{"edit_file", "write_file"} {
@@ -428,6 +465,32 @@ func runtimeCLIRules(options runtimeOptions) []policy.Rule {
 		}
 	}
 	return append(rules, commandRules("cli-command", options.AllowCommands)...)
+}
+
+func evaluationCLIRules(contract EvaluationPolicy) []policy.Rule {
+	allowed := make(map[tools.Effect]bool, len(contract.AllowedEffects))
+	for _, effect := range contract.AllowedEffects {
+		allowed[effect] = true
+	}
+	var rules []policy.Rule
+	for _, effect := range []tools.Effect{tools.EffectRead, tools.EffectWrite, tools.EffectExecute, tools.EffectNetwork} {
+		if !allowed[effect] {
+			rules = append(rules, policy.Rule{Name: "eval-deny-" + string(effect), Effects: []tools.Effect{effect}, Decision: policy.DecisionDeny})
+		}
+	}
+	if allowed[tools.EffectWrite] && contract.AllowEdit {
+		for _, name := range []string{"edit_file", "write_file"} {
+			rules = append(rules, policy.Rule{Name: "eval-allow-" + name, Tool: name, Effects: []tools.Effect{tools.EffectWrite}, Decision: policy.DecisionAllow})
+		}
+	}
+	if !contract.AllowEdit {
+		rules = append(rules, policy.Rule{Name: "eval-edit-not-approved", Effects: []tools.Effect{tools.EffectWrite}, Decision: policy.DecisionDeny})
+	}
+	if allowed[tools.EffectExecute] && contract.MaxCommandCalls > 0 {
+		rules = append(rules, commandRules("eval-command", contract.CommandPrefixes)...)
+	}
+	rules = append(rules, policy.Rule{Name: "eval-deny-other-command", Tool: "shell", Effects: []tools.Effect{tools.EffectExecute}, Decision: policy.DecisionDeny})
+	return rules
 }
 
 func commandRules(name string, prefixes []string) []policy.Rule {
