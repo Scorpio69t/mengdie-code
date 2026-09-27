@@ -1,6 +1,6 @@
 # M0/M1 真实仓库评测方案
 
-> 状态：评测协议草案；候选 manifest 校验、受限 GitHub 源码准备 API 与单任务本地基线诊断已实现，真实仓库 Agent runner 与任务集尚未完成。
+> 状态：评测协议草案；候选 manifest 校验、受限 GitHub 源码准备 API、单任务本地基线与 Agent 终态诊断已实现，正式隔离 runner 与真实任务集尚未完成。
 > 适用范围：Coding Daily Set、Long-run Set，以及 M1 双平台真实任务出口。
 
 ## 目标
@@ -9,7 +9,7 @@
 
 本方案固定数据与记录协议。`PrepareRealRepositoryTask` 只为一个已校验任务准备固定 commit 的临时源码目录；`mengdie-eval repo baseline` 可显式运行一个公开 verifier 的本地未隔离基线诊断。两者都不是 Agent runner，也不产生正式真实仓库成绩。完整 runner 仍应作为单独切片评审，避免把任意 Git URL、工作目录或命令直接接入 fixture runner。
 
-Agent、独立 verifier、执行环境与证据的具体边界见[真实仓库单任务执行边界](./REAL_REPOSITORY_EXECUTION_BOUNDARY.md)。该设计尚未实现；目前没有可计入 M1 出口的真实仓库运行成绩。
+Agent、独立 verifier、执行环境与证据的具体边界见[真实仓库单任务执行边界](./REAL_REPOSITORY_EXECUTION_BOUNDARY.md)，正式环境的探针设计见[隔离执行门禁](./ISOLATED_REAL_REPOSITORY_EXECUTION.md)。本地单任务诊断已实现，正式隔离环境尚未实现；目前没有可计入 M1 出口的真实仓库运行成绩。
 
 ### 当前源码准备切片
 
